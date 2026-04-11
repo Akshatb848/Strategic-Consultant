@@ -56,6 +56,19 @@ Open-model fallbacks, chosen from the [open-llms](https://github.com/eugeneyan/o
 4. Optional full stack:
    `docker compose up --build`
 
+## GCP Free-Tier VM Deployment
+
+For the lowest-cost GCP deployment, use the single-VM path instead of the managed `asis/infra` stack. The free-tier path deploys only the canonical `asis/backend` and `asis/frontend` applications, stores data in SQLite on the VM, and runs analyses in demo mode with inline execution.
+
+Included assets:
+
+- `docker-compose.gcp-free.yml`
+- `.env.gcp.example`
+- `scripts/gcp-free-bootstrap.sh`
+- `docs/gcp-free-tier.md`
+
+Use this path when you want one always-free Compute Engine VM and do **not** want to provision Cloud SQL, Memorystore, Artifact Registry, or Cloud Run.
+
 ## API Reference
 
 ### Auth
