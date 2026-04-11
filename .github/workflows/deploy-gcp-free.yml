@@ -81,10 +81,37 @@ jobs:
           set -euo pipefail
 
           install -m 700 -d ~/.ssh
-          printf '%s' "${SSH_PRIVATE_KEY}" | tr -d '\r' > ~/.ssh/gcp_free_vm_key
-          chmod 600 ~/.ssh/gcp_free_vm_key
-          if ! ssh-keygen -y -f ~/.ssh/gcp_free_vm_key >/dev/null 2>&1; then
-            echo "::error::GCP_FREE_VM_SSH_KEY is not a valid private key. Paste the exact private key block from ~/.ssh/github_actions_deploy into the GitHub secret."
+          key_file=~/.ssh/gcp_free_vm_key
+          key_valid=false
+
+          # Try the secret exactly as provided, normalizing Windows line endings.
+          printf '%s' "${SSH_PRIVATE_KEY}" | tr -d '\r' > "${key_file}"
+          chmod 600 "${key_file}"
+          if ssh-keygen -y -f "${key_file}" >/dev/null 2>&1; then
+            key_valid=true
+          fi
+
+          # Try common GitHub secret formatting where newlines were pasted as literal \n.
+          if [[ "${key_valid}" != "true" ]]; then
+            printf '%s' "${SSH_PRIVATE_KEY}" | perl -0pe 's/\r//g; s/\\n/\n/g' > "${key_file}"
+            chmod 600 "${key_file}"
+            if ssh-keygen -y -f "${key_file}" >/dev/null 2>&1; then
+              key_valid=true
+            fi
+          fi
+
+          # Try base64-encoded private keys as a final fallback.
+          if [[ "${key_valid}" != "true" ]]; then
+            if printf '%s' "${SSH_PRIVATE_KEY}" | tr -d '\r\n\t ' | base64 -d > "${key_file}" 2>/dev/null; then
+              chmod 600 "${key_file}"
+              if ssh-keygen -y -f "${key_file}" >/dev/null 2>&1; then
+                key_valid=true
+              fi
+            fi
+          fi
+
+          if [[ "${key_valid}" != "true" ]]; then
+            echo "::error::GCP_FREE_VM_SSH_KEY is not a valid private key. The workflow accepts raw multiline keys, keys pasted with literal \\n, and base64-encoded private keys."
             exit 1
           fi
           ssh-keyscan -H "${VM_HOST}" >> ~/.ssh/known_hosts 2>/dev/null || true
