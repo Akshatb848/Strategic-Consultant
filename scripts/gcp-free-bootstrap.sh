@@ -177,6 +177,43 @@ env_value() {
   awk -F= -v lookup="${key}" '$1==lookup { print substr($0, index($0, "=") + 1) }' "${ENV_FILE}" | tail -n 1
 }
 
+legacy_conflicts_for_port() {
+  local port="$1"
+  docker_cmd ps --filter "publish=${port}" --format '{{.ID}} {{.Names}} {{.Label "com.docker.compose.project"}}'
+}
+
+ensure_required_ports() {
+  local backend_port frontend_port
+  backend_port="$(env_value "BACKEND_PORT")"
+  frontend_port="$(env_value "FRONTEND_PORT")"
+
+  for port in "${backend_port}" "${frontend_port}"; do
+    [[ -z "${port}" ]] && continue
+
+    local matches
+    matches="$(legacy_conflicts_for_port "${port}")"
+    [[ -z "${matches}" ]] && continue
+
+    while IFS= read -r match; do
+      [[ -z "${match}" ]] && continue
+
+      local container_id container_name compose_project
+      container_id="$(awk '{print $1}' <<<"${match}")"
+      container_name="$(awk '{print $2}' <<<"${match}")"
+      compose_project="$(awk '{print $3}' <<<"${match}")"
+
+      if [[ "${compose_project}" == "strategic-decision-maker" || "${container_name}" == strategic-decision-maker-* ]]; then
+        log "Removing legacy strategic-decision-maker container ${container_name} to free port ${port}."
+        docker_cmd rm -f "${container_id}"
+      else
+        echo "Port ${port} is already in use by container ${container_name}."
+        echo "Stop that container manually or change BACKEND_PORT/FRONTEND_PORT in ${ENV_FILE}, then rerun the deployment."
+        exit 1
+      fi
+    done <<<"${matches}"
+  done
+}
+
 docker_login_if_configured() {
   local backend_image frontend_image ghcr_username ghcr_read_token
   backend_image="$(env_value "BACKEND_IMAGE")"
@@ -237,5 +274,6 @@ ensure_swap
 prepare_env_file
 validate_env_file
 docker_login_if_configured
+ensure_required_ports
 launch_stack
 print_summary
