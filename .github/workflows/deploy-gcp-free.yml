@@ -72,8 +72,8 @@ jobs:
           VM_HOST: ${{ env.VM_HOST }}
           VM_DATA_DIR: ${{ env.VM_DATA_DIR }}
           JWT_SECRET: ${{ secrets.GCP_FREE_JWT_SECRET }}
-          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
-          GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
+          GHCR_USERNAME: ${{ github.actor }}
+          GHCR_READ_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
         with:
           host: ${{ secrets.GCP_FREE_VM_HOST }}
@@ -97,9 +97,7 @@ jobs:
 
             mkdir -p "${VM_DATA_DIR}"
 
-            if [ -n "${GHCR_USERNAME:-}" ] && [ -n "${GHCR_READ_TOKEN:-}" ]; then
-              echo "${GHCR_READ_TOKEN}" | docker login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
-            fi
+            echo "${GHCR_READ_TOKEN}" | docker login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
 
             cat > .env.gcp <<EOF
             JWT_SECRET=${JWT_SECRET}

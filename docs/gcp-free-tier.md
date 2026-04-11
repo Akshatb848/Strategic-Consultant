@@ -156,10 +156,7 @@ Required repository secrets:
 - `GCP_FREE_VM_SSH_KEY`
 - `GCP_FREE_JWT_SECRET`
 
-Optional repository secrets for private GHCR images:
-
-- `GHCR_USERNAME`
-- `GHCR_READ_TOKEN`
+The workflow uses the built-in GitHub Actions token to authenticate the VM to GHCR during each deploy, so no extra GHCR secrets are required.
 
 Then run the workflow manually or let it run on pushes to `main`.
 
