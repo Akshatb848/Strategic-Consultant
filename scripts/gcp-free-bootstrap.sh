@@ -6,7 +6,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_TEMPLATE="${ROOT_DIR}/.env.gcp.example"
 ENV_FILE="${ROOT_DIR}/.env.gcp"
 COMPOSE_FILE="${ROOT_DIR}/docker-compose.gcp-free.yml"
-DEFAULT_DATA_DIR="/opt/asis/data"
+DEFAULT_DATA_DIR=""
 
 if [[ "$(uname -s)" != "Linux" ]]; then
   echo "This bootstrap script is intended for a Debian or Ubuntu VM on GCP."
@@ -23,7 +23,7 @@ if [[ ! -f "${COMPOSE_FILE}" ]]; then
   exit 1
 fi
 
-if command -v sudo >/dev/null 2>&1 && [[ "${EUID}" -ne 0 ]]; then
+if command -v sudo >/dev/null 2>&1 && [[ "${EUID}" -ne 0 ]] && sudo -n true >/dev/null 2>&1; then
   SUDO="sudo"
 else
   SUDO=""
@@ -50,6 +50,11 @@ docker_cmd() {
 }
 
 install_base_packages() {
+  if [[ -z "${SUDO}" ]]; then
+    log "Skipping OS package installation because passwordless sudo is not available."
+    return
+  fi
+
   log "Installing OS packages required for Docker and deployment."
   run_root apt-get update
   run_root apt-get install -y ca-certificates curl git gnupg lsb-release openssl
@@ -59,6 +64,11 @@ install_docker() {
   if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
     log "Docker Engine and Compose plugin are already installed."
     return
+  fi
+
+  if [[ -z "${SUDO}" ]]; then
+    echo "Docker Engine and the Compose plugin are required, but passwordless sudo is not available to install them automatically."
+    exit 1
   fi
 
   local distro arch codename
@@ -84,6 +94,11 @@ install_docker() {
 }
 
 ensure_swap() {
+  if [[ -z "${SUDO}" ]]; then
+    log "Skipping swapfile configuration because passwordless sudo is not available."
+    return
+  fi
+
   if swapon --show | grep -q "/swapfile"; then
     log "Swapfile already configured."
     return
@@ -138,7 +153,11 @@ prepare_env_file() {
   local data_dir
   data_dir="$(awk -F= '$1=="ASIS_DATA_DIR" { print $2 }' "${ENV_FILE}" | tail -n 1)"
   if [[ -z "${data_dir}" ]]; then
-    data_dir="${DEFAULT_DATA_DIR}"
+    if [[ -n "${DEFAULT_DATA_DIR}" ]]; then
+      data_dir="${DEFAULT_DATA_DIR}"
+    else
+      data_dir="${HOME}/.asis/data"
+    fi
     replace_env_value "ASIS_DATA_DIR" "${data_dir}"
   fi
 
@@ -198,11 +217,19 @@ print_summary() {
   frontend_url="$(awk -F= '$1=="FRONTEND_URL" { print $2 }' "${ENV_FILE}" | tail -n 1)"
   backend_url="$(awk -F= '$1=="NEXT_PUBLIC_API_URL" { print $2 }' "${ENV_FILE}" | tail -n 1)"
 
+  docker_cmd compose -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" ps
+
   log "Deployment complete."
   echo "Frontend: ${frontend_url}"
   echo "Backend health: ${backend_url}/v1/health"
   echo "Backend docs: ${backend_url}/docs"
 }
+
+if [[ -z "${SUDO}" ]]; then
+  DEFAULT_DATA_DIR="${HOME}/.asis/data"
+else
+  DEFAULT_DATA_DIR="/opt/asis/data"
+fi
 
 install_base_packages
 install_docker

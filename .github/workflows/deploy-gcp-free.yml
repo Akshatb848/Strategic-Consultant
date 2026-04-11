@@ -131,20 +131,34 @@ jobs:
             "$(printf '%q ' env "${remote_env[@]}" /bin/bash -se)" <<'SCRIPT'
           set -euo pipefail
 
+          if sudo -n true >/dev/null 2>&1; then
+            SUDO="sudo"
+            DEPLOY_ROOT="/opt/asis"
+            RESOLVED_VM_DATA_DIR="${VM_DATA_DIR:-/opt/asis/data}"
+          else
+            SUDO=""
+            DEPLOY_ROOT="${HOME}/.asis"
+            RESOLVED_VM_DATA_DIR="${HOME}/.asis/data"
+          fi
+
+          APP_DIR="${DEPLOY_ROOT}/app"
+
           if ! command -v git >/dev/null 2>&1; then
-            sudo apt-get update
-            sudo apt-get install -y git
+            if [[ -n "${SUDO}" ]]; then
+              sudo apt-get update
+              sudo apt-get install -y git
+            else
+              echo "git is required on the VM and passwordless sudo is not available to install it automatically."
+              exit 1
+            fi
           fi
 
-          if [ ! -d /opt/asis/app/.git ]; then
-            sudo mkdir -p /opt/asis
-            sudo chown "$USER":"$USER" /opt/asis
-            git clone "https://github.com/${REPOSITORY}.git" /opt/asis/app
+          if [ ! -d "${APP_DIR}/.git" ]; then
+            mkdir -p "${DEPLOY_ROOT}"
+            git clone "https://github.com/${REPOSITORY}.git" "${APP_DIR}"
           fi
 
-          sudo chown -R "$USER":"$USER" /opt/asis/app
-
-          cd /opt/asis/app
+          cd "${APP_DIR}"
           git fetch origin
           git checkout main
           git pull --ff-only origin main
@@ -155,7 +169,7 @@ jobs:
           ALLOWED_ORIGINS=http://${VM_HOST}:3001
           NEXT_PUBLIC_API_URL=http://${VM_HOST}:8000
           DATABASE_URL=sqlite:////data/asis_v4.db
-          ASIS_DATA_DIR=${VM_DATA_DIR}
+          ASIS_DATA_DIR=${RESOLVED_VM_DATA_DIR}
           ENVIRONMENT=production
           ASIS_DEMO_MODE=true
           RUN_ANALYSES_INLINE=true
@@ -171,9 +185,8 @@ jobs:
           chmod +x scripts/gcp-free-bootstrap.sh
           export GHCR_USERNAME GHCR_READ_TOKEN
           ./scripts/gcp-free-bootstrap.sh
-          sudo docker compose -f docker-compose.gcp-free.yml --env-file .env.gcp ps
           SCRIPT
           then
-            echo "::error::SSH deploy failed. Verify GCP_FREE_VM_USER matches the VM login user and that ~/.ssh/authorized_keys contains the public key paired with GCP_FREE_VM_SSH_KEY."
+            echo "::error::Remote deploy failed. If SSH authentication is working, the VM likely lacks passwordless sudo for /opt-based setup; this workflow now falls back to a user-owned deployment root when needed."
             exit 1
           fi
