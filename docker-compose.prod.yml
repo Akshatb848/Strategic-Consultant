@@ -1,0 +1,32 @@
+version: "3.9"
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: asis/backend/Dockerfile
+    env_file:
+      - .env
+    environment:
+      ENVIRONMENT: production
+      ENABLE_AUTO_SCHEMA: "false"
+
+  frontend:
+    build:
+      context: .
+      dockerfile: asis/frontend/Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: https://backend.example.com
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    env_file:
+      - .env
+    volumes:
+      - ./litellm_config.yaml:/app/config.yaml
+

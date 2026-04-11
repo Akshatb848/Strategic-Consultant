@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "asis-backend"
+version = "4.0.0"
+description = "ASIS v4.0 enterprise backend"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "alembic>=1.13",
+  "celery>=5.4",
+  "fastapi>=0.115",
+  "httpx>=0.27",
+  "langgraph>=0.2",
+  "litellm>=1.50",
+  "mem0>=0.1",
+  "passlib>=1.7",
+  "pydantic>=2.9",
+  "pytest>=8.3",
+  "psycopg[binary]>=3.2",
+  "python-dotenv>=1.0",
+  "PyJWT>=2.9",
+  "qdrant-client>=1.12",
+  "redis>=5.1",
+  "sqlalchemy>=2.0",
+  "structlog>=24.4",
+  "uvicorn>=0.32",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

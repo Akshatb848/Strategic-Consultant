@@ -1,0 +1,60 @@
+{
+  "name": "report_delivery",
+  "nodes": [
+    {
+      "id": "analysis-complete",
+      "name": "Analysis Complete Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [240, 280],
+      "parameters": {
+        "path": "asis-analysis-complete",
+        "httpMethod": "POST",
+        "responseMode": "lastNode"
+      }
+    },
+    {
+      "id": "compose",
+      "name": "Compose Message",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [500, 280],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "name": "text",
+              "value": "=Strategic brief {{$json.body.analysis_id}} completed with confidence {{$json.body.strategic_brief.overall_confidence}}.",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "slack",
+      "name": "Send Slack Notification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [780, 280],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.SLACK_WEBHOOK_URL}}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"text\": $json.text}"
+      }
+    }
+  ],
+  "connections": {
+    "Analysis Complete Webhook": {
+      "main": [[{ "node": "Compose Message", "type": "main", "index": 0 }]]
+    },
+    "Compose Message": {
+      "main": [[{ "node": "Send Slack Notification", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": {},
+  "versionId": "report-delivery-v1"
+}

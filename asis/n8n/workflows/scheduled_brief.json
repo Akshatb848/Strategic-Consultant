@@ -1,0 +1,79 @@
+{
+  "name": "scheduled_brief",
+  "nodes": [
+    {
+      "id": "cron-daily",
+      "name": "Daily Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 280],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "build-request",
+      "name": "Build Analysis Payload",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [500, 280],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "name": "query",
+              "value": "Provide today's watchlist strategic brief for the enterprise monitoring queue.",
+              "type": "string"
+            },
+            {
+              "name": "company_context",
+              "value": "{\"company_name\":\"Portfolio Watchlist\",\"sector\":\"Multi-sector\",\"geography\":\"Global\"}",
+              "type": "json"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "call-backend",
+      "name": "Create Analysis",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [780, 280],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.BACKEND_URL}}/api/v1/analysis",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{$env.N8N_SERVICE_TOKEN}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{$json}}"
+      }
+    }
+  ],
+  "connections": {
+    "Daily Trigger": {
+      "main": [[{ "node": "Build Analysis Payload", "type": "main", "index": 0 }]]
+    },
+    "Build Analysis Payload": {
+      "main": [[{ "node": "Create Analysis", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": {},
+  "versionId": "scheduled-brief-v1"
+}

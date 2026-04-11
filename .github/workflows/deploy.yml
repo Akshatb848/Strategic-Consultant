@@ -1,0 +1,40 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+
+      - name: Submit backend Cloud Build
+        run: >
+          gcloud builds submit
+          --config asis/infra/cloudbuild/cloudbuild.backend.yaml
+          --substitutions _REGION=${{ secrets.GCP_REGION }},_BACKEND_SERVICE=${{ vars.BACKEND_SERVICE_NAME }},_AR_REPOSITORY=${{ vars.ARTIFACT_REGISTRY_REPOSITORY }},_AR_HOSTNAME=${{ vars.ARTIFACT_REGISTRY_HOST }}
+          .
+
+      - name: Submit frontend Cloud Build
+        run: >
+          gcloud builds submit
+          --config asis/infra/cloudbuild/cloudbuild.frontend.yaml
+          --substitutions _REGION=${{ secrets.GCP_REGION }},_FRONTEND_SERVICE=${{ vars.FRONTEND_SERVICE_NAME }},_AR_REPOSITORY=${{ vars.ARTIFACT_REGISTRY_REPOSITORY }},_AR_HOSTNAME=${{ vars.ARTIFACT_REGISTRY_HOST }},_PUBLIC_API_URL=${{ vars.PUBLIC_API_URL }}
+          .

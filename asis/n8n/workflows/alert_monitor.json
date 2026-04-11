@@ -1,0 +1,53 @@
+{
+  "name": "alert_monitor",
+  "nodes": [
+    {
+      "id": "hourly",
+      "name": "Hourly Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 280],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "request-alerts",
+      "name": "Request High Risk Brief",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [520, 280],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.BACKEND_URL}}/api/v1/analysis",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{$env.N8N_SERVICE_TOKEN}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"query\":\"Review the enterprise watchlist for high-priority risk changes in the last hour.\",\"company_context\":{\"company_name\":\"Enterprise Watchlist\",\"sector\":\"Multi-sector\",\"geography\":\"Global\"}}"
+      }
+    }
+  ],
+  "connections": {
+    "Hourly Trigger": {
+      "main": [[{ "node": "Request High Risk Brief", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": {},
+  "versionId": "alert-monitor-v1"
+}

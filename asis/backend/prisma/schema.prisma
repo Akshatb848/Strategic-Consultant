@@ -1,0 +1,147 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Organisation {
+  id           String   @id @default(cuid())
+  name         String   @unique
+  domain       String?
+  plan         String   @default("enterprise")
+  logoUrl      String?
+  primaryColor String   @default("#6366f1")
+  maxUsers     Int      @default(50)
+  maxAnalyses  Int      @default(1000)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  users        User[]
+  analyses     Analysis[]
+  @@index([domain])
+}
+
+model User {
+  id             String        @id @default(cuid())
+  email          String        @unique
+  passwordHash   String?
+  firstName      String
+  lastName       String
+  title          String        @default("")
+  organisation   String        @default("")
+  organisationId String?
+  org            Organisation? @relation(fields: [organisationId], references: [id])
+  role           String        @default("Analyst")
+  avatarInitials String        @default("")
+  avatarUrl      String?
+  plan           String        @default("free")
+  googleId       String?       @unique
+  githubId       String?       @unique
+  authProvider   String        @default("email")
+  isActive       Boolean       @default(true)
+  emailVerified  Boolean       @default(false)
+  isAdmin        Boolean       @default(false)
+  analysisCount  Int           @default(0)
+  lastLoginAt    DateTime?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  analyses       Analysis[]
+  refreshTokens  RefreshToken[]
+  sessions       Session[]
+  @@index([email])
+  @@index([googleId])
+  @@index([githubId])
+  @@index([organisationId])
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+  @@index([userId])
+}
+
+model Analysis {
+  id                    String        @id @default(cuid())
+  userId                String
+  user                  User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organisationId        String?
+  org                   Organisation? @relation(fields: [organisationId], references: [id])
+  problemStatement      String        @db.Text
+  organisationContext   String        @default("")
+  industryContext       String        @default("")
+  geographyContext      String        @default("")
+  decisionType          String        @default("")
+  status                String        @default("pending")
+  pipelineVersion       String        @default("4.0.0")
+  currentAgent          String?
+  agentsCompleted       Int           @default(0)
+  agentsTotal           Int           @default(8)
+  durationSeconds       Float?
+  overallConfidence     Float?
+  decisionRecommendation String?
+  boardNarrative        String?       @db.Text
+  executiveSummary      String?       @db.Text
+  topStrategicRisk      String?
+  recommendedInvestment String?
+  strategistData        Json?
+  quantData             Json?
+  marketIntelData       Json?
+  riskData              Json?
+  redTeamData           Json?
+  ethicistData          Json?
+  synthesisData         Json?
+  coveVerificationData Json?
+  logicConsistencyPassed Boolean?
+  redTeamChallengeCount  Int        @default(0)
+  selfCorrectionCount    Int        @default(0)
+  pdfUrl               String?
+  reportVersion        Int           @default(1)
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+  completedAt          DateTime?
+  agentLogs            AgentLog[]
+  @@index([userId])
+  @@index([organisationId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model AgentLog {
+  id              String   @id @default(cuid())
+  analysisId      String
+  analysis        Analysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+  agentId         String
+  agentName       String
+  status          String
+  inputTokens     Int?
+  outputTokens    Int?
+  durationMs      Int?
+  attemptNumber   Int      @default(1)
+  confidenceScore Float?
+  selfCorrected   Boolean  @default(false)
+  correctionReason String? @db.Text
+  rawPrompt       String?  @db.Text
+  rawOutput       String?  @db.Text
+  parsedOutput    Json?
+  createdAt       DateTime @default(now())
+  @@index([analysisId])
+  @@index([agentId])
+}
+
+model RefreshToken {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  @@index([token])
+  @@index([userId])
+}

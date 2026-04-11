@@ -1,0 +1,186 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ─── ORGANISATIONS (Enterprise multi-tenancy) ───────────────────────────────
+model Organisation {
+  id           String   @id @default(cuid())
+  name         String   @unique
+  domain       String?
+  plan         String   @default("enterprise")
+  logoUrl      String?
+  primaryColor String   @default("#6366f1")
+  maxUsers     Int      @default(50)
+  maxAnalyses  Int      @default(1000)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  users    User[]
+  analyses Analysis[]
+
+  @@index([domain])
+}
+
+// ─── USERS ──────────────────────────────────────────────────────────────────
+model User {
+  id             String        @id @default(cuid())
+  email          String        @unique
+  passwordHash   String?
+  firstName      String
+  lastName       String
+  title          String        @default("")
+  organisation   String        @default("")
+  organisationId String?
+  org            Organisation? @relation(fields: [organisationId], references: [id])
+  role           String        @default("Analyst")
+  avatarInitials String        @default("")
+  avatarUrl      String?
+  plan           String        @default("free")
+
+  // OAuth
+  googleId     String? @unique
+  githubId     String? @unique
+  authProvider String  @default("email")
+
+  // Access control
+  isActive      Boolean @default(true)
+  emailVerified Boolean @default(false)
+  isAdmin       Boolean @default(false)
+
+  // Usage tracking
+  analysisCount Int       @default(0)
+  lastLoginAt   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  analyses      Analysis[]
+  refreshTokens RefreshToken[]
+  sessions      Session[]
+
+  @@index([email])
+  @@index([googleId])
+  @@index([githubId])
+  @@index([organisationId])
+}
+
+// ─── SESSIONS (for audit trail) ─────────────────────────────────────────────
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+
+  @@index([userId])
+}
+
+// ─── ANALYSES ───────────────────────────────────────────────────────────────
+model Analysis {
+  id                     String        @id @default(cuid())
+  userId                 String
+  user                   User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organisationId         String?
+  org                    Organisation? @relation(fields: [organisationId], references: [id])
+
+  // Problem context
+  problemStatement       String
+  organisationContext     String @default("")
+  industryContext         String @default("")
+  geographyContext        String @default("")
+  decisionType           String @default("")
+
+  // Pipeline state
+  status                 String @default("pending")
+  pipelineVersion        String @default("4.0.0")
+  currentAgent           String?
+  agentsCompleted        Int    @default(0)
+  agentsTotal            Int    @default(8)
+
+  // Results metadata
+  durationSeconds        Float?
+  overallConfidence       Float?
+  decisionRecommendation String?
+  boardNarrative         String?
+  executiveSummary       String?
+  topStrategicRisk       String?
+  recommendedInvestment  String?
+
+  // Agent outputs (stored as JSON strings for SQLite, Json for PostgreSQL)
+  strategistData       String?
+  quantData            String?
+  marketIntelData      String?
+  riskData             String?
+  redTeamData          String?
+  ethicistData         String?
+  synthesisData        String?
+  coveVerificationData String?
+
+  // Verification
+  logicConsistencyPassed Boolean?
+  redTeamChallengeCount  Int     @default(0)
+  selfCorrectionCount    Int     @default(0)
+
+  // Export
+  pdfUrl        String?
+  reportVersion Int @default(1)
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  completedAt DateTime?
+
+  agentLogs AgentLog[]
+
+  @@index([userId])
+  @@index([organisationId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+// ─── AGENT LOGS (full audit trail of agent reasoning) ───────────────────────
+model AgentLog {
+  id           String   @id @default(cuid())
+  analysisId   String
+  analysis     Analysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+
+  agentId      String
+  agentName    String
+  status       String
+
+  inputTokens    Int?
+  outputTokens   Int?
+  durationMs     Int?
+  attemptNumber  Int     @default(1)
+
+  confidenceScore  Float?
+  selfCorrected    Boolean @default(false)
+  correctionReason String?
+
+  rawPrompt    String?
+  rawOutput    String?
+  parsedOutput String?
+
+  createdAt DateTime @default(now())
+
+  @@index([analysisId])
+  @@index([agentId])
+}
+
+// ─── REFRESH TOKENS ─────────────────────────────────────────────────────────
+model RefreshToken {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([token])
+  @@index([userId])
+}
