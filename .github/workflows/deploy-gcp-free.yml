@@ -8,13 +8,11 @@ on:
 
 permissions:
   contents: read
-  packages: write
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
     env:
-      REGISTRY: ghcr.io
       REPOSITORY: ${{ github.repository }}
       VM_HOST: ${{ vars.GCP_FREE_VM_HOST || secrets.GCP_FREE_VM_HOST }}
       VM_USER: ${{ vars.GCP_FREE_VM_USER || secrets.GCP_FREE_VM_USER }}
@@ -26,38 +24,27 @@ jobs:
         id: names
         shell: bash
         run: |
-          repo_lc="$(echo "${REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
-          owner_lc="${repo_lc%%/*}"
-          repo_name_lc="${repo_lc##*/}"
-          echo "repo_lc=${repo_lc}" >> "$GITHUB_OUTPUT"
-          echo "backend_image=${REGISTRY}/${owner_lc}/${repo_name_lc}-backend:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
-          echo "frontend_image=${REGISTRY}/${owner_lc}/${repo_name_lc}-frontend:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          echo "backend_image=asis-backend:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          echo "frontend_image=asis-frontend:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-buildx-action@v3
 
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push backend image
+      - name: Build backend image
         uses: docker/build-push-action@v6
         with:
           context: .
           file: asis/backend/Dockerfile
-          push: true
+          load: true
           tags: ${{ steps.names.outputs.backend_image }}
           cache-from: type=gha,scope=asis-backend
           cache-to: type=gha,mode=max,scope=asis-backend
 
-      - name: Build and push frontend image
+      - name: Build frontend image
         uses: docker/build-push-action@v6
         with:
           context: .
           file: asis/frontend/Dockerfile
-          push: true
+          load: true
           build-args: |
             NEXT_PUBLIC_API_URL=http://${{ env.VM_HOST }}:8000
           tags: ${{ steps.names.outputs.frontend_image }}
@@ -73,8 +60,6 @@ jobs:
           VM_USER: ${{ env.VM_USER }}
           VM_DATA_DIR: ${{ env.VM_DATA_DIR }}
           JWT_SECRET: ${{ secrets.GCP_FREE_JWT_SECRET }}
-          GHCR_USERNAME: ${{ github.actor }}
-          GHCR_READ_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
           SSH_PRIVATE_KEY: ${{ secrets.GCP_FREE_VM_SSH_KEY }}
         run: |
@@ -114,7 +99,20 @@ jobs:
             echo "::error::GCP_FREE_VM_SSH_KEY is not a valid private key. The workflow accepts raw multiline keys, keys pasted with literal \\n, and base64-encoded private keys."
             exit 1
           fi
+
+          ssh_opts=(
+            -i ~/.ssh/gcp_free_vm_key
+            -o BatchMode=yes
+            -o ConnectTimeout=15
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile=~/.ssh/known_hosts
+          )
           ssh-keyscan -H "${VM_HOST}" >> ~/.ssh/known_hosts 2>/dev/null || true
+
+          # Transfer runner-built images directly to the VM so deploys do not depend on GHCR pull access.
+          docker save "${BACKEND_IMAGE}" | gzip | ssh "${ssh_opts[@]}" "${VM_USER}@${VM_HOST}" 'gunzip | docker load'
+          docker save "${FRONTEND_IMAGE}" | gzip | ssh "${ssh_opts[@]}" "${VM_USER}@${VM_HOST}" 'gunzip | docker load'
 
           remote_env=(
             "BACKEND_IMAGE=${BACKEND_IMAGE}"
@@ -122,12 +120,10 @@ jobs:
             "VM_HOST=${VM_HOST}"
             "VM_DATA_DIR=${VM_DATA_DIR}"
             "JWT_SECRET=${JWT_SECRET}"
-            "GHCR_USERNAME=${GHCR_USERNAME}"
-            "GHCR_READ_TOKEN=${GHCR_READ_TOKEN}"
             "REPOSITORY=${REPOSITORY}"
           )
 
-          if ! ssh -i ~/.ssh/gcp_free_vm_key -o BatchMode=yes -o ConnectTimeout=15 -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=~/.ssh/known_hosts "${VM_USER}@${VM_HOST}" \
+          if ! ssh "${ssh_opts[@]}" "${VM_USER}@${VM_HOST}" \
             "$(printf '%q ' env "${remote_env[@]}" /bin/bash -se)" <<'SCRIPT'
           set -euo pipefail
 
@@ -188,7 +184,6 @@ jobs:
           FRONTEND_IMAGE=${FRONTEND_IMAGE}
           EOF
 
-          export GHCR_USERNAME GHCR_READ_TOKEN
           bash scripts/gcp-free-bootstrap.sh
           SCRIPT
           then
