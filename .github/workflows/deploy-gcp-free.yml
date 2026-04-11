@@ -82,6 +82,7 @@ jobs:
           envs: BACKEND_IMAGE,FRONTEND_IMAGE,VM_HOST,VM_DATA_DIR,JWT_SECRET,GHCR_USERNAME,GHCR_READ_TOKEN,REPOSITORY
           script_stop: true
           script: |
+            /bin/bash -se <<'SCRIPT'
             set -euo pipefail
 
             if ! command -v git >/dev/null 2>&1; then
@@ -95,12 +96,12 @@ jobs:
               git clone "https://github.com/${REPOSITORY}.git" /opt/asis/app
             fi
 
+            sudo chown -R "$USER":"$USER" /opt/asis/app
+
             cd /opt/asis/app
             git fetch origin
             git checkout main
             git pull --ff-only origin main
-
-            mkdir -p "${VM_DATA_DIR}"
 
             cat > .env.gcp <<EOF
             JWT_SECRET=${JWT_SECRET}
@@ -125,3 +126,4 @@ jobs:
             export GHCR_USERNAME GHCR_READ_TOKEN
             ./scripts/gcp-free-bootstrap.sh
             sudo docker compose -f docker-compose.gcp-free.yml --env-file .env.gcp ps
+            SCRIPT
