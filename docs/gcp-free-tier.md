@@ -12,6 +12,7 @@ It does **not** use the paid managed infrastructure in `asis/infra` such as Clou
 - [`docker-compose.gcp-free.yml`](../docker-compose.gcp-free.yml)
 - [`.env.gcp.example`](../.env.gcp.example)
 - [`scripts/gcp-free-bootstrap.sh`](../scripts/gcp-free-bootstrap.sh)
+- [`.github/workflows/deploy-gcp-free.yml`](../.github/workflows/deploy-gcp-free.yml)
 
 ## 1. Create The VM
 
@@ -105,7 +106,8 @@ The bootstrap helper will:
 - create the SQLite data directory
 - fill in the VM IP automatically if `.env.gcp` still contains the placeholder token
 - generate `JWT_SECRET` automatically if the placeholder is still present
-- run `docker compose -f docker-compose.gcp-free.yml --env-file .env.gcp up -d --build`
+- use prebuilt images if `BACKEND_IMAGE` and `FRONTEND_IMAGE` are set in `.env.gcp`
+- otherwise run `docker compose -f docker-compose.gcp-free.yml --env-file .env.gcp up -d --build`
 
 ## 5. Verify The Deployment
 
@@ -136,6 +138,30 @@ docker compose -f docker-compose.gcp-free.yml --env-file .env.gcp up -d --build
 ```
 
 Rebuild the stack if the VM external IP changes, because the frontend bakes `NEXT_PUBLIC_API_URL` into the production build.
+
+## GitHub Actions Deployment
+
+If building on the VM is too slow, use the GitHub-hosted runner workflow:
+
+- build backend and frontend images on GitHub Actions
+- push them to GHCR
+- SSH into the VM
+- update `.env.gcp` with the new image tags
+- pull and restart the containers on the VM
+
+Required repository secrets:
+
+- `GCP_FREE_VM_HOST`
+- `GCP_FREE_VM_USER`
+- `GCP_FREE_VM_SSH_KEY`
+- `GCP_FREE_JWT_SECRET`
+
+Optional repository secrets for private GHCR images:
+
+- `GHCR_USERNAME`
+- `GHCR_READ_TOKEN`
+
+Then run the workflow manually or let it run on pushes to `main`.
 
 ## Notes
 

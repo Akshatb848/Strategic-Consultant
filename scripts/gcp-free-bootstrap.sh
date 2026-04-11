@@ -153,8 +153,24 @@ validate_env_file() {
   fi
 }
 
+env_value() {
+  local key="$1"
+  awk -F= -v lookup="${key}" '$1==lookup { print substr($0, index($0, "=") + 1) }' "${ENV_FILE}" | tail -n 1
+}
+
 launch_stack() {
-  log "Building and launching the free-tier Docker stack."
+  local backend_image frontend_image
+  backend_image="$(env_value "BACKEND_IMAGE")"
+  frontend_image="$(env_value "FRONTEND_IMAGE")"
+
+  if [[ -n "${backend_image}" && -n "${frontend_image}" ]]; then
+    log "Using prebuilt images from .env.gcp."
+    docker_cmd compose -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" pull backend frontend
+    docker_cmd compose -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" up -d --remove-orphans backend frontend
+    return
+  fi
+
+  log "Building and launching the free-tier Docker stack on the VM."
   docker_cmd compose -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" up -d --build
 }
 

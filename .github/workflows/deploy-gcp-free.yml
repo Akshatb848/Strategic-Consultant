@@ -1,0 +1,125 @@
+name: Deploy GCP Free Tier
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    env:
+      REGISTRY: ghcr.io
+      REPOSITORY: ${{ github.repository }}
+      VM_HOST: ${{ secrets.GCP_FREE_VM_HOST }}
+      VM_USER: ${{ secrets.GCP_FREE_VM_USER }}
+      VM_DATA_DIR: /opt/asis/data
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Normalize image names
+        id: names
+        shell: bash
+        run: |
+          repo_lc="$(echo "${REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
+          owner_lc="${repo_lc%%/*}"
+          repo_name_lc="${repo_lc##*/}"
+          echo "repo_lc=${repo_lc}" >> "$GITHUB_OUTPUT"
+          echo "backend_image=${REGISTRY}/${owner_lc}/${repo_name_lc}-backend:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          echo "frontend_image=${REGISTRY}/${owner_lc}/${repo_name_lc}-frontend:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: asis/backend/Dockerfile
+          push: true
+          tags: ${{ steps.names.outputs.backend_image }}
+          cache-from: type=gha,scope=asis-backend
+          cache-to: type=gha,mode=max,scope=asis-backend
+
+      - name: Build and push frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: asis/frontend/Dockerfile
+          push: true
+          build-args: |
+            NEXT_PUBLIC_API_URL=http://${{ env.VM_HOST }}:8000
+          tags: ${{ steps.names.outputs.frontend_image }}
+          cache-from: type=gha,scope=asis-frontend
+          cache-to: type=gha,mode=max,scope=asis-frontend
+
+      - name: Deploy to GCP VM
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          BACKEND_IMAGE: ${{ steps.names.outputs.backend_image }}
+          FRONTEND_IMAGE: ${{ steps.names.outputs.frontend_image }}
+          VM_HOST: ${{ env.VM_HOST }}
+          VM_DATA_DIR: ${{ env.VM_DATA_DIR }}
+          JWT_SECRET: ${{ secrets.GCP_FREE_JWT_SECRET }}
+          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
+          GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+        with:
+          host: ${{ secrets.GCP_FREE_VM_HOST }}
+          username: ${{ secrets.GCP_FREE_VM_USER }}
+          key: ${{ secrets.GCP_FREE_VM_SSH_KEY }}
+          envs: BACKEND_IMAGE,FRONTEND_IMAGE,VM_HOST,VM_DATA_DIR,JWT_SECRET,GHCR_USERNAME,GHCR_READ_TOKEN,REPOSITORY
+          script_stop: true
+          script: |
+            set -euo pipefail
+
+            if [ ! -d /opt/asis/app/.git ]; then
+              sudo mkdir -p /opt/asis
+              sudo chown "$USER":"$USER" /opt/asis
+              git clone "https://github.com/${REPOSITORY}.git" /opt/asis/app
+            fi
+
+            cd /opt/asis/app
+            git fetch origin
+            git checkout main
+            git pull --ff-only origin main
+
+            mkdir -p "${VM_DATA_DIR}"
+
+            if [ -n "${GHCR_USERNAME:-}" ] && [ -n "${GHCR_READ_TOKEN:-}" ]; then
+              echo "${GHCR_READ_TOKEN}" | docker login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
+            fi
+
+            cat > .env.gcp <<EOF
+            JWT_SECRET=${JWT_SECRET}
+            FRONTEND_URL=http://${VM_HOST}:3001
+            ALLOWED_ORIGINS=http://${VM_HOST}:3001
+            NEXT_PUBLIC_API_URL=http://${VM_HOST}:8000
+            DATABASE_URL=sqlite:////data/asis_v4.db
+            ASIS_DATA_DIR=${VM_DATA_DIR}
+            ENVIRONMENT=production
+            ASIS_DEMO_MODE=true
+            RUN_ANALYSES_INLINE=true
+            ENABLE_AUTO_SCHEMA=true
+            SECURE_COOKIES=false
+            LOCAL_WORKER_CONCURRENCY=1
+            BACKEND_PORT=8000
+            FRONTEND_PORT=3001
+            BACKEND_IMAGE=${BACKEND_IMAGE}
+            FRONTEND_IMAGE=${FRONTEND_IMAGE}
+            EOF
+
+            docker compose -f docker-compose.gcp-free.yml --env-file .env.gcp pull backend frontend
+            docker compose -f docker-compose.gcp-free.yml --env-file .env.gcp up -d --remove-orphans backend frontend
+            docker compose -f docker-compose.gcp-free.yml --env-file .env.gcp ps

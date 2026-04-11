@@ -66,6 +66,7 @@ Included assets:
 - `.env.gcp.example`
 - `scripts/gcp-free-bootstrap.sh`
 - `docs/gcp-free-tier.md`
+- `.github/workflows/deploy-gcp-free.yml`
 
 Use this path when you want one always-free Compute Engine VM and do **not** want to provision Cloud SQL, Memorystore, Artifact Registry, or Cloud Run.
 

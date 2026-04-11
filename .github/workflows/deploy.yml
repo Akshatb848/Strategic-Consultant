@@ -1,9 +1,6 @@
-name: Deploy
+name: Deploy Managed GCP
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
 
 permissions:

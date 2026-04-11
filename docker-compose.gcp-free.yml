@@ -2,6 +2,7 @@ name: asis-gcp-free
 
 services:
   backend:
+    image: ${BACKEND_IMAGE:-asis-backend:gcp-free}
     build:
       context: .
       dockerfile: asis/backend/Dockerfile
@@ -31,6 +32,7 @@ services:
       start_period: 20s
 
   frontend:
+    image: ${FRONTEND_IMAGE:-asis-frontend:gcp-free}
     build:
       context: .
       dockerfile: asis/frontend/Dockerfile
