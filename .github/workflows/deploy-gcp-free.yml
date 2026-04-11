@@ -160,8 +160,14 @@ jobs:
 
           cd "${APP_DIR}"
           git fetch origin
-          git checkout main
-          git pull --ff-only origin main
+          if git show-ref --verify --quiet refs/heads/main; then
+            git checkout main
+          else
+            git checkout -b main origin/main
+          fi
+          # This checkout is automation-owned, so keep it force-synced to origin/main.
+          git reset --hard origin/main
+          git clean -fd
 
           cat > .env.gcp <<EOF
           JWT_SECRET=${JWT_SECRET}
@@ -182,9 +188,8 @@ jobs:
           FRONTEND_IMAGE=${FRONTEND_IMAGE}
           EOF
 
-          chmod +x scripts/gcp-free-bootstrap.sh
           export GHCR_USERNAME GHCR_READ_TOKEN
-          ./scripts/gcp-free-bootstrap.sh
+          bash scripts/gcp-free-bootstrap.sh
           SCRIPT
           then
             echo "::error::Remote deploy failed. If SSH authentication is working, the VM likely lacks passwordless sudo for /opt-based setup; this workflow now falls back to a user-owned deployment root when needed."
