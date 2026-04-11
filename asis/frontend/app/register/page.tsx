@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 
-export default function RegisterPage() {
+function RegisterPageContent() {
   const { register, isAuthenticated, loading } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -77,6 +77,18 @@ export default function RegisterPage() {
       </div>
     </main>
   );
+}
+
+export default function RegisterPage() {
+  return (
+    <Suspense fallback={<PageShell />}>
+      <RegisterPageContent />
+    </Suspense>
+  );
+}
+
+function PageShell() {
+  return <div style={{ minHeight: "100vh", background: "#050914" }} />;
 }
 
 const inputStyle: React.CSSProperties = {

@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-export default function LoginPage() {
+function LoginPageContent() {
   const { login, isAuthenticated, loading } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -129,6 +129,18 @@ export default function LoginPage() {
       </div>
     </main>
   );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<PageShell />}>
+      <LoginPageContent />
+    </Suspense>
+  );
+}
+
+function PageShell() {
+  return <div style={{ minHeight: "100vh", background: "#050914" }} />;
 }
 
 const inputStyle: React.CSSProperties = {

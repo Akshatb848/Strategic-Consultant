@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, Loader, Zap } from "lucide-react";
@@ -8,7 +8,7 @@ import { ArrowLeft, Loader, Zap } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { analysesAPI } from "@/lib/api";
 
-export default function NewAnalysisPage() {
+function NewAnalysisPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { isAuthenticated, loading } = useAuth();
@@ -163,4 +163,16 @@ export default function NewAnalysisPage() {
       </div>
     </div>
   );
+}
+
+export default function NewAnalysisPage() {
+  return (
+    <Suspense fallback={<PageShell />}>
+      <NewAnalysisPageContent />
+    </Suspense>
+  );
+}
+
+function PageShell() {
+  return <div style={{ minHeight: "100vh", background: "#070b14" }} />;
 }
