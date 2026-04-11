@@ -158,6 +158,25 @@ env_value() {
   awk -F= -v lookup="${key}" '$1==lookup { print substr($0, index($0, "=") + 1) }' "${ENV_FILE}" | tail -n 1
 }
 
+docker_login_if_configured() {
+  local backend_image frontend_image ghcr_username ghcr_read_token
+  backend_image="$(env_value "BACKEND_IMAGE")"
+  frontend_image="$(env_value "FRONTEND_IMAGE")"
+  ghcr_username="${GHCR_USERNAME:-}"
+  ghcr_read_token="${GHCR_READ_TOKEN:-}"
+
+  if [[ -z "${ghcr_username}" || -z "${ghcr_read_token}" ]]; then
+    return
+  fi
+
+  if [[ "${backend_image}" != ghcr.io/* && "${frontend_image}" != ghcr.io/* ]]; then
+    return
+  fi
+
+  log "Logging in to GHCR for prebuilt image pulls."
+  printf "%s\n" "${ghcr_read_token}" | docker_cmd login ghcr.io -u "${ghcr_username}" --password-stdin
+}
+
 launch_stack() {
   local backend_image frontend_image
   backend_image="$(env_value "BACKEND_IMAGE")"
@@ -190,5 +209,6 @@ install_docker
 ensure_swap
 prepare_env_file
 validate_env_file
+docker_login_if_configured
 launch_stack
 print_summary

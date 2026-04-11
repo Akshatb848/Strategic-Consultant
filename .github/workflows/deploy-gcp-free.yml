@@ -84,6 +84,11 @@ jobs:
           script: |
             set -euo pipefail
 
+            if ! command -v git >/dev/null 2>&1; then
+              sudo apt-get update
+              sudo apt-get install -y git
+            fi
+
             if [ ! -d /opt/asis/app/.git ]; then
               sudo mkdir -p /opt/asis
               sudo chown "$USER":"$USER" /opt/asis
@@ -96,8 +101,6 @@ jobs:
             git pull --ff-only origin main
 
             mkdir -p "${VM_DATA_DIR}"
-
-            echo "${GHCR_READ_TOKEN}" | docker login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
 
             cat > .env.gcp <<EOF
             JWT_SECRET=${JWT_SECRET}
@@ -118,6 +121,7 @@ jobs:
             FRONTEND_IMAGE=${FRONTEND_IMAGE}
             EOF
 
-            docker compose -f docker-compose.gcp-free.yml --env-file .env.gcp pull backend frontend
-            docker compose -f docker-compose.gcp-free.yml --env-file .env.gcp up -d --remove-orphans backend frontend
-            docker compose -f docker-compose.gcp-free.yml --env-file .env.gcp ps
+            chmod +x scripts/gcp-free-bootstrap.sh
+            export GHCR_USERNAME GHCR_READ_TOKEN
+            ./scripts/gcp-free-bootstrap.sh
+            sudo docker compose -f docker-compose.gcp-free.yml --env-file .env.gcp ps
