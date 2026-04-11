@@ -65,65 +65,79 @@ jobs:
           cache-to: type=gha,mode=max,scope=asis-frontend
 
       - name: Deploy to GCP VM
-        uses: appleboy/ssh-action@v1.2.0
+        shell: bash
         env:
           BACKEND_IMAGE: ${{ steps.names.outputs.backend_image }}
           FRONTEND_IMAGE: ${{ steps.names.outputs.frontend_image }}
           VM_HOST: ${{ env.VM_HOST }}
+          VM_USER: ${{ secrets.GCP_FREE_VM_USER }}
           VM_DATA_DIR: ${{ env.VM_DATA_DIR }}
           JWT_SECRET: ${{ secrets.GCP_FREE_JWT_SECRET }}
           GHCR_USERNAME: ${{ github.actor }}
           GHCR_READ_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
-        with:
-          host: ${{ secrets.GCP_FREE_VM_HOST }}
-          username: ${{ secrets.GCP_FREE_VM_USER }}
-          key: ${{ secrets.GCP_FREE_VM_SSH_KEY }}
-          envs: BACKEND_IMAGE,FRONTEND_IMAGE,VM_HOST,VM_DATA_DIR,JWT_SECRET,GHCR_USERNAME,GHCR_READ_TOKEN,REPOSITORY
-          script_stop: true
-          script: |
-            /bin/bash -se <<'SCRIPT'
-            set -euo pipefail
+          SSH_PRIVATE_KEY: ${{ secrets.GCP_FREE_VM_SSH_KEY }}
+        run: |
+          set -euo pipefail
 
-            if ! command -v git >/dev/null 2>&1; then
-              sudo apt-get update
-              sudo apt-get install -y git
-            fi
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${SSH_PRIVATE_KEY}" > ~/.ssh/gcp_free_vm_key
+          chmod 600 ~/.ssh/gcp_free_vm_key
 
-            if [ ! -d /opt/asis/app/.git ]; then
-              sudo mkdir -p /opt/asis
-              sudo chown "$USER":"$USER" /opt/asis
-              git clone "https://github.com/${REPOSITORY}.git" /opt/asis/app
-            fi
+          remote_env=(
+            "BACKEND_IMAGE=${BACKEND_IMAGE}"
+            "FRONTEND_IMAGE=${FRONTEND_IMAGE}"
+            "VM_HOST=${VM_HOST}"
+            "VM_DATA_DIR=${VM_DATA_DIR}"
+            "JWT_SECRET=${JWT_SECRET}"
+            "GHCR_USERNAME=${GHCR_USERNAME}"
+            "GHCR_READ_TOKEN=${GHCR_READ_TOKEN}"
+            "REPOSITORY=${REPOSITORY}"
+          )
 
-            sudo chown -R "$USER":"$USER" /opt/asis/app
+          ssh -i ~/.ssh/gcp_free_vm_key -o BatchMode=yes -o StrictHostKeyChecking=accept-new "${VM_USER}@${VM_HOST}" \
+            "$(printf '%q ' env "${remote_env[@]}" /bin/bash -se)" <<'SCRIPT'
+          set -euo pipefail
 
-            cd /opt/asis/app
-            git fetch origin
-            git checkout main
-            git pull --ff-only origin main
+          if ! command -v git >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y git
+          fi
 
-            cat > .env.gcp <<EOF
-            JWT_SECRET=${JWT_SECRET}
-            FRONTEND_URL=http://${VM_HOST}:3001
-            ALLOWED_ORIGINS=http://${VM_HOST}:3001
-            NEXT_PUBLIC_API_URL=http://${VM_HOST}:8000
-            DATABASE_URL=sqlite:////data/asis_v4.db
-            ASIS_DATA_DIR=${VM_DATA_DIR}
-            ENVIRONMENT=production
-            ASIS_DEMO_MODE=true
-            RUN_ANALYSES_INLINE=true
-            ENABLE_AUTO_SCHEMA=true
-            SECURE_COOKIES=false
-            LOCAL_WORKER_CONCURRENCY=1
-            BACKEND_PORT=8000
-            FRONTEND_PORT=3001
-            BACKEND_IMAGE=${BACKEND_IMAGE}
-            FRONTEND_IMAGE=${FRONTEND_IMAGE}
-            EOF
+          if [ ! -d /opt/asis/app/.git ]; then
+            sudo mkdir -p /opt/asis
+            sudo chown "$USER":"$USER" /opt/asis
+            git clone "https://github.com/${REPOSITORY}.git" /opt/asis/app
+          fi
 
-            chmod +x scripts/gcp-free-bootstrap.sh
-            export GHCR_USERNAME GHCR_READ_TOKEN
-            ./scripts/gcp-free-bootstrap.sh
-            sudo docker compose -f docker-compose.gcp-free.yml --env-file .env.gcp ps
-            SCRIPT
+          sudo chown -R "$USER":"$USER" /opt/asis/app
+
+          cd /opt/asis/app
+          git fetch origin
+          git checkout main
+          git pull --ff-only origin main
+
+          cat > .env.gcp <<EOF
+          JWT_SECRET=${JWT_SECRET}
+          FRONTEND_URL=http://${VM_HOST}:3001
+          ALLOWED_ORIGINS=http://${VM_HOST}:3001
+          NEXT_PUBLIC_API_URL=http://${VM_HOST}:8000
+          DATABASE_URL=sqlite:////data/asis_v4.db
+          ASIS_DATA_DIR=${VM_DATA_DIR}
+          ENVIRONMENT=production
+          ASIS_DEMO_MODE=true
+          RUN_ANALYSES_INLINE=true
+          ENABLE_AUTO_SCHEMA=true
+          SECURE_COOKIES=false
+          LOCAL_WORKER_CONCURRENCY=1
+          BACKEND_PORT=8000
+          FRONTEND_PORT=3001
+          BACKEND_IMAGE=${BACKEND_IMAGE}
+          FRONTEND_IMAGE=${FRONTEND_IMAGE}
+          EOF
+
+          chmod +x scripts/gcp-free-bootstrap.sh
+          export GHCR_USERNAME GHCR_READ_TOKEN
+          ./scripts/gcp-free-bootstrap.sh
+          sudo docker compose -f docker-compose.gcp-free.yml --env-file .env.gcp ps
+          SCRIPT
