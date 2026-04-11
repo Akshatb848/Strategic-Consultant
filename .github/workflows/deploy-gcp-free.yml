@@ -81,8 +81,13 @@ jobs:
           set -euo pipefail
 
           install -m 700 -d ~/.ssh
-          printf '%s\n' "${SSH_PRIVATE_KEY}" > ~/.ssh/gcp_free_vm_key
+          printf '%s' "${SSH_PRIVATE_KEY}" | tr -d '\r' > ~/.ssh/gcp_free_vm_key
           chmod 600 ~/.ssh/gcp_free_vm_key
+          if ! ssh-keygen -y -f ~/.ssh/gcp_free_vm_key >/dev/null 2>&1; then
+            echo "::error::GCP_FREE_VM_SSH_KEY is not a valid private key. Paste the exact private key block from ~/.ssh/github_actions_deploy into the GitHub secret."
+            exit 1
+          fi
+          ssh-keyscan -H "${VM_HOST}" >> ~/.ssh/known_hosts 2>/dev/null || true
 
           remote_env=(
             "BACKEND_IMAGE=${BACKEND_IMAGE}"
@@ -95,7 +100,7 @@ jobs:
             "REPOSITORY=${REPOSITORY}"
           )
 
-          ssh -i ~/.ssh/gcp_free_vm_key -o BatchMode=yes -o StrictHostKeyChecking=accept-new "${VM_USER}@${VM_HOST}" \
+          if ! ssh -i ~/.ssh/gcp_free_vm_key -o BatchMode=yes -o ConnectTimeout=15 -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=~/.ssh/known_hosts "${VM_USER}@${VM_HOST}" \
             "$(printf '%q ' env "${remote_env[@]}" /bin/bash -se)" <<'SCRIPT'
           set -euo pipefail
 
@@ -141,3 +146,7 @@ jobs:
           ./scripts/gcp-free-bootstrap.sh
           sudo docker compose -f docker-compose.gcp-free.yml --env-file .env.gcp ps
           SCRIPT
+          then
+            echo "::error::SSH deploy failed. Verify GCP_FREE_VM_USER matches the VM login user and that ~/.ssh/authorized_keys contains the public key paired with GCP_FREE_VM_SSH_KEY."
+            exit 1
+          fi
