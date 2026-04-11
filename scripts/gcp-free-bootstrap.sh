@@ -214,6 +214,19 @@ ensure_required_ports() {
   done
 }
 
+clear_stale_pull_processes() {
+  local compose_pull_pattern
+  compose_pull_pattern="${COMPOSE_FILE} --env-file ${ENV_FILE} pull backend frontend"
+
+  if pgrep -f "${compose_pull_pattern}" >/dev/null 2>&1; then
+    log "Stopping stale docker compose pull processes from earlier deployment attempts."
+    while IFS= read -r pid; do
+      [[ -z "${pid}" ]] && continue
+      kill "${pid}" 2>/dev/null || true
+    done < <(pgrep -f "${compose_pull_pattern}")
+  fi
+}
+
 docker_login_if_configured() {
   local backend_image frontend_image ghcr_username ghcr_read_token
   backend_image="$(env_value "BACKEND_IMAGE")"
@@ -240,7 +253,8 @@ launch_stack() {
 
   if [[ -n "${backend_image}" && -n "${frontend_image}" ]]; then
     log "Using prebuilt images from .env.gcp."
-    docker_cmd compose -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" pull backend frontend
+    docker_cmd pull "${backend_image}"
+    docker_cmd pull "${frontend_image}"
     docker_cmd compose -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" up -d --remove-orphans backend frontend
     return
   fi
@@ -275,5 +289,6 @@ prepare_env_file
 validate_env_file
 docker_login_if_configured
 ensure_required_ports
+clear_stale_pull_processes
 launch_stack
 print_summary
