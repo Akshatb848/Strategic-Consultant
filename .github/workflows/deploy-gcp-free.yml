@@ -16,8 +16,8 @@ jobs:
     env:
       REGISTRY: ghcr.io
       REPOSITORY: ${{ github.repository }}
-      VM_HOST: ${{ secrets.GCP_FREE_VM_HOST }}
-      VM_USER: ${{ secrets.GCP_FREE_VM_USER }}
+      VM_HOST: ${{ vars.GCP_FREE_VM_HOST || secrets.GCP_FREE_VM_HOST }}
+      VM_USER: ${{ vars.GCP_FREE_VM_USER || secrets.GCP_FREE_VM_USER }}
       VM_DATA_DIR: /opt/asis/data
     steps:
       - uses: actions/checkout@v4
@@ -70,7 +70,7 @@ jobs:
           BACKEND_IMAGE: ${{ steps.names.outputs.backend_image }}
           FRONTEND_IMAGE: ${{ steps.names.outputs.frontend_image }}
           VM_HOST: ${{ env.VM_HOST }}
-          VM_USER: ${{ secrets.GCP_FREE_VM_USER }}
+          VM_USER: ${{ env.VM_USER }}
           VM_DATA_DIR: ${{ env.VM_DATA_DIR }}
           JWT_SECRET: ${{ secrets.GCP_FREE_JWT_SECRET }}
           GHCR_USERNAME: ${{ github.actor }}
