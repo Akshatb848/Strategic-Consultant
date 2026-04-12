@@ -68,9 +68,9 @@ export function buildPdfHtml({
 }): string {
   const context = brief.context || {};
   const citations = brief.citations || [];
-  const riskRegister = brief.risk_analysis?.summary || [];
+  const riskRegister = brief.risk_analysis?.risk_register || [];
   const competitorProfiles = brief.market_analysis?.competitor_profiles || [];
-  const projections = brief.financial_analysis?.summary || {};
+  const projections = brief.financial_analysis?.financial_projections || {};
   const ansoff = brief.framework_outputs?.ansoff?.structured_data || {};
   const optionRows = [
     ["market_penetration", "Market Penetration"],
@@ -89,7 +89,7 @@ export function buildPdfHtml({
       };
     })
     .filter((option) => option.feasibility > 0 || option.rationale);
-  const geoRiskEntries = Object.entries((brief.risk_analysis?.geo_intel || {}) as Record<string, string>);
+  const geoRiskEntries = Object.entries((brief.risk_analysis?.cage_distance_analysis || {}) as Record<string, string>);
   const collaborationRows = (brief.agent_collaboration_trace || [])
     .map(
       (item) =>
@@ -181,9 +181,13 @@ export function buildPdfHtml({
           ["Frameworks Applied", (brief.frameworks_applied || []).join(", ")],
         ])}
         <h3>1.3 Summary Narrative</h3>
-        ${brief.executive_summary
-          .split(/(?<=\.)\s+(?=[A-Z])/)
-          .slice(0, 3)
+        ${[
+          brief.executive_summary.headline,
+          brief.executive_summary.key_argument_1,
+          brief.executive_summary.key_argument_2,
+          brief.executive_summary.key_argument_3,
+        ]
+          .filter(Boolean)
           .map((paragraph) => `<p>${paragraph}</p>`)
           .join("")}
       </section>
@@ -294,9 +298,9 @@ export function buildPdfHtml({
         <h2>7.0 Market & Financial Analysis</h2>
         <h3>7.1 Market Intelligence Summary</h3>
         ${table([
-          ["Market Headline", String(brief.market_analysis?.summary?.headline || "-")],
-          ["Growth Rate", String(brief.market_analysis?.summary?.growth_rate || "-")],
-          ["Regulatory Landscape", String(brief.market_analysis?.summary?.regulatory_landscape || "-")],
+          ["Market Headline", String(brief.market_analysis?.market_sizing?.tam || "-")],
+          ["Growth Rate", String(brief.market_analysis?.market_sizing?.growth_rate || "-")],
+          ["Regulatory Landscape", String(brief.market_analysis?.market_sizing?.source?.title || "-")],
         ])}
         <h3>7.2 BCG Matrix</h3>
         <div class="chart">${renderBcgSvg(brief)}</div>

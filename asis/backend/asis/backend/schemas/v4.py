@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -10,9 +10,18 @@ from asis.backend.schemas.analysis import StrategicBrief
 from asis.backend.schemas.common import Citation
 
 
+def _normalize_unit_interval(value: float | int | None) -> float:
+    if value is None:
+        return 0.0
+    numeric = float(value)
+    if numeric > 1:
+        numeric /= 100
+    return round(max(0.0, min(1.0, numeric)), 3)
+
+
 class AgentName(str, Enum):
     ORCHESTRATOR = "orchestrator"
-    MARKET_INTEL = "market_intel"
+    MARKET_INTELLIGENCE = "market_intel"
     RISK_ASSESSMENT = "risk_assessment"
     COMPETITOR_ANALYSIS = "competitor_analysis"
     GEO_INTEL = "geo_intel"
@@ -47,13 +56,63 @@ class AgentCollaborationEvent(BaseModel):
     contribution_summary: str
 
 
+class QualityCheckResult(BaseModel):
+    id: str
+    description: str
+    level: Literal["BLOCK", "WARN"]
+    passed: bool
+    notes: str | None = None
+
+
+class QualityReport(BaseModel):
+    overall_grade: Literal["A", "B", "C", "FAIL"]
+    checks: list[QualityCheckResult] = Field(default_factory=list)
+    quality_flags: list[str] = Field(default_factory=list)
+    mece_score: float = Field(default=0.0, ge=0, le=1)
+    citation_density_score: float = Field(default=0.0, ge=0, le=1)
+    internal_consistency_score: float = Field(default=0.0, ge=0, le=1)
+    retry_count: int = 0
+
+    @field_validator("mece_score", "citation_density_score", "internal_consistency_score", mode="before")
+    @classmethod
+    def normalize_scores(cls, value: float | int | None) -> float:
+        return _normalize_unit_interval(value)
+
+
+class SoWhatCallout(BaseModel):
+    framework: str
+    implication: str
+    recommended_action: str
+    risk_of_inaction: str
+    exhibit_number: int
+
+
+class ExhibitMetadata(BaseModel):
+    exhibit_number: int
+    exhibit_title: str
+    framework: str
+    agent_author: str
+    source_note: str
+    chart_type: str
+
+
 class FrameworkOutput(BaseModel):
     framework_name: FrameworkName
     agent_author: AgentName
     structured_data: dict[str, Any]
     narrative: str
     citations: list[Citation] = Field(default_factory=list)
-    confidence_score: float = Field(ge=0, le=1)
+    confidence_score: float = Field(default=0.0, ge=0, le=1)
+    exhibit_number: int = 0
+    exhibit_title: str = ""
+    implication: str = ""
+    recommended_action: str = ""
+    risk_of_inaction: str = ""
+
+    @field_validator("confidence_score", mode="before")
+    @classmethod
+    def normalize_confidence(cls, value: float | int | None) -> float:
+        return _normalize_unit_interval(value)
 
 
 class GeoIntelOutput(BaseModel):
@@ -72,6 +131,11 @@ class StrategicOption(BaseModel):
     risk_score: float = Field(ge=0, le=1)
     rationale: str
 
+    @field_validator("feasibility_score", "risk_score", mode="before")
+    @classmethod
+    def normalize_scores(cls, value: float | int | None) -> float:
+        return _normalize_unit_interval(value)
+
 
 class StrategicOptionsOutput(BaseModel):
     ansoff_quadrant: str
@@ -81,6 +145,11 @@ class StrategicOptionsOutput(BaseModel):
     recommended_option: str
     option_rationale: str
     framework_outputs: dict[str, FrameworkOutput] = Field(default_factory=dict)
+
+    @field_validator("mckinsey_7s_fit_score", mode="before")
+    @classmethod
+    def normalize_fit_score(cls, value: float | int | None) -> float:
+        return _normalize_unit_interval(value)
 
 
 class BalancedScorecardPerspective(BaseModel):
@@ -105,6 +174,15 @@ class RoadmapItem(BaseModel):
     estimated_investment_usd: float | None = None
 
 
+class ExecutiveSummary(BaseModel):
+    headline: str
+    key_argument_1: str
+    key_argument_2: str
+    key_argument_3: str
+    critical_risk: str
+    next_step: str
+
+
 class ReportMetadata(BaseModel):
     analysis_id: str
     company_name: str
@@ -119,22 +197,45 @@ class StrategicBriefV4(StrategicBrief):
     decision_statement: str
     decision_confidence: float = Field(ge=0, le=1)
     decision_rationale: str
+    decision_evidence: list[str] = Field(default_factory=list)
     framework_outputs: dict[str, FrameworkOutput]
+    executive_summary: ExecutiveSummary
+    section_action_titles: dict[str, str] = Field(default_factory=dict)
+    so_what_callouts: dict[str, SoWhatCallout] = Field(default_factory=dict)
     agent_collaboration_trace: list[AgentCollaborationEvent] = Field(default_factory=list)
-    executive_summary: str
+    exhibit_registry: list[ExhibitMetadata] = Field(default_factory=list)
     implementation_roadmap: list[RoadmapItem] = Field(default_factory=list)
-    balanced_scorecard: BalancedScorecardOutput
+    quality_report: QualityReport
+    mece_score: float = Field(default=0.0, ge=0, le=1)
+    internal_consistency_score: float = Field(default=0.0, ge=0, le=1)
     report_metadata: ReportMetadata
-    overall_confidence: float = Field(ge=0, le=1)
+    balanced_scorecard: BalancedScorecardOutput
+    overall_confidence: float = Field(default=0.0, ge=0, le=1)
+    board_narrative: str
+    recommendation: str
+    frameworks_applied: list[str]
+    context: dict[str, Any]
+    market_analysis: dict[str, Any]
+    financial_analysis: dict[str, Any]
+    risk_analysis: dict[str, Any]
+    red_team: dict[str, Any]
+    verification: dict[str, Any] | str
+    roadmap: list[RoadmapItem] = Field(default_factory=list)
+    citations: list[Citation] = Field(default_factory=list)
 
     @field_validator("decision_statement")
     @classmethod
     def validate_decision_statement(cls, value: str) -> str:
-        allowed_prefixes = ("PROCEED", "CONDITIONAL PROCEED", "DO NOT PROCEED")
         normalized = value.strip()
+        allowed_prefixes = ("PROCEED", "CONDITIONAL PROCEED", "DO NOT PROCEED")
         if not normalized.startswith(allowed_prefixes):
             raise ValueError("decision_statement must begin with PROCEED, CONDITIONAL PROCEED, or DO NOT PROCEED")
         return normalized
+
+    @field_validator("decision_confidence", "overall_confidence", "mece_score", "internal_consistency_score", mode="before")
+    @classmethod
+    def normalize_scores(cls, value: float | int | None) -> float:
+        return _normalize_unit_interval(value)
 
     @field_validator("framework_outputs")
     @classmethod
@@ -151,6 +252,11 @@ class DecisionResponse(BaseModel):
     decision_confidence: float = Field(ge=0, le=1)
     decision_rationale: str
     supporting_frameworks: list[str] = Field(default_factory=list)
+
+    @field_validator("decision_confidence", mode="before")
+    @classmethod
+    def normalize_confidence(cls, value: float | int | None) -> float:
+        return _normalize_unit_interval(value)
 
 
 class FrameworkOutputsResponse(BaseModel):

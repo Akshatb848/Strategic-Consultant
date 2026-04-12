@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 from time import perf_counter
 from uuid import uuid4
@@ -24,6 +25,7 @@ from asis.backend.evaluation.engine import EvaluationEngine
 from asis.backend.graph.context import extract_problem_context
 from asis.backend.graph.state import V4PipelineState
 from asis.backend.memory.store import memory_store
+from asis.backend.quality.gate import QualityGate
 from asis.backend.schemas.v4 import StrategicBriefV4
 from asis.backend.tasks.analysis_events import publish_analysis_event
 
@@ -38,6 +40,7 @@ class V4EnterpriseWorkflow:
         self.financial_reasoning = FinancialReasoningAgent()
         self.strategic_options = StrategicOptionsAgent()
         self.synthesis = V4SynthesisAgent()
+        self.quality_gate = QualityGate()
         self.baseline = SingleAgentBaseline()
         self.evaluation = EvaluationEngine()
         self.graph = self._build_graph().compile()
@@ -89,6 +92,14 @@ class V4EnterpriseWorkflow:
                 "decision_statement": "",
                 "decision_confidence": 0.0,
                 "decision_rationale": "",
+                "decision_evidence": [],
+                "mece_score": 0.0,
+                "internal_consistency_score": 0.0,
+                "quality_retry_count": 0,
+                "quality_failures": [],
+                "section_action_titles": {},
+                "so_what_callouts": {},
+                "exhibit_registry": [],
                 "started_at": started,
             }
             final_state = self.graph.invoke(initial_state)
@@ -100,11 +111,11 @@ class V4EnterpriseWorkflow:
                 analysis.duration_seconds = round(perf_counter() - started, 3)
                 analysis.completed_at = datetime.utcnow()
                 analysis.strategic_brief = synthesis_output
-                analysis.executive_summary = synthesis_output.get("executive_summary")
+                analysis.executive_summary = self._executive_summary_text(synthesis_output)
                 analysis.board_narrative = synthesis_output.get("board_narrative")
                 analysis.decision_recommendation = synthesis_output.get("recommendation")
                 analysis.overall_confidence = synthesis_output.get("overall_confidence")
-                analysis.logic_consistency_passed = True
+                analysis.logic_consistency_passed = (synthesis_output.get("internal_consistency_score") or 0) >= 0.7
                 db.commit()
                 self._persist_report(db, analysis)
                 publish_analysis_event(
@@ -168,7 +179,20 @@ class V4EnterpriseWorkflow:
             "agent_complete",
             {"agent": self.orchestrator.agent_id, "duration_ms": result.duration_ms, "timestamp_ms": now_ms()},
         )
-        return {"extracted_context": extracted, "orchestrator_output": result.data}
+        publish_analysis_event(
+            state["analysis_id"],
+            "orchestrator_complete",
+            {
+                "section_action_titles": result.data.get("section_action_titles") or {},
+                "query_type": result.data.get("query_type"),
+                "timestamp_ms": now_ms(),
+            },
+        )
+        return {
+            "extracted_context": extracted,
+            "orchestrator_output": result.data,
+            "section_action_titles": result.data.get("section_action_titles") or {},
+        }
 
     @staticmethod
     def _normalize_confidence(value: float | int | None) -> float:
@@ -267,14 +291,54 @@ class V4EnterpriseWorkflow:
             ("financial_reasoning", "synthesis", "financial_reasoning_output", "Financial evidence validated capital discipline and BCG positioning."),
             ("strategic_options", "synthesis", "strategic_options_output", "Option scoring and framework fit guided the final recommendation."),
         ]
-        result = self._run_visible_agent(
-            state,
-            self.synthesis,
-            "synthesis_output",
-            "overall_confidence",
-            dependencies,
+        active_state = dict(state)
+        attempts = int(state.get("quality_retry_count") or 0)
+        quality_report_payload: dict | None = None
+
+        while True:
+            result = self._run_visible_agent(
+                active_state,
+                self.synthesis,
+                "synthesis_output",
+                "overall_confidence",
+                dependencies,
+            )
+            brief = StrategicBriefV4.model_validate(result["synthesis_output"])
+            quality_report = asyncio.run(self.quality_gate.validate(brief, retry_count=attempts))
+            quality_report_payload = quality_report.model_dump(mode="json")
+            synthesis_output = brief.model_dump(mode="json")
+            synthesis_output["quality_report"] = quality_report_payload
+            synthesis_output["mece_score"] = quality_report.mece_score
+            synthesis_output["internal_consistency_score"] = quality_report.internal_consistency_score
+            synthesis_output["decision_confidence"] = self._normalize_confidence(synthesis_output.get("decision_confidence"))
+            synthesis_output["overall_confidence"] = self._normalize_confidence(synthesis_output.get("overall_confidence"))
+
+            if not self.quality_gate.has_block_failures(quality_report) or attempts >= 2:
+                break
+
+            attempts += 1
+            active_state = {
+                **state,
+                "quality_retry_count": attempts,
+                "quality_failures": [
+                    check.notes or check.id
+                    for check in quality_report.checks
+                    if check.level == "BLOCK" and not check.passed
+                ],
+            }
+
+        publish_analysis_event(
+            state["analysis_id"],
+            "quality_complete",
+            {
+                "overall_grade": quality_report_payload.get("overall_grade") if quality_report_payload else "FAIL",
+                "quality_flags": quality_report_payload.get("quality_flags", []) if quality_report_payload else [],
+                "checks": quality_report_payload.get("checks", []) if quality_report_payload else [],
+                "mece_score": synthesis_output.get("mece_score", 0.0),
+                "internal_consistency_score": synthesis_output.get("internal_consistency_score", 0.0),
+                "timestamp_ms": now_ms(),
+            },
         )
-        synthesis_output = result["synthesis_output"]
         publish_analysis_event(
             state["analysis_id"],
             "decision_reached",
@@ -286,9 +350,18 @@ class V4EnterpriseWorkflow:
         )
         return {
             **result,
+            "synthesis_output": synthesis_output,
             "decision_statement": synthesis_output.get("decision_statement", ""),
             "decision_confidence": synthesis_output.get("decision_confidence", 0.0),
             "decision_rationale": synthesis_output.get("decision_rationale", ""),
+            "decision_evidence": synthesis_output.get("decision_evidence", []),
+            "section_action_titles": synthesis_output.get("section_action_titles", {}),
+            "so_what_callouts": synthesis_output.get("so_what_callouts", {}),
+            "exhibit_registry": synthesis_output.get("exhibit_registry", []),
+            "quality_report": quality_report_payload or {},
+            "quality_retry_count": attempts,
+            "mece_score": synthesis_output.get("mece_score", 0.0),
+            "internal_consistency_score": synthesis_output.get("internal_consistency_score", 0.0),
         }
 
     def _run_visible_agent(
@@ -387,11 +460,28 @@ class V4EnterpriseWorkflow:
                 analysis.current_agent = result.agent_id
                 if result.agent_id == "synthesis":
                     analysis.strategic_brief = result.data
-                    analysis.executive_summary = result.data.get("executive_summary")
+                    analysis.executive_summary = self._executive_summary_text(result.data)
                     analysis.board_narrative = result.data.get("board_narrative")
                     analysis.decision_recommendation = result.data.get("recommendation")
                     analysis.overall_confidence = result.data.get("overall_confidence")
             db.commit()
+
+    @staticmethod
+    def _executive_summary_text(brief: dict) -> str | None:
+        summary = brief.get("executive_summary")
+        if isinstance(summary, dict):
+            parts = [
+                summary.get("headline"),
+                summary.get("key_argument_1"),
+                summary.get("key_argument_2"),
+                summary.get("key_argument_3"),
+                summary.get("critical_risk"),
+                summary.get("next_step"),
+            ]
+            return "\n".join(str(part) for part in parts if part)
+        if isinstance(summary, str):
+            return summary
+        return None
 
 
 v4_workflow = V4EnterpriseWorkflow()

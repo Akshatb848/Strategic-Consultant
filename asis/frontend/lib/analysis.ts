@@ -1,6 +1,13 @@
 "use client";
 
-import type { Analysis, AgentCollaborationEvent, AgentLog, FrameworkOutput, StrategicBriefV4 } from "@/lib/api";
+import type {
+  Analysis,
+  AgentCollaborationEvent,
+  AgentLog,
+  FrameworkOutput,
+  QualityReport,
+  StrategicBriefV4,
+} from "@/lib/api";
 
 export function latestAgentLog(logs: AgentLog[] | undefined, agentId: string): AgentLog | undefined {
   return [...(logs || [])]
@@ -39,10 +46,10 @@ export function confidenceColor(score?: number | null): string {
 export function decisionColor(decision?: string | null): string {
   return (
     {
-      PROCEED: "#10b981",
-      "CONDITIONAL PROCEED": "#f59e0b",
-      "DO NOT PROCEED": "#ef4444",
-      HOLD: "#f59e0b",
+      PROCEED: "#15803d",
+      "CONDITIONAL PROCEED": "#b45309",
+      "DO NOT PROCEED": "#b91c1c",
+      HOLD: "#b45309",
       ESCALATE: "#f97316",
       REJECT: "#ef4444",
       CONDITIONAL_PASS: "#f59e0b",
@@ -84,10 +91,10 @@ export function frameworkDisplayName(key: string): string {
 export function frameworkKeyFinding(output?: FrameworkOutput | null): string {
   if (!output) return "Framework evidence supported the final recommendation.";
   const structured = output.structured_data || {};
-  for (const key of ["key_implication", "strategic_implication", "recommendation_rationale", "blue_ocean_shift"]) {
+  for (const key of ["key_implication", "strategic_implication", "recommendation_rationale", "blue_ocean_shift", "portfolio_recommendation", "swot_implication"]) {
     if (structured[key]) return String(structured[key]);
   }
-  return output.narrative;
+  return output.implication || output.narrative;
 }
 
 export function latestAgentStatus(logs: AgentLog[] | undefined, agentId: string): "pending" | "running" | "completed" | "failed" {
@@ -99,9 +106,38 @@ export function latestAgentStatus(logs: AgentLog[] | undefined, agentId: string)
 }
 
 export function uniqueSupportingFrameworks(events: AgentCollaborationEvent[], frameworkOutputs: Record<string, FrameworkOutput>): string[] {
-  const explicit = Object.keys(frameworkOutputs || {});
-  if (explicit.length > 0) return explicit;
-  return Array.from(new Set(events.map((event) => event.data_field).filter(Boolean)));
+  const explicit = Object.entries(frameworkOutputs || {})
+    .sort((left, right) => (right[1].confidence_score || 0) - (left[1].confidence_score || 0))
+    .map(([key]) => key);
+  if (explicit.length > 0) return explicit.slice(0, 3);
+  return Array.from(new Set(events.map((event) => event.data_field).filter(Boolean))).slice(0, 3);
+}
+
+export function summaryParagraphs(brief: StrategicBriefV4): string[] {
+  return [
+    brief.executive_summary.headline,
+    brief.executive_summary.key_argument_1,
+    brief.executive_summary.key_argument_2,
+    brief.executive_summary.key_argument_3,
+  ].filter(Boolean);
+}
+
+export function qualityGradeColor(quality?: QualityReport | null): string {
+  const grade = quality?.overall_grade || "C";
+  return (
+    {
+      A: "#15803d",
+      B: "#2563eb",
+      C: "#b45309",
+      FAIL: "#b91c1c",
+    }[grade] || "#64748b"
+  );
+}
+
+export function normalizedPercent(value?: number | null): number {
+  if (value == null) return 0;
+  const numeric = value <= 1 ? value * 100 : value;
+  return Math.max(0, Math.min(100, Math.round(numeric)));
 }
 
 export function toCsv(records: Array<Record<string, unknown>>): string {

@@ -57,5 +57,14 @@ class V4PipelineState(TypedDict, total=False):
     decision_statement: str
     decision_confidence: float
     decision_rationale: str
+    decision_evidence: list[str]
+    mece_score: float
+    internal_consistency_score: float
+    quality_report: dict[str, Any]
+    quality_retry_count: int
+    quality_failures: list[str]
+    section_action_titles: Annotated[dict[str, str], merge_dicts]
+    so_what_callouts: Annotated[dict[str, dict[str, Any]], merge_dicts]
+    exhibit_registry: Annotated[list[dict[str, Any]], merge_list_items]
     overall_confidence: float
     started_at: float

@@ -18,3 +18,9 @@ class MemoryEntryResponse(OrmModel):
 
 class MemoryListResponse(BaseModel):
     items: list[MemoryEntryResponse]
+
+
+class MemoryUpsertRequest(BaseModel):
+    scope: str
+    key: str
+    value: dict

@@ -18,7 +18,7 @@ import {
 import { AuthGuard } from "@/components/auth-guard";
 import { useAuth } from "@/contexts/AuthContext";
 import { confidenceColor, contextSummary, decisionColor } from "@/lib/analysis";
-import { analysesAPI, type Analysis } from "@/lib/api";
+import { analysesAPI, memoryAPI, type Analysis, type MemoryEntry } from "@/lib/api";
 
 function DashboardShell() {
   const { user, logout } = useAuth();
@@ -26,12 +26,31 @@ function DashboardShell() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [onboardingOpen, setOnboardingOpen] = useState(false);
+  const [onboardingStep, setOnboardingStep] = useState(1);
+  const [profile, setProfile] = useState({
+    company_name: "",
+    sector: "",
+    hq_country: "",
+    annual_revenue_usd_mn: "",
+  });
 
   useEffect(() => {
-    analysesAPI
-      .list({ limit: 50 })
-      .then((response) => {
-        setAnalyses(response.data.analyses);
+    Promise.all([analysesAPI.list({ limit: 50 }), memoryAPI.list()])
+      .then(([analysisResponse, memoryResponse]) => {
+        setAnalyses(analysisResponse.data.analyses);
+        const memoryItems = (memoryResponse.data.items || []) as MemoryEntry[];
+        const onboardingEntry = memoryItems.find((item) => item.scope === "profile" && item.key === "onboarding:v4_gold");
+        const profileEntry = memoryItems.find((item) => item.scope === "profile" && item.key === "company_profile");
+        if (profileEntry?.value) {
+          setProfile({
+            company_name: String(profileEntry.value.company_name || ""),
+            sector: String(profileEntry.value.sector || ""),
+            hq_country: String(profileEntry.value.hq_country || ""),
+            annual_revenue_usd_mn: String(profileEntry.value.annual_revenue_usd_mn || ""),
+          });
+        }
+        setOnboardingOpen(!onboardingEntry?.value?.completed);
         setError(null);
       })
       .catch(() => setError("Unable to load your analyses right now."))
@@ -103,7 +122,7 @@ function DashboardShell() {
           <div className="mt-10 rounded-[26px] border border-white/8 bg-white/[0.04] p-4">
             <div className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-100">Decision stack</div>
             <div className="mt-3 space-y-2 text-sm text-slate-400">
-              {["Strategist", "Quant", "Market Intel", "Risk", "Red Team", "Ethicist", "CoVe", "Synthesis"].map(
+              {["Orchestrator", "Market Intel", "Risk Assessment", "Competitor Analysis", "Geo Intel", "Financial Reasoning", "Strategic Options", "Synthesis"].map(
                 (agent) => (
                   <div key={agent} className="flex items-center gap-3">
                     <span className="h-2.5 w-2.5 rounded-full bg-cyan-300/80" />
@@ -281,6 +300,42 @@ function DashboardShell() {
           </div>
         </main>
       </div>
+
+      {onboardingOpen ? (
+        <OnboardingModal
+          step={onboardingStep}
+          profile={profile}
+          onClose={() => setOnboardingOpen(false)}
+          onChange={(key, value) => setProfile((current) => ({ ...current, [key]: value }))}
+          onNext={async () => {
+            if (onboardingStep === 2) {
+              await memoryAPI.upsert({
+                scope: "profile",
+                key: "company_profile",
+                value: profile,
+              });
+            }
+            if (onboardingStep >= 3) {
+              await memoryAPI.upsert({
+                scope: "profile",
+                key: "onboarding:v4_gold",
+                value: { completed: true, completed_at: new Date().toISOString() },
+              });
+              setOnboardingOpen(false);
+              return;
+            }
+            setOnboardingStep((current) => current + 1);
+          }}
+          onSkip={async () => {
+            await memoryAPI.upsert({
+              scope: "profile",
+              key: "onboarding:v4_gold",
+              value: { completed: true, skipped: true, completed_at: new Date().toISOString() },
+            });
+            setOnboardingOpen(false);
+          }}
+        />
+      ) : null}
     </div>
   );
 }
@@ -290,5 +345,106 @@ export default function DashboardPage() {
     <AuthGuard>
       <DashboardShell />
     </AuthGuard>
+  );
+}
+
+function OnboardingModal({
+  step,
+  profile,
+  onClose,
+  onNext,
+  onSkip,
+  onChange,
+}: {
+  step: number;
+  profile: Record<string, string>;
+  onClose: () => void;
+  onNext: () => Promise<void>;
+  onSkip: () => Promise<void>;
+  onChange: (key: "company_name" | "sector" | "hq_country" | "annual_revenue_usd_mn", value: string) => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4">
+      <div className="w-full max-w-2xl rounded-[30px] border border-white/10 bg-[#08101d] p-6 shadow-2xl">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <div className="text-[11px] uppercase tracking-[0.18em] text-cyan-100">Getting Started</div>
+            <h2 className="mt-2 text-2xl font-semibold text-white">ASIS v4 onboarding</h2>
+          </div>
+          <button type="button" onClick={() => void onSkip()} className="rounded-full border border-white/10 px-3 py-2 text-xs font-semibold text-slate-300">
+            Skip
+          </button>
+        </div>
+
+        {step === 1 ? (
+          <div className="mt-6 space-y-4 text-sm leading-7 text-slate-300">
+            <p>ASIS turns a strategic question into a board-ready recommendation using eight specialist agents, structured frameworks, and a client-grade enterprise brief.</p>
+            <div className="grid gap-3 md:grid-cols-3">
+              {[
+                "Should our company enter India in 2026 through a partner model?",
+                "Should we acquire a regional AI specialist to accelerate growth?",
+                "Should we restructure our consulting division to restore margin resilience?",
+              ].map((example) => (
+                <div key={example} className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-4">
+                  {example}
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        {step === 2 ? (
+          <div className="mt-6 grid gap-4 md:grid-cols-2">
+            <ProfileField label="Company name" value={profile.company_name} onChange={(value) => onChange("company_name", value)} />
+            <ProfileField label="Sector" value={profile.sector} onChange={(value) => onChange("sector", value)} />
+            <ProfileField label="HQ country" value={profile.hq_country} onChange={(value) => onChange("hq_country", value)} />
+            <ProfileField label="Revenue (USD mn)" value={profile.annual_revenue_usd_mn} onChange={(value) => onChange("annual_revenue_usd_mn", value)} />
+          </div>
+        ) : null}
+
+        {step === 3 ? (
+          <div className="mt-6 space-y-4 text-sm leading-7 text-slate-300">
+            <p>Your profile is ready. The best first analysis is a clear strategic decision question that names the company, market, and timeframe.</p>
+            <Link
+              href={`/new-analysis?q=${encodeURIComponent(`Should ${profile.company_name || "our company"} enter India in 2026 through a phased partnership strategy?`)}`}
+              className="inline-flex rounded-full bg-white px-5 py-3 text-sm font-semibold text-slate-950"
+              onClick={() => void onNext()}
+            >
+              Run your first analysis
+            </Link>
+          </div>
+        ) : null}
+
+        <div className="mt-8 flex items-center justify-between">
+          <button type="button" onClick={onClose} className="text-sm text-slate-500">
+            Close
+          </button>
+          <button type="button" onClick={() => void onNext()} className="rounded-full bg-white px-5 py-3 text-sm font-semibold text-slate-950">
+            {step >= 3 ? "Finish" : "Continue"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ProfileField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="block">
+      <span className="mb-2 block text-sm font-medium text-slate-300">{label}</span>
+      <input
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="w-full rounded-[18px] border border-white/8 bg-white/[0.04] px-4 py-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-cyan-300/40"
+      />
+    </label>
   );
 }

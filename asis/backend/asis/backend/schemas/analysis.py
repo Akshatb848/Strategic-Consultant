@@ -62,7 +62,7 @@ class AnalysisSummary(OrmModel):
 
 
 class StrategicBrief(BaseModel):
-    executive_summary: str
+    executive_summary: str | dict[str, Any]
     board_narrative: str
     recommendation: str
     overall_confidence: float
@@ -72,14 +72,14 @@ class StrategicBrief(BaseModel):
     financial_analysis: dict[str, Any]
     risk_analysis: dict[str, Any]
     red_team: dict[str, Any]
-    verification: dict[str, Any]
-    roadmap: list[dict[str, Any]]
-    balanced_scorecard: list[dict[str, Any]]
+    verification: dict[str, Any] | str
+    roadmap: list[dict[str, Any]] | list[Any]
+    balanced_scorecard: list[dict[str, Any]] | dict[str, Any]
     citations: list[Citation]
 
 
 class AnalysisDetail(AnalysisSummary):
-    strategic_brief: StrategicBrief | dict | None
+    strategic_brief: dict[str, Any] | StrategicBrief | None
     logic_consistency_passed: bool | None
     self_correction_count: int
     agent_logs: list[AgentLogResponse]

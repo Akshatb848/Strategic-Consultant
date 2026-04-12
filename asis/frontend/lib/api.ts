@@ -131,6 +131,11 @@ export interface FrameworkOutput {
   narrative: string;
   citations: Array<Record<string, any>>;
   confidence_score: number;
+  exhibit_number: number;
+  exhibit_title: string;
+  implication: string;
+  recommended_action: string;
+  risk_of_inaction: string;
 }
 
 export interface RoadmapItem {
@@ -139,6 +144,50 @@ export interface RoadmapItem {
   owner_function: string;
   success_metrics: string[];
   estimated_investment_usd?: number | null;
+}
+
+export interface ExecutiveSummary {
+  headline: string;
+  key_argument_1: string;
+  key_argument_2: string;
+  key_argument_3: string;
+  critical_risk: string;
+  next_step: string;
+}
+
+export interface SoWhatCallout {
+  framework: string;
+  implication: string;
+  recommended_action: string;
+  risk_of_inaction: string;
+  exhibit_number: number;
+}
+
+export interface ExhibitMetadata {
+  exhibit_number: number;
+  exhibit_title: string;
+  framework: string;
+  agent_author: string;
+  source_note: string;
+  chart_type: string;
+}
+
+export interface QualityCheckResult {
+  id: string;
+  description: string;
+  level: "BLOCK" | "WARN";
+  passed: boolean;
+  notes?: string | null;
+}
+
+export interface QualityReport {
+  overall_grade: "A" | "B" | "C" | "FAIL";
+  checks: QualityCheckResult[];
+  quality_flags: string[];
+  mece_score: number;
+  citation_density_score: number;
+  internal_consistency_score: number;
+  retry_count: number;
 }
 
 export interface BalancedScorecardPerspective {
@@ -169,10 +218,17 @@ export interface StrategicBriefV4 {
   decision_statement: string;
   decision_confidence: number;
   decision_rationale: string;
+  decision_evidence: string[];
   framework_outputs: Record<string, FrameworkOutput>;
+  executive_summary: ExecutiveSummary;
+  section_action_titles: Record<string, string>;
+  so_what_callouts: Record<string, SoWhatCallout>;
   agent_collaboration_trace: AgentCollaborationEvent[];
-  executive_summary: string;
+  exhibit_registry: ExhibitMetadata[];
   implementation_roadmap: RoadmapItem[];
+  quality_report: QualityReport;
+  mece_score: number;
+  internal_consistency_score: number;
   balanced_scorecard: BalancedScorecardOutput;
   report_metadata: ReportMetadata;
   board_narrative: string;
@@ -240,6 +296,15 @@ export interface Report {
   updated_at: string;
 }
 
+export interface MemoryEntry {
+  id: string;
+  scope: string;
+  key: string;
+  value: Record<string, any>;
+  created_at: string;
+  updated_at: string;
+}
+
 export async function bootstrapSession(): Promise<User | null> {
   const token = await refreshAccessToken();
   if (!token) return null;
@@ -274,4 +339,10 @@ export const reportsAPI = {
   pdf: (analysisId: string) => api.post(`/api/v1/reports/${analysisId}/pdf`, {}, { responseType: "blob" }),
   pdfStatus: (analysisId: string) => api.get(`/api/v1/reports/${analysisId}/pdf/status`),
   remove: (id: string) => api.delete(`/api/v1/reports/${id}`),
+};
+
+export const memoryAPI = {
+  list: () => api.get("/api/v1/memory"),
+  upsert: (payload: { scope: string; key: string; value: Record<string, any> }) => api.post("/api/v1/memory", payload),
+  clear: () => api.delete("/api/v1/memory"),
 };

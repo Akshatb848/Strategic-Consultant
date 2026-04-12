@@ -6,7 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, Loader2, Sparkles } from "lucide-react";
 
 import { useAuth } from "@/contexts/AuthContext";
-import { analysesAPI } from "@/lib/api";
+import { analysesAPI, memoryAPI } from "@/lib/api";
 import { subscribeToAnalysisEvents } from "@/lib/sse";
 
 type AgentStatus = "pending" | "in_progress" | "completed";
@@ -22,6 +22,41 @@ const PIPELINE = [
   { id: "synthesis", label: "Synthesis", message: "Finalising the decision statement, executive summary, and roadmap..." },
 ] as const;
 
+const QUERY_TEMPLATES = [
+  { label: "Market Entry", value: "Should [company] enter [market] in [year]?" },
+  { label: "M&A Evaluation", value: "Should [company] acquire [target]?" },
+  { label: "Product Launch", value: "Should [company] launch [product] in [market]?" },
+  { label: "Competitive Response", value: "How should [company] respond to [competitor]?" },
+  { label: "Restructuring", value: "Should [company] restructure [division]?" },
+  { label: "Investment Decision", value: "Should [company] invest $[X]M in [initiative]?" },
+] as const;
+
+function evaluateQueryQuality(query: string) {
+  const lower = query.toLowerCase();
+  let score = 10;
+  const suggestions: string[] = [];
+
+  if (/\bshould\b|\bhow should\b/.test(lower)) score += 30;
+  else suggestions.push("Frame the prompt as a decision question.");
+
+  if (/\b20\d{2}\b|\bq[1-4]\b|\bnext year\b|\bthis year\b/.test(lower)) score += 20;
+  else suggestions.push("Add a timeframe such as 2026 or Q3.");
+
+  if (/\bindia\b|\buk\b|\beurope\b|\bmarket\b|\bregion\b/.test(lower)) score += 20;
+  else suggestions.push("Name the market or geography explicitly.");
+
+  if (/\bcompany\b|\bacquire\b|\blaunch\b|\benter\b|\brestructure\b|\binvest\b/.test(lower)) score += 10;
+  else suggestions.push("Use a strategic action verb such as enter, acquire, launch, or invest.");
+
+  if (query.trim().split(/\s+/).length >= 10) score += 20;
+  else suggestions.push("Add more specificity so the agents can size the opportunity properly.");
+
+  return {
+    score: Math.max(0, Math.min(100, score)),
+    suggestions,
+  };
+}
+
 function NewAnalysisContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -32,6 +67,7 @@ function NewAnalysisContent() {
   const [industry, setIndustry] = useState("");
   const [geography, setGeography] = useState("");
   const [decisionType, setDecisionType] = useState("");
+  const [selectedTemplate, setSelectedTemplate] = useState("");
   const [analysisId, setAnalysisId] = useState<string | null>(searchParams.get("analysisId"));
   const [statuses, setStatuses] = useState<Record<string, AgentStatus>>(
     Object.fromEntries(PIPELINE.map((step) => [step.id, "pending"])) as Record<string, AgentStatus>
@@ -40,6 +76,21 @@ function NewAnalysisContent() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [streamError, setStreamError] = useState("");
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const response = await memoryAPI.list();
+        const profile = (response.data.items || []).find((item: Record<string, any>) => item.scope === "profile" && item.key === "company_profile");
+        if (!profile?.value) return;
+        setOrganisation((current) => current || String(profile.value.company_name || ""));
+        setIndustry((current) => current || String(profile.value.sector || ""));
+        setGeography((current) => current || String(profile.value.hq_country || ""));
+      } catch {
+        // Best-effort autofill only.
+      }
+    })();
+  }, []);
 
   useEffect(() => {
     if (!loading && !isAuthenticated) {
@@ -101,6 +152,8 @@ function NewAnalysisContent() {
     const completed = PIPELINE.filter((step) => statuses[step.id] === "completed").length;
     return Math.round((completed / PIPELINE.length) * 100);
   }, [statuses]);
+
+  const queryQuality = useMemo(() => evaluateQueryQuality(query), [query]);
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -247,6 +300,54 @@ function NewAnalysisContent() {
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-5">
+            <div className="grid gap-4 md:grid-cols-[220px,1fr]">
+              <label className="block">
+                <span className="mb-2 block text-sm font-medium text-slate-300">Query template</span>
+                <select
+                  value={selectedTemplate}
+                  onChange={(event) => {
+                    const nextTemplate = event.target.value;
+                    setSelectedTemplate(nextTemplate);
+                    const chosen = QUERY_TEMPLATES.find((template) => template.value === nextTemplate);
+                    if (chosen) {
+                      setQuery(chosen.value.replace("[company]", organisation || "[company]").replace("[market]", geography || "[market]"));
+                    }
+                  }}
+                  className="w-full rounded-[18px] border border-white/8 bg-white/[0.04] px-4 py-3 text-sm text-slate-100 outline-none focus:border-cyan-300/40"
+                >
+                  <option value="">Select a template</option>
+                  {QUERY_TEMPLATES.map((template) => (
+                    <option key={template.label} value={template.value}>
+                      {template.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="rounded-[24px] border border-white/8 bg-white/[0.03] px-5 py-4">
+                <div className="flex items-center justify-between gap-4">
+                  <div className="text-sm font-medium text-slate-200">Query quality</div>
+                  <div
+                    className={`text-sm font-semibold ${
+                      queryQuality.score < 40 ? "text-rose-300" : queryQuality.score < 70 ? "text-amber-300" : "text-emerald-300"
+                    }`}
+                  >
+                    {queryQuality.score}/100
+                  </div>
+                </div>
+                <div className="mt-3 h-2 rounded-full bg-white/10">
+                  <div
+                    className={`h-2 rounded-full ${
+                      queryQuality.score < 40 ? "bg-rose-400" : queryQuality.score < 70 ? "bg-amber-400" : "bg-emerald-400"
+                    }`}
+                    style={{ width: `${queryQuality.score}%` }}
+                  />
+                </div>
+                <div className="mt-3 text-xs leading-6 text-slate-400">
+                  {queryQuality.suggestions[0] || "This prompt is specific enough to produce a strategic, action-oriented brief."}
+                </div>
+              </div>
+            </div>
+
             <div>
               <label className="mb-2 block text-sm font-medium text-slate-300">Strategic Question</label>
               <textarea

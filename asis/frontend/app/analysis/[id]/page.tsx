@@ -1,22 +1,26 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
-import { ChevronDown, ChevronUp } from "lucide-react";
+import { ChevronDown, ChevronUp, Printer, Share2 } from "lucide-react";
 
-import { AuthGuard } from "@/components/auth-guard";
 import { AgentCollaborationGraph } from "@/components/AgentCollaborationGraph";
+import { AuthGuard } from "@/components/auth-guard";
 import { DecisionBanner } from "@/components/DecisionBanner";
 import { DecisionProvenanceDrawer } from "@/components/DecisionProvenanceDrawer";
 import { FrameworkVisualisationPanel } from "@/components/FrameworkVisualisationPanel";
 import { ImplementationRoadmap } from "@/components/ImplementationRoadmap";
 import { LegacyAnalysisView } from "@/components/LegacyAnalysisView";
+import { QualityBadge } from "@/components/QualityBadge";
 import { ReportDownloadButton } from "@/components/ReportDownloadButton";
 import {
   analysesAPI,
+  reportsAPI,
   type Analysis,
   type AgentCollaborationEvent,
   type FrameworkOutput,
+  type QualityReport,
   type StrategicBriefV4,
 } from "@/lib/api";
 import {
@@ -25,20 +29,27 @@ import {
   isStrategicBriefV4,
   latestAgentLog,
   latestAgentStatus,
+  normalizedPercent,
+  summaryParagraphs,
   uniqueSupportingFrameworks,
 } from "@/lib/analysis";
 import { subscribeToAnalysisEvents } from "@/lib/sse";
 
 const V4_AGENTS = [
   { id: "orchestrator", label: "Orchestrator" },
-  { id: "market_intel", label: "Market Intel" },
+  { id: "market_intel", label: "Market Intelligence" },
   { id: "risk_assessment", label: "Risk Assessment" },
   { id: "competitor_analysis", label: "Competitor Analysis" },
-  { id: "geo_intel", label: "Geo Intel" },
+  { id: "geo_intel", label: "Geo Intelligence" },
   { id: "financial_reasoning", label: "Financial Reasoning" },
   { id: "strategic_options", label: "Strategic Options" },
   { id: "synthesis", label: "Synthesis" },
 ] as const;
+
+function truncate(text: string, maxLength: number) {
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength - 1)}…`;
+}
 
 export default function AnalysisDetailPage() {
   return (
@@ -58,8 +69,11 @@ function AnalysisDetailContent() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [summaryExpanded, setSummaryExpanded] = useState(true);
   const [collaborationEvents, setCollaborationEvents] = useState<AgentCollaborationEvent[]>([]);
+  const [hydratedFrameworks, setHydratedFrameworks] = useState<Record<string, FrameworkOutput>>({});
   const [completedFrameworks, setCompletedFrameworks] = useState<string[]>([]);
   const [decisionVisible, setDecisionVisible] = useState(false);
+  const [sectionActionTitles, setSectionActionTitles] = useState<Record<string, string>>({});
+  const [qualityReport, setQualityReport] = useState<QualityReport | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -87,12 +101,38 @@ function AnalysisDetailContent() {
       setCollaborationEvents([]);
       setCompletedFrameworks([]);
       setDecisionVisible(false);
+      setSectionActionTitles({});
+      setQualityReport(null);
+      setHydratedFrameworks({});
       return;
     }
     setCollaborationEvents(brief.agent_collaboration_trace || []);
     setCompletedFrameworks(Object.keys(brief.framework_outputs || {}));
     setDecisionVisible(Boolean(brief.decision_statement));
+    setSectionActionTitles(brief.section_action_titles || {});
+    setQualityReport(brief.quality_report || null);
   }, [brief]);
+
+  useEffect(() => {
+    if (!brief || analysis?.status !== "completed") return;
+    let active = true;
+    void (async () => {
+      try {
+        const [frameworksResponse, collaborationResponse] = await Promise.all([
+          reportsAPI.frameworks(analysisId),
+          reportsAPI.collaboration(analysisId),
+        ]);
+        if (!active) return;
+        setHydratedFrameworks(frameworksResponse.data.framework_outputs || {});
+        setCollaborationEvents(collaborationResponse.data.agent_collaboration_trace || []);
+      } catch {
+        // Fall back to the embedded brief payload if the report endpoints are not ready yet.
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [analysis?.status, analysisId, brief]);
 
   useEffect(() => {
     if (!analysis || analysis.status === "failed") return;
@@ -100,6 +140,10 @@ function AnalysisDetailContent() {
       onEvent: (event) => {
         if (event.event === "agent_complete" || event.event === "analysis_complete") {
           void load();
+        }
+
+        if (event.event === "orchestrator_complete") {
+          setSectionActionTitles((current) => ({ ...current, ...(event.data.section_action_titles || {}) }));
         }
 
         if (event.event === "agent_collaboration") {
@@ -128,6 +172,18 @@ function AnalysisDetailContent() {
             document.getElementById("decision-banner")?.scrollIntoView({ behavior: "smooth", block: "start" });
           }, 60);
         }
+
+        if (event.event === "quality_complete") {
+          setQualityReport({
+            overall_grade: event.data.overall_grade || "B",
+            quality_flags: event.data.quality_flags || [],
+            checks: event.data.checks || [],
+            mece_score: event.data.mece_score || 0,
+            citation_density_score: event.data.citation_density_score || 0,
+            internal_consistency_score: event.data.internal_consistency_score || 0,
+            retry_count: event.data.retry_count || 0,
+          });
+        }
       },
       onError: (caughtError) => setStreamError(caughtError.message),
     });
@@ -143,21 +199,29 @@ function AnalysisDetailContent() {
 
   if (!brief) {
     if (analysis.pipeline_version.startsWith("4")) {
-      return <V4AnalysisLoadingView analysis={analysis} streamError={streamError} />;
+      return <V4AnalysisLoadingView analysis={analysis} streamError={streamError} actionTitles={sectionActionTitles} />;
     }
     return <LegacyAnalysisView analysis={analysis} streamError={streamError} />;
   }
 
-  const supportingFrameworkKeys = uniqueSupportingFrameworks(
-    collaborationEvents,
-    brief.framework_outputs || {}
-  );
+  const displayFrameworks = Object.keys(hydratedFrameworks).length > 0 ? hydratedFrameworks : (brief.framework_outputs || {});
+  const displayQuality = qualityReport || brief.quality_report;
+  const supportingFrameworkKeys = uniqueSupportingFrameworks(collaborationEvents, displayFrameworks);
   const supportingFrameworkLabels = supportingFrameworkKeys.map((framework) => frameworkDisplayName(framework));
-  const decisionRationale = brief.decision_rationale || brief.board_narrative || brief.executive_summary;
+  const context = brief.context || analysis.extracted_context || analysis.company_context || {};
+
+  const handleShare = async () => {
+    const url = `${window.location.origin}/analysis/${analysis.id}`;
+    if (navigator.share) {
+      await navigator.share({ title: brief.report_metadata.company_name, text: brief.decision_statement, url });
+      return;
+    }
+    await navigator.clipboard.writeText(url);
+  };
 
   return (
     <>
-      <div className="min-h-screen bg-[linear-gradient(180deg,#040914_0%,#08111e_38%,#091624_100%)] px-6 py-10 text-slate-100">
+      <div className="min-h-screen bg-[linear-gradient(180deg,#040914_0%,#08111e_38%,#091624_100%)] px-4 py-6 text-slate-100 md:px-6">
         <div className="mx-auto max-w-7xl space-y-6">
           {streamError ? (
             <div className="rounded-2xl border border-amber-400/20 bg-amber-400/10 px-4 py-3 text-sm text-amber-100">
@@ -165,35 +229,31 @@ function AnalysisDetailContent() {
             </div>
           ) : null}
 
-          <section className="rounded-3xl border border-white/10 bg-[#08101d] p-6">
-            <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
-              <div className="space-y-3">
-                <div className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Strategic Brief v4.0</div>
-                <h1 className="text-3xl font-semibold text-slate-50">{analysis.query}</h1>
-                <div className="flex flex-wrap gap-3 text-sm text-slate-400">
+          <section className="sticky top-4 z-30 rounded-3xl border border-white/10 bg-[#08101d]/95 px-5 py-4 backdrop-blur">
+            <div className="flex flex-col gap-5 xl:flex-row xl:items-center xl:justify-between">
+              <div className="space-y-2">
+                <div className="flex flex-wrap gap-3 text-xs uppercase tracking-[0.18em] text-slate-500">
                   <span>{brief.report_metadata.company_name}</span>
-                  <span>•</span>
+                  <span>{context.geography || "Target market"}</span>
                   <span>{new Date(analysis.created_at).toLocaleDateString()}</span>
-                  <span>•</span>
-                  <span>{analysis.status}</span>
                 </div>
+                <h1 className="text-xl font-semibold text-slate-50">{sectionActionTitles.decision || truncate(analysis.query, 110)}</h1>
+                <div className="text-sm text-slate-400">{truncate(analysis.query, 140)}</div>
               </div>
-              <div className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-slate-200">
-                {decisionLabel(brief.decision_statement)}
-              </div>
-            </div>
-            <div className="mt-6 grid gap-3 md:grid-cols-3">
-              <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-4">
-                <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Decision Confidence</div>
-                <div className="mt-2 text-2xl font-semibold text-slate-50">{Math.round(brief.decision_confidence * 100)}%</div>
-              </div>
-              <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-4">
-                <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Frameworks Completed</div>
-                <div className="mt-2 text-2xl font-semibold text-slate-50">{Object.keys(brief.framework_outputs || {}).length}</div>
-              </div>
-              <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-4">
-                <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Collaboration Events</div>
-                <div className="mt-2 text-2xl font-semibold text-slate-50">{collaborationEvents.length}</div>
+
+              <div className="grid gap-3 lg:grid-cols-[minmax(220px,260px),auto]">
+                <QualityBadge quality={displayQuality} />
+                <div className="flex flex-wrap items-start justify-end gap-2">
+                  <button type="button" onClick={handleShare} className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-slate-200">
+                    <Share2 size={14} />Share
+                  </button>
+                  <button type="button" onClick={() => window.print()} className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-slate-200">
+                    <Printer size={14} />Print
+                  </button>
+                  <Link href="/analysis/new" className="inline-flex items-center rounded-full bg-slate-100 px-4 py-2 text-xs font-semibold text-slate-950">
+                    New Analysis
+                  </Link>
+                </div>
               </div>
             </div>
           </section>
@@ -203,34 +263,45 @@ function AnalysisDetailContent() {
               <DecisionBanner
                 decision_statement={brief.decision_statement}
                 decision_confidence={brief.decision_confidence}
-                decision_rationale={decisionRationale}
+                decision_rationale={brief.decision_rationale}
                 supporting_frameworks={supportingFrameworkLabels}
+                quality_report={displayQuality}
                 onClick={() => setDrawerOpen(true)}
               />
             </section>
           ) : null}
 
           <section className="rounded-3xl border border-white/10 bg-[#08101d] p-5">
-            <button
-              type="button"
-              onClick={() => setSummaryExpanded((current) => !current)}
-              className="flex w-full items-center justify-between gap-4 text-left"
-            >
+            <button type="button" onClick={() => setSummaryExpanded((current) => !current)} className="flex w-full items-center justify-between gap-4 text-left">
               <div>
                 <h2 className="text-lg font-semibold text-slate-50">Executive Summary</h2>
-                <p className="mt-1 text-sm text-slate-400">Board-level narrative and recommendation context.</p>
+                <p className="mt-1 text-sm text-slate-400">Pyramid-principle summary for C-suite review.</p>
               </div>
               {summaryExpanded ? <ChevronUp size={18} className="text-slate-400" /> : <ChevronDown size={18} className="text-slate-400" />}
             </button>
             {summaryExpanded ? (
-              <div className="mt-5 space-y-4 text-sm leading-7 text-slate-300">
-                {brief.executive_summary
-                  .split(/\n+/)
-                  .map((paragraph) => paragraph.trim())
-                  .filter(Boolean)
-                  .map((paragraph, index) => (
-                    <p key={`summary-${index}`}>{paragraph}</p>
+              <div className="mt-5 space-y-4">
+                <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-5 py-4 text-sm font-semibold leading-7 text-slate-100">
+                  {brief.executive_summary.headline}
+                </div>
+                <div className="grid gap-4 xl:grid-cols-3">
+                  {[brief.executive_summary.key_argument_1, brief.executive_summary.key_argument_2, brief.executive_summary.key_argument_3].map((argument, index) => (
+                    <div key={`argument-${index}`} className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-4">
+                      <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Key Argument {index + 1}</div>
+                      <div className="mt-3 text-sm leading-7 text-slate-300">{argument}</div>
+                    </div>
                   ))}
+                </div>
+                <div className="grid gap-4 xl:grid-cols-[1fr,1fr]">
+                  <div className="rounded-2xl border border-amber-400/20 bg-amber-500/10 px-5 py-4">
+                    <div className="text-[11px] uppercase tracking-[0.18em] text-amber-100">Critical Risk</div>
+                    <div className="mt-3 text-sm leading-7 text-slate-100">{brief.executive_summary.critical_risk}</div>
+                  </div>
+                  <div className="rounded-2xl border border-blue-400/20 bg-blue-500/10 px-5 py-4">
+                    <div className="text-[11px] uppercase tracking-[0.18em] text-blue-100">Recommended Next Step</div>
+                    <div className="mt-3 text-sm leading-7 text-slate-100">{brief.executive_summary.next_step}</div>
+                  </div>
+                </div>
               </div>
             ) : null}
           </section>
@@ -239,19 +310,17 @@ function AnalysisDetailContent() {
             <AgentCollaborationGraph
               collaborationEvents={collaborationEvents}
               agentLogs={analysis.agent_logs || []}
-              frameworkOutputs={brief.framework_outputs || {}}
+              frameworkOutputs={displayFrameworks}
             />
 
             <div className="rounded-3xl border border-white/10 bg-[#08101d] p-5">
-              <h3 className="text-lg font-semibold text-slate-50">Agent Status</h3>
-              <p className="mt-1 text-sm text-slate-400">Execution progress across the v4 framework pipeline.</p>
+              <h3 className="text-lg font-semibold text-slate-50">Agent Status Panel</h3>
+              <p className="mt-1 text-sm text-slate-400">Execution metadata, owning frameworks, and current status by agent.</p>
               <div className="mt-5 space-y-3">
                 {V4_AGENTS.map((agent) => {
-                  const status = latestAgentStatus(analysis.agent_logs, agent.id);
                   const log = latestAgentLog(analysis.agent_logs, agent.id);
-                  const ownedFrameworks = Object.entries(brief.framework_outputs || {}).filter(
-                    ([, output]) => output.agent_author === agent.id
-                  );
+                  const status = latestAgentStatus(analysis.agent_logs, agent.id);
+                  const ownedFrameworks = Object.entries(displayFrameworks).filter(([, output]) => output.agent_author === agent.id);
                   return (
                     <div key={agent.id} className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
                       <div className="flex items-center justify-between gap-3">
@@ -260,20 +329,23 @@ function AnalysisDetailContent() {
                           {status}
                         </span>
                       </div>
-                      <div className="mt-2 text-xs text-slate-500">
-                        {log?.duration_ms != null ? `${log.duration_ms} ms` : "No execution log yet"}
+                      <div className="mt-2 grid gap-2 text-xs text-slate-500 sm:grid-cols-2">
+                        <div>{log?.duration_ms != null ? `${log.duration_ms} ms` : "No duration yet"}</div>
+                        <div>{log?.model_used || "Model pending"}</div>
                       </div>
-                      {ownedFrameworks.length > 0 ? (
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          {ownedFrameworks.map(([frameworkKey]) => (
-                            <span
-                              key={`${agent.id}-${frameworkKey}`}
-                              className="rounded-full border border-white/10 bg-white/5 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-slate-400"
-                            >
-                              {frameworkDisplayName(frameworkKey)}
-                            </span>
-                          ))}
-                        </div>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {ownedFrameworks.length > 0 ? ownedFrameworks.map(([frameworkKey]) => (
+                          <span key={`${agent.id}-${frameworkKey}`} className="rounded-full border border-white/10 bg-black/20 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-slate-400">
+                            {frameworkDisplayName(frameworkKey)}
+                          </span>
+                        )) : (
+                          <span className="rounded-full border border-white/10 bg-black/20 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-slate-500">
+                            No framework
+                          </span>
+                        )}
+                      </div>
+                      {log?.confidence_score != null ? (
+                        <div className="mt-3 text-xs text-slate-400">Agent quality score: {normalizedPercent(log.confidence_score)}%</div>
                       ) : null}
                     </div>
                   );
@@ -283,15 +355,22 @@ function AnalysisDetailContent() {
           </section>
 
           <FrameworkVisualisationPanel
-            frameworkOutputs={brief.framework_outputs || {}}
+            frameworkOutputs={displayFrameworks}
             completedFrameworks={completedFrameworks}
+            soWhatCallouts={brief.so_what_callouts || {}}
           />
 
           <ImplementationRoadmap roadmap={brief.implementation_roadmap || []} />
 
-          <div className="flex justify-end">
+          <section className="flex flex-wrap items-center justify-end gap-3 rounded-3xl border border-white/10 bg-[#08101d] p-5">
             <ReportDownloadButton analysisId={analysis.id} />
-          </div>
+            <button type="button" onClick={handleShare} className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-3 text-sm font-semibold text-slate-200">
+              <Share2 size={15} />Share Analysis
+            </button>
+            <Link href="/analysis/new" className="inline-flex items-center rounded-full border border-white/10 bg-white/5 px-4 py-3 text-sm font-semibold text-slate-200">
+              Start New
+            </Link>
+          </section>
         </div>
       </div>
 
@@ -299,10 +378,10 @@ function AnalysisDetailContent() {
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
         decision_statement={brief.decision_statement}
-        decision_rationale={decisionRationale}
+        decision_rationale={brief.decision_rationale}
         decision_confidence={brief.decision_confidence}
         supporting_frameworks={supportingFrameworkKeys}
-        framework_outputs={brief.framework_outputs as Record<string, FrameworkOutput>}
+        framework_outputs={displayFrameworks}
       />
     </>
   );
@@ -311,9 +390,11 @@ function AnalysisDetailContent() {
 function V4AnalysisLoadingView({
   analysis,
   streamError,
+  actionTitles,
 }: {
   analysis: Analysis;
   streamError: string | null;
+  actionTitles: Record<string, string>;
 }) {
   return (
     <div className="min-h-screen bg-[linear-gradient(180deg,#040914_0%,#08111e_45%,#091624_100%)] px-6 py-10 text-slate-100">
@@ -330,13 +411,23 @@ function V4AnalysisLoadingView({
               <div className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Analysis in progress</div>
               <h1 className="mt-2 text-3xl font-semibold text-slate-50">{analysis.query}</h1>
               <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-400">
-                ASIS is generating the framework-driven strategic brief. The decision banner and framework tabs will appear as the synthesis step finishes.
+                ASIS is building the board-ready v4 brief. Framework exhibits, quality scoring, and the final decision banner will appear as synthesis completes.
               </p>
             </div>
             <div className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-4 py-2 text-sm font-semibold text-cyan-100">
               {analysis.status}
             </div>
           </div>
+
+          {Object.keys(actionTitles).length > 0 ? (
+            <div className="mt-6 grid gap-3 xl:grid-cols-3">
+              {Object.entries(actionTitles).slice(0, 3).map(([key, title]) => (
+                <div key={key} className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-4 text-sm leading-7 text-slate-300">
+                  {title}
+                </div>
+              ))}
+            </div>
+          ) : null}
 
           <div className="mt-8 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
             {V4_AGENTS.map((agent) => {
