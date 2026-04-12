@@ -31,6 +31,60 @@ const QUERY_TEMPLATES = [
   { label: "Investment Decision", value: "Should [company] invest $[X]M in [initiative]?" },
 ] as const;
 
+function pendingStatuses(): Record<string, AgentStatus> {
+  return Object.fromEntries(PIPELINE.map((step) => [step.id, "pending"])) as Record<string, AgentStatus>;
+}
+
+function completedStatuses(): Record<string, AgentStatus> {
+  return Object.fromEntries(PIPELINE.map((step) => [step.id, "completed"])) as Record<string, AgentStatus>;
+}
+
+function statusesFromAnalysis(analysis: {
+  status?: string | null;
+  current_agent?: string | null;
+  agent_logs?: Array<{ agent_id?: string | null }> | null;
+}): Record<string, AgentStatus> {
+  if (analysis.status === "completed") {
+    return completedStatuses();
+  }
+
+  const next = pendingStatuses();
+  for (const log of analysis.agent_logs || []) {
+    const agentId = String(log?.agent_id || "");
+    if (agentId in next) {
+      next[agentId] = "completed";
+    }
+  }
+
+  const currentAgent = String(analysis.current_agent || "");
+  if (analysis.status === "running" && currentAgent in next && next[currentAgent] !== "completed") {
+    next[currentAgent] = "in_progress";
+  }
+
+  return next;
+}
+
+function messageFromAnalysis(analysis: {
+  status?: string | null;
+  current_agent?: string | null;
+  error_message?: string | null;
+}) {
+  if (analysis.status === "failed") {
+    return analysis.error_message || "The analysis failed before the strategic brief could be completed.";
+  }
+
+  const active = PIPELINE.find((step) => step.id === analysis.current_agent);
+  if (active) {
+    return active.message;
+  }
+
+  if (analysis.status === "completed") {
+    return "Strategic brief complete. Opening the analysis workspace...";
+  }
+
+  return "ASIS is preparing your strategic review...";
+}
+
 function evaluateQueryQuality(query: string) {
   const lower = query.toLowerCase();
   let score = 10;
@@ -69,9 +123,7 @@ function NewAnalysisContent() {
   const [decisionType, setDecisionType] = useState("");
   const [selectedTemplate, setSelectedTemplate] = useState("");
   const [analysisId, setAnalysisId] = useState<string | null>(searchParams.get("analysisId"));
-  const [statuses, setStatuses] = useState<Record<string, AgentStatus>>(
-    Object.fromEntries(PIPELINE.map((step) => [step.id, "pending"])) as Record<string, AgentStatus>
-  );
+  const [statuses, setStatuses] = useState<Record<string, AgentStatus>>(pendingStatuses);
   const [liveMessage, setLiveMessage] = useState("ASIS is preparing your strategic review...");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -125,9 +177,14 @@ function NewAnalysisContent() {
         }
 
         if (event.event === "analysis_complete") {
-          setStatuses(Object.fromEntries(PIPELINE.map((step) => [step.id, "completed"])) as Record<string, AgentStatus>);
+          setStatuses(completedStatuses());
           setLiveMessage("Strategic brief complete. Opening the analysis workspace...");
           window.setTimeout(() => router.replace(`/analysis/${analysisId}`), 900);
+        }
+
+        if (event.event === "analysis_failed") {
+          setError(String(event.data.message || "ASIS could not complete the analysis."));
+          setLiveMessage(String(event.data.message || "The analysis failed before the brief was completed."));
         }
 
         if (event.event === "framework_complete") {
@@ -148,6 +205,46 @@ function NewAnalysisContent() {
     return unsubscribe;
   }, [analysisId, router]);
 
+  useEffect(() => {
+    if (!analysisId) return;
+
+    let cancelled = false;
+    let redirectTimer: number | undefined;
+
+    const syncAnalysis = async () => {
+      try {
+        const response = await analysesAPI.get(analysisId);
+        if (cancelled) return;
+
+        const analysis = response.data.analysis;
+        setStatuses(statusesFromAnalysis(analysis));
+        setLiveMessage(messageFromAnalysis(analysis));
+
+        if (analysis.status === "completed") {
+          redirectTimer = window.setTimeout(() => router.replace(`/analysis/${analysisId}`), 900);
+          return;
+        }
+
+        if (analysis.status === "failed") {
+          setError(String(analysis.error_message || "ASIS could not complete the analysis."));
+        }
+      } catch {
+        // The SSE stream remains the primary source of truth; polling is best effort.
+      }
+    };
+
+    void syncAnalysis();
+    const intervalId = window.setInterval(() => {
+      void syncAnalysis();
+    }, 3000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+      if (redirectTimer) window.clearTimeout(redirectTimer);
+    };
+  }, [analysisId, router]);
+
   const progress = useMemo(() => {
     const completed = PIPELINE.filter((step) => statuses[step.id] === "completed").length;
     return Math.round((completed / PIPELINE.length) * 100);
@@ -165,7 +262,7 @@ function NewAnalysisContent() {
     setSubmitting(true);
     setError("");
     setStreamError("");
-    setStatuses(Object.fromEntries(PIPELINE.map((step) => [step.id, "pending"])) as Record<string, AgentStatus>);
+    setStatuses(pendingStatuses());
     setLiveMessage("ASIS is preparing your strategic review...");
 
     try {

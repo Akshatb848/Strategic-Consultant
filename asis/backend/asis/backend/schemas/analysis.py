@@ -56,6 +56,7 @@ class AnalysisSummary(OrmModel):
     overall_confidence: float | None
     decision_recommendation: str | None
     executive_summary: str | None
+    error_message: str | None = None
     duration_seconds: float | None
     created_at: datetime
     completed_at: datetime | None

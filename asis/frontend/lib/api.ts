@@ -269,6 +269,7 @@ export interface Analysis {
   overall_confidence?: number | null;
   decision_recommendation?: string | null;
   executive_summary?: string | null;
+  error_message?: string | null;
   board_narrative?: string | null;
   duration_seconds?: number | null;
   created_at: string;

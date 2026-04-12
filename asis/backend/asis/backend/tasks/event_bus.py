@@ -34,7 +34,7 @@ class EventBus:
 
     @staticmethod
     def format_message(event: str, data: dict) -> str:
-        return f"event: {event}\\ndata: {json.dumps(data, default=str)}\\n\\n"
+        return f"event: {event}\ndata: {json.dumps(data, default=str)}\n\n"
 
 
 event_bus = EventBus()

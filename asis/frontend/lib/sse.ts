@@ -10,6 +10,7 @@ export interface AnalysisEvent {
     | "agent_start"
     | "agent_complete"
     | "analysis_complete"
+    | "analysis_failed"
     | "agent_collaboration"
     | "framework_complete"
     | "decision_reached"
@@ -51,18 +52,19 @@ export function subscribeToAnalysisEvents(
       while (!controller.signal.aborted) {
         const { done, value } = await reader.read();
         if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const parts = buffer.split("\n\n");
+        buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
+        const parts = buffer.split(/\n\n/);
         buffer = parts.pop() || "";
 
         for (const chunk of parts) {
           const lines = chunk.split("\n");
           let eventName: AnalysisEvent["event"] | null = null;
-          let data = "";
+          const dataLines: string[] = [];
           for (const line of lines) {
             if (line.startsWith("event:")) eventName = line.replace("event:", "").trim() as AnalysisEvent["event"];
-            if (line.startsWith("data:")) data += line.replace("data:", "").trim();
+            if (line.startsWith("data:")) dataLines.push(line.replace("data:", "").trim());
           }
+          const data = dataLines.join("\n");
           if (!eventName || !data) continue;
           handlers.onEvent({ event: eventName, data: JSON.parse(data) });
         }

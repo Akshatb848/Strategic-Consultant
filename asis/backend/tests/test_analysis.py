@@ -5,6 +5,23 @@ import pytest
 from conftest import register_user
 
 
+def _parse_sse_events(raw: str) -> list[tuple[str, str]]:
+    events: list[tuple[str, str]] = []
+    for chunk in raw.split("\n\n"):
+        if not chunk.strip():
+            continue
+        event_name = ""
+        data = ""
+        for line in chunk.splitlines():
+            if line.startswith("event:"):
+                event_name = line.replace("event:", "", 1).strip()
+            elif line.startswith("data:"):
+                data = line.replace("data:", "", 1).strip()
+        if event_name:
+            events.append((event_name, data))
+    return events
+
+
 @pytest.mark.anyio
 async def test_analysis_lifecycle_and_report_generation(client):
     headers = await register_user(client)
@@ -61,12 +78,15 @@ async def test_sse_replays_pipeline_history(client):
     async with client.stream("GET", f"/api/v1/analysis/{analysis_id}/events", headers=headers) as response:
         assert response.status_code == 200
         text = "".join([chunk async for chunk in response.aiter_text()])
-    assert "event: agent_start" in text
-    assert "event: agent_complete" in text
-    assert "event: agent_collaboration" in text
-    assert "event: framework_complete" in text
-    assert "event: decision_reached" in text
-    assert "event: analysis_complete" in text
+    parsed = _parse_sse_events(text)
+    event_names = [name for name, _ in parsed]
+    assert "agent_start" in event_names
+    assert "agent_complete" in event_names
+    assert "agent_collaboration" in event_names
+    assert "framework_complete" in event_names
+    assert "decision_reached" in event_names
+    assert "analysis_complete" in event_names
+    assert all(payload for _, payload in parsed)
 
 
 @pytest.mark.anyio

@@ -130,6 +130,15 @@ class V4EnterpriseWorkflow:
                 analysis.status = "failed"
                 analysis.error_message = str(exc)
                 db.commit()
+                publish_analysis_event(
+                    analysis.id,
+                    "analysis_failed",
+                    {
+                        "analysis_id": analysis.id,
+                        "message": str(exc),
+                        "timestamp_ms": now_ms(),
+                    },
+                )
         finally:
             db.close()
 

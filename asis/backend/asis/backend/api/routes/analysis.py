@@ -31,6 +31,7 @@ def _to_summary(analysis: models.Analysis) -> AnalysisSummary:
         overall_confidence=analysis.overall_confidence,
         decision_recommendation=analysis.decision_recommendation,
         executive_summary=analysis.executive_summary,
+        error_message=analysis.error_message,
         duration_seconds=analysis.duration_seconds,
         created_at=analysis.created_at,
         completed_at=analysis.completed_at,
@@ -49,6 +50,7 @@ def _to_detail(analysis: models.Analysis) -> AnalysisDetail:
         overall_confidence=analysis.overall_confidence,
         decision_recommendation=analysis.decision_recommendation,
         executive_summary=analysis.executive_summary,
+        error_message=analysis.error_message,
         duration_seconds=analysis.duration_seconds,
         created_at=analysis.created_at,
         completed_at=analysis.completed_at,
@@ -145,12 +147,15 @@ def stream_analysis_events(
     )
     historical_brief = analysis.strategic_brief
     historical_status = analysis.status
+    historical_error = analysis.error_message
 
     def event_stream():
         if historical_events:
             for event in historical_events:
                 yield event_bus.format_message(event.event_name, event.payload)
             if historical_status == "completed" and any(event.event_name == "analysis_complete" for event in historical_events):
+                return
+            if historical_status == "failed" and any(event.event_name == "analysis_failed" for event in historical_events):
                 return
         else:
             for log in historical_logs:
@@ -190,6 +195,12 @@ def stream_analysis_events(
                     {"analysis_id": analysis.id, "strategic_brief": historical_brief},
                 )
                 return
+            if historical_status == "failed":
+                yield event_bus.format_message(
+                    "analysis_failed",
+                    {"analysis_id": analysis.id, "message": historical_error or "Analysis failed."},
+                )
+                return
         subscriber = event_bus.subscribe(analysis_id)
         try:
             while True:
@@ -203,4 +214,12 @@ def stream_analysis_events(
         finally:
             event_bus.unsubscribe(analysis_id, subscriber)
 
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
