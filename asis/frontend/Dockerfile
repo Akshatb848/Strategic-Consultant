@@ -1,6 +1,25 @@
-FROM node:20-bookworm-slim
+FROM node:20-bookworm-slim AS builder
 
-ENV PUPPETEER_SKIP_DOWNLOAD=true \
+WORKDIR /app
+
+COPY asis/frontend/package.json /app/package.json
+COPY asis/frontend/package-lock.json /app/package-lock.json
+COPY asis/frontend/.npmrc /app/.npmrc
+
+RUN npm ci --include=dev
+
+COPY asis/frontend /app
+
+ARG NEXT_PUBLIC_API_URL=http://localhost:8000
+ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
+
+RUN mkdir -p /app/public
+RUN npm run build
+
+FROM node:20-bookworm-slim AS runner
+
+ENV NODE_ENV=production \
+    PUPPETEER_SKIP_DOWNLOAD=true \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
 WORKDIR /app
@@ -43,21 +62,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     xdg-utils \
     && rm -rf /var/lib/apt/lists/*
 
-COPY asis/frontend/package.json /app/package.json
-COPY asis/frontend/package-lock.json /app/package-lock.json
-COPY asis/frontend/.npmrc /app/.npmrc
-RUN npm ci --include=dev
-
-COPY asis/frontend /app
-
-ARG NEXT_PUBLIC_API_URL=http://localhost:8000
-ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
-
-RUN npm run build
-RUN npm prune --omit=dev
-
-ENV NODE_ENV=production
+COPY --from=builder /app/.next/standalone /app
+COPY --from=builder /app/.next/static /app/.next/static
+COPY --from=builder /app/public /app/public
 
 EXPOSE 3000
 
-CMD ["sh", "-c", "HOSTNAME=0.0.0.0 PORT=${PORT:-3000} node .next/standalone/server.js"]
+CMD ["sh", "-c", "HOSTNAME=0.0.0.0 PORT=${PORT:-3000} node server.js"]
