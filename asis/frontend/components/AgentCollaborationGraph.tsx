@@ -61,6 +61,8 @@ export function AgentCollaborationGraph({
   const [activeEdgeIds, setActiveEdgeIds] = useState<string[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
 
+  const activeEdgeLookup = useMemo(() => new Set(activeEdgeIds), [activeEdgeIds]);
+
   const logsByAgent = useMemo(
     () =>
       Object.fromEntries(
@@ -83,7 +85,10 @@ export function AgentCollaborationGraph({
                 <div className="rounded-2xl border border-white/10 bg-[#0b1424] px-4 py-3 text-left shadow-lg">
                   <div className="flex items-center justify-between gap-3">
                     <div className="text-sm font-semibold text-slate-100">{meta.label}</div>
-                    <span className="rounded-full px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-50" style={{ backgroundColor: meta.color }}>
+                    <span
+                      className="rounded-full px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-50"
+                      style={{ backgroundColor: meta.color }}
+                    >
                       {status}
                     </span>
                   </div>
@@ -114,29 +119,35 @@ export function AgentCollaborationGraph({
       collaborationEvents.map((event, index) => {
         const sourceColor = AGENT_META[event.source_agent]?.color || "#94a3b8";
         const edgeId = `${event.source_agent}-${event.target_agent}-${index}`;
+        const summary = event.contribution_summary || "";
         return {
           id: edgeId,
           source: event.source_agent,
           target: event.target_agent,
           label: showLabels
-            ? `${event.contribution_summary.slice(0, 40)}${event.contribution_summary.length > 40 ? "…" : ""}`
+            ? `${summary.slice(0, 40)}${summary.length > 40 ? "..." : ""}`
             : undefined,
           animated: true,
           markerEnd: { type: MarkerType.ArrowClosed, color: sourceColor },
           style: {
             stroke: sourceColor,
-            strokeWidth: activeEdgeIds.includes(edgeId) ? 3.5 : 2,
+            strokeWidth: activeEdgeLookup.has(edgeId) ? 3.5 : 2,
             strokeDasharray: "8 6",
           },
           labelStyle: { fill: "#cbd5e1", fontSize: 11 },
         };
       }),
-    [activeEdgeIds, collaborationEvents, showLabels]
+    [activeEdgeLookup, collaborationEvents, showLabels]
   );
 
+  const validEdgeIds = useMemo(() => new Set(edges.map((edge) => edge.id)), [edges]);
+
   useEffect(() => {
-    setActiveEdgeIds((current) => current.filter((edgeId) => edges.some((edge) => edge.id === edgeId)));
-  }, [edges]);
+    setActiveEdgeIds((current) => {
+      const next = current.filter((edgeId) => validEdgeIds.has(edgeId));
+      return next.length === current.length ? current : next;
+    });
+  }, [validEdgeIds]);
 
   const selectedAgentName = selectedAgentId ? AGENT_META[selectedAgentId]?.label || selectedAgentId : "";
 
@@ -147,7 +158,7 @@ export function AgentCollaborationGraph({
   const replay = async () => {
     setActiveEdgeIds([]);
     for (const edge of edges) {
-      setActiveEdgeIds((current) => [...current, edge.id]);
+      setActiveEdgeIds((current) => (current.includes(edge.id) ? current : [...current, edge.id]));
       await new Promise((resolve) => window.setTimeout(resolve, 220));
     }
   };
@@ -171,24 +182,49 @@ export function AgentCollaborationGraph({
         <div className="flex flex-col gap-4 border-b border-white/10 pb-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <h3 className="text-lg font-semibold text-slate-50">Agent Collaboration Graph</h3>
-            <p className="mt-1 text-sm text-slate-400">Eight-agent execution with real-time handoff replay and provenance.</p>
+            <p className="mt-1 text-sm text-slate-400">
+              Eight-agent execution with real-time handoff replay and provenance.
+            </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <button type="button" onClick={replay} className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-slate-200 transition hover:bg-white/10">
-              <Play size={14} />Replay
+            <button
+              type="button"
+              onClick={replay}
+              className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-slate-200 transition hover:bg-white/10"
+            >
+              <Play size={14} />
+              Replay
             </button>
-            <button type="button" onClick={reset} className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-slate-200 transition hover:bg-white/10">
-              <RotateCcw size={14} />Reset
+            <button
+              type="button"
+              onClick={reset}
+              className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-slate-200 transition hover:bg-white/10"
+            >
+              <RotateCcw size={14} />
+              Reset
             </button>
-            <button type="button" onClick={downloadPng} className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-slate-200 transition hover:bg-white/10">
-              <Download size={14} />PNG
+            <button
+              type="button"
+              onClick={downloadPng}
+              className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-slate-200 transition hover:bg-white/10"
+            >
+              <Download size={14} />
+              PNG
             </button>
-            <button type="button" onClick={() => setShowLabels((current) => !current)} className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-slate-200 transition hover:bg-white/10">
-              {showLabels ? <ToggleRight size={14} /> : <ToggleLeft size={14} />}Labels
+            <button
+              type="button"
+              onClick={() => setShowLabels((current) => !current)}
+              className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-slate-200 transition hover:bg-white/10"
+            >
+              {showLabels ? <ToggleRight size={14} /> : <ToggleLeft size={14} />}
+              Labels
             </button>
           </div>
         </div>
-        <div id="agent-collaboration-graph" className="mt-4 h-[520px] rounded-2xl border border-white/10 bg-[#050c18]">
+        <div
+          id="agent-collaboration-graph"
+          className="mt-4 h-[520px] rounded-2xl border border-white/10 bg-[#050c18]"
+        >
           <ReactFlow nodes={nodes} edges={edges} fitView onNodeClick={onNodeClick}>
             <Background color="rgba(148,163,184,0.12)" gap={16} />
             <Controls />
