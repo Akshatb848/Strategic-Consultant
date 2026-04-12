@@ -1,7 +1,6 @@
 FROM node:20-bookworm-slim
 
-ENV NODE_ENV=production \
-    PUPPETEER_SKIP_DOWNLOAD=true \
+ENV PUPPETEER_SKIP_DOWNLOAD=true \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
 WORKDIR /app
@@ -47,7 +46,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY asis/frontend/package.json /app/package.json
 COPY asis/frontend/package-lock.json /app/package-lock.json
 COPY asis/frontend/.npmrc /app/.npmrc
-RUN npm install
+RUN npm ci --include=dev
 
 COPY asis/frontend /app
 
@@ -55,6 +54,9 @@ ARG NEXT_PUBLIC_API_URL=http://localhost:8000
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 
 RUN npm run build
+RUN npm prune --omit=dev
+
+ENV NODE_ENV=production
 
 EXPOSE 3000
 
