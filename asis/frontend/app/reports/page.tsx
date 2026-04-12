@@ -7,12 +7,12 @@ import { Download, FileText, LogOut, Plus, Search, Zap } from "lucide-react";
 
 import { AuthGuard } from "@/components/auth-guard";
 import { useAuth } from "@/contexts/AuthContext";
-import { confidenceColor, toCsv } from "@/lib/analysis";
+import { briefHeadline, briefNarrative, briefRecommendation, confidenceColor, displayConfidence, toCsv } from "@/lib/analysis";
 import { reportsAPI, type Report } from "@/lib/api";
 
 function reportContext(report: Report): string {
   const context = report.strategic_brief?.context || {};
-  const company = context.company_name || "Unnamed organisation";
+  const company = context.company_name || report.strategic_brief?.report_metadata?.company_name || "Unnamed organisation";
   const sector = context.sector || "sector not specified";
   const geography = context.geography || "geography not specified";
   return `${company} - ${sector} - ${geography}`;
@@ -56,8 +56,8 @@ function ReportsContent() {
     () =>
       reports.filter((report) => {
         const brief = report.strategic_brief || {};
-        const recommendation = recommendationBucket(brief.recommendation);
-        const haystack = [brief.executive_summary, brief.board_narrative, reportContext(report)].join(" ").toLowerCase();
+        const recommendation = recommendationBucket(briefRecommendation(brief));
+        const haystack = [briefHeadline(brief), briefNarrative(brief), reportContext(report)].join(" ").toLowerCase();
         if (filter !== "all" && recommendation !== filter) return false;
         if (search && !haystack.includes(search.toLowerCase())) return false;
         return true;
@@ -70,8 +70,8 @@ function ReportsContent() {
       filteredReports.map((report) => ({
         id: report.id,
         analysis_id: report.analysis_id,
-        recommendation: report.strategic_brief?.recommendation,
-        overall_confidence: report.strategic_brief?.overall_confidence,
+        recommendation: briefRecommendation(report.strategic_brief || {}),
+        overall_confidence: displayConfidence(report.strategic_brief?.overall_confidence),
         company_name: report.strategic_brief?.context?.company_name,
         sector: report.strategic_brief?.context?.sector,
         geography: report.strategic_brief?.context?.geography,
@@ -183,24 +183,24 @@ function ReportsContent() {
                 >
                   <td style={{ padding: "12px 16px", maxWidth: 340 }}>
                     <Link href={`/analysis/${report.analysis_id}`} style={{ fontSize: 13, color: "#f1f5f9", textDecoration: "none", overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
-                      {report.strategic_brief?.executive_summary || "Board brief"}
+                      {briefHeadline(report.strategic_brief || {})}
                     </Link>
-                    <div style={{ fontSize: 11, color: "#64748b", marginTop: 4 }}>{report.strategic_brief?.board_narrative || "Narrative pending."}</div>
+                    <div style={{ fontSize: 11, color: "#64748b", marginTop: 4 }}>{briefNarrative(report.strategic_brief || {})}</div>
                   </td>
                   <td style={{ padding: "12px 16px", fontSize: 11, color: "#94a3b8" }}>{reportContext(report)}</td>
                   <td style={{ padding: "12px 16px" }}>
-                    {report.strategic_brief?.overall_confidence != null ? (
-                      <span style={{ fontSize: 12, fontWeight: 600, color: confidenceColor(Number(report.strategic_brief.overall_confidence)) }}>
-                        {Number(report.strategic_brief.overall_confidence).toFixed(0)}/100
+                    {displayConfidence(report.strategic_brief?.overall_confidence) != null ? (
+                      <span style={{ fontSize: 12, fontWeight: 600, color: confidenceColor(report.strategic_brief?.overall_confidence) }}>
+                        {displayConfidence(report.strategic_brief?.overall_confidence)}/100
                       </span>
                     ) : (
                       <span style={{ color: "#475569" }}>-</span>
                     )}
                   </td>
                   <td style={{ padding: "12px 16px" }}>
-                    {report.strategic_brief?.recommendation && (
+                    {briefRecommendation(report.strategic_brief || {}) && (
                       <span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700, background: "rgba(99,102,241,0.1)", color: "#c4b5fd" }}>
-                        {report.strategic_brief.recommendation}
+                        {briefRecommendation(report.strategic_brief || {})}
                       </span>
                     )}
                   </td>

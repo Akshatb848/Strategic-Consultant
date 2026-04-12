@@ -17,7 +17,7 @@ import {
 
 import { AuthGuard } from "@/components/auth-guard";
 import { useAuth } from "@/contexts/AuthContext";
-import { confidenceColor, contextSummary, decisionColor } from "@/lib/analysis";
+import { confidenceColor, contextSummary, decisionColor, normalizedPercent } from "@/lib/analysis";
 import { analysesAPI, memoryAPI, type Analysis, type MemoryEntry } from "@/lib/api";
 
 function DashboardShell() {
@@ -25,6 +25,7 @@ function DashboardShell() {
   const [analyses, setAnalyses] = useState<Analysis[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [memoryWarning, setMemoryWarning] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [onboardingStep, setOnboardingStep] = useState(1);
@@ -36,25 +37,44 @@ function DashboardShell() {
   });
 
   useEffect(() => {
-    Promise.all([analysesAPI.list({ limit: 50 }), memoryAPI.list()])
-      .then(([analysisResponse, memoryResponse]) => {
-        setAnalyses(analysisResponse.data.analyses);
-        const memoryItems = (memoryResponse.data.items || []) as MemoryEntry[];
-        const onboardingEntry = memoryItems.find((item) => item.scope === "profile" && item.key === "onboarding:v4_gold");
-        const profileEntry = memoryItems.find((item) => item.scope === "profile" && item.key === "company_profile");
-        if (profileEntry?.value) {
-          setProfile({
-            company_name: String(profileEntry.value.company_name || ""),
-            sector: String(profileEntry.value.sector || ""),
-            hq_country: String(profileEntry.value.hq_country || ""),
-            annual_revenue_usd_mn: String(profileEntry.value.annual_revenue_usd_mn || ""),
-          });
+    let active = true;
+    void Promise.allSettled([analysesAPI.list({ limit: 50 }), memoryAPI.list()])
+      .then(([analysisResult, memoryResult]) => {
+        if (!active) return;
+
+        if (analysisResult.status === "fulfilled") {
+          setAnalyses(analysisResult.value.data.analyses);
+          setError(null);
+        } else {
+          setError("Unable to load your analyses right now.");
         }
-        setOnboardingOpen(!onboardingEntry?.value?.completed);
-        setError(null);
+
+        if (memoryResult.status === "fulfilled") {
+          const memoryItems = (memoryResult.value.data.items || []) as MemoryEntry[];
+          const onboardingEntry = memoryItems.find((item) => item.scope === "profile" && item.key === "onboarding:v4_gold");
+          const profileEntry = memoryItems.find((item) => item.scope === "profile" && item.key === "company_profile");
+          if (profileEntry?.value) {
+            setProfile({
+              company_name: String(profileEntry.value.company_name || ""),
+              sector: String(profileEntry.value.sector || ""),
+              hq_country: String(profileEntry.value.hq_country || ""),
+              annual_revenue_usd_mn: String(profileEntry.value.annual_revenue_usd_mn || ""),
+            });
+          }
+          setOnboardingOpen(!onboardingEntry?.value?.completed);
+          setMemoryWarning(null);
+          return;
+        }
+
+        setOnboardingOpen(false);
+        setMemoryWarning("Company memory is temporarily unavailable. You can still run analyses, but profile saving is paused.");
       })
-      .catch(() => setError("Unable to load your analyses right now."))
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
   }, []);
 
   const filtered = useMemo(() => {
@@ -67,13 +87,22 @@ function DashboardShell() {
   }, [analyses, search]);
 
   const completed = analyses.filter((item) => item.status === "completed").length;
-  const avgConfidence = analyses.length
-    ? Math.round(
-        analyses.reduce((sum, item) => sum + Number(item.overall_confidence || 0), 0) /
-          Math.max(1, analyses.filter((item) => item.overall_confidence != null).length)
-      )
+  const confidenceValues = analyses
+    .filter((item) => item.overall_confidence != null)
+    .map((item) => normalizedPercent(item.overall_confidence));
+  const avgConfidence = confidenceValues.length
+    ? Math.round(confidenceValues.reduce((sum, value) => sum + value, 0) / confidenceValues.length)
     : 0;
   const proceedCount = analyses.filter((item) => item.decision_recommendation === "PROCEED").length;
+
+  async function persistProfileMemory(key: string, value: Record<string, any>) {
+    try {
+      await memoryAPI.upsert({ scope: "profile", key, value });
+      setMemoryWarning(null);
+    } catch {
+      setMemoryWarning("We couldn't save that workspace preference. Your analysis flow still works, but profile memory will retry later.");
+    }
+  }
 
   const stats = [
     { label: "Total analyses", value: String(analyses.length), detail: "All strategic decisions", icon: FileText },
@@ -178,6 +207,11 @@ function DashboardShell() {
             </section>
 
             <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_350px]">
+              {memoryWarning ? (
+                <div className="xl:col-span-2 rounded-[24px] border border-amber-400/20 bg-amber-400/10 px-5 py-4 text-sm text-amber-100">
+                  {memoryWarning}
+                </div>
+              ) : null}
               <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-4">
                 {stats.map(({ label, value, detail, icon: Icon }) => (
                   <article key={label} className="rounded-[26px] border border-white/8 bg-white/[0.04] p-5">
@@ -282,7 +316,7 @@ function DashboardShell() {
                           <div className="text-right">
                             <div className="text-xs uppercase tracking-[0.16em] text-slate-500">Confidence</div>
                             <div className="mt-2 text-3xl font-semibold tracking-[-0.04em]" style={{ color: confidenceColor(analysis.overall_confidence) }}>
-                              {analysis.overall_confidence != null ? `${Math.round(analysis.overall_confidence)}%` : "--"}
+                              {analysis.overall_confidence != null ? `${normalizedPercent(analysis.overall_confidence)}%` : "--"}
                             </div>
                           </div>
 
@@ -309,17 +343,12 @@ function DashboardShell() {
           onChange={(key, value) => setProfile((current) => ({ ...current, [key]: value }))}
           onNext={async () => {
             if (onboardingStep === 2) {
-              await memoryAPI.upsert({
-                scope: "profile",
-                key: "company_profile",
-                value: profile,
-              });
+              await persistProfileMemory("company_profile", profile);
             }
             if (onboardingStep >= 3) {
-              await memoryAPI.upsert({
-                scope: "profile",
-                key: "onboarding:v4_gold",
-                value: { completed: true, completed_at: new Date().toISOString() },
+              await persistProfileMemory("onboarding:v4_gold", {
+                completed: true,
+                completed_at: new Date().toISOString(),
               });
               setOnboardingOpen(false);
               return;
@@ -327,10 +356,10 @@ function DashboardShell() {
             setOnboardingStep((current) => current + 1);
           }}
           onSkip={async () => {
-            await memoryAPI.upsert({
-              scope: "profile",
-              key: "onboarding:v4_gold",
-              value: { completed: true, skipped: true, completed_at: new Date().toISOString() },
+            await persistProfileMemory("onboarding:v4_gold", {
+              completed: true,
+              skipped: true,
+              completed_at: new Date().toISOString(),
             });
             setOnboardingOpen(false);
           }}

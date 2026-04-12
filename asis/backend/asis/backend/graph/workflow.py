@@ -150,13 +150,16 @@ class EnterpriseWorkflow:
             baseline_brief = self.baseline.build_brief(analysis.query, analysis.extracted_context or analysis.company_context or {})
             report.evaluation = self.evaluation.score(analysis.strategic_brief, baseline_brief)
         db.commit()
-        memory_store.remember_analysis(
-            db,
-            analysis.user_id,
-            analysis.id,
-            analysis.query,
-            analysis.executive_summary or "Strategic analysis completed.",
-        )
+        try:
+            memory_store.remember_analysis(
+                db,
+                analysis.user_id,
+                analysis.id,
+                analysis.query,
+                analysis.executive_summary or "Strategic analysis completed.",
+            )
+        except Exception as exc:
+            logger.warning("analysis_memory_persist_failed", analysis_id=analysis.id, error=str(exc))
 
     def _run_orchestrator(self, state: PipelineState) -> dict:
         extracted = extract_problem_context(state["query"], state.get("company_context") or {})

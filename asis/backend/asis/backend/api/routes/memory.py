@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from asis.backend.api.dependencies import get_current_user
@@ -17,7 +18,13 @@ def list_memory(
     user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    items = memory_store.list_entries(db, user.id)
+    try:
+        items = memory_store.list_entries(db, user.id)
+    except SQLAlchemyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="MEMORY_UNAVAILABLE",
+        ) from exc
     return {"items": [MemoryEntryResponse.model_validate(item) for item in items]}
 
 
@@ -27,7 +34,13 @@ def upsert_memory(
     user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    entry = memory_store.upsert(db, user.id, payload.scope, payload.key, payload.value)
+    try:
+        entry = memory_store.upsert(db, user.id, payload.scope, payload.key, payload.value)
+    except SQLAlchemyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="MEMORY_UNAVAILABLE",
+        ) from exc
     return {"item": MemoryEntryResponse.model_validate(entry)}
 
 
@@ -36,5 +49,11 @@ def clear_memory(
     user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    deleted = memory_store.clear(db, user.id)
+    try:
+        deleted = memory_store.clear(db, user.id)
+    except SQLAlchemyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="MEMORY_UNAVAILABLE",
+        ) from exc
     return {"message": f"Deleted {deleted} memory entries"}

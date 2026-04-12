@@ -89,3 +89,39 @@ async def test_confidence_scores_vary_across_queries(client):
 
     assert len(set(scores)) == len(scores)
     assert 85 not in scores
+
+
+@pytest.mark.anyio
+async def test_analysis_completes_when_memory_persistence_fails(client, monkeypatch):
+    from asis.backend.memory.store import memory_store
+
+    def fail_remember_analysis(*args, **kwargs):
+        raise RuntimeError("memory unavailable")
+
+    monkeypatch.setattr(memory_store, "remember_analysis", fail_remember_analysis)
+
+    headers = await register_user(client, email="memory-fail@example.com")
+    created = await client.post(
+        "/api/v1/analysis",
+        headers=headers,
+        json={
+            "query": "Should Northwind Software launch a managed AI platform in Germany in 2027?",
+            "company_context": {
+                "company_name": "Northwind Software",
+                "sector": "Enterprise Software",
+                "geography": "Germany",
+            },
+        },
+    )
+    assert created.status_code == 201, created.text
+    analysis_id = created.json()["analysis"]["id"]
+
+    detail = await client.get(f"/api/v1/analysis/{analysis_id}", headers=headers)
+    assert detail.status_code == 200, detail.text
+    analysis = detail.json()["analysis"]
+    assert analysis["status"] == "completed"
+    assert analysis["report_id"]
+
+    reports = await client.get("/api/v1/reports", headers=headers)
+    assert reports.status_code == 200, reports.text
+    assert len(reports.json()["reports"]) == 1

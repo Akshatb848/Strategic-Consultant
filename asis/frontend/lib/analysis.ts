@@ -91,7 +91,14 @@ export function frameworkDisplayName(key: string): string {
 export function frameworkKeyFinding(output?: FrameworkOutput | null): string {
   if (!output) return "Framework evidence supported the final recommendation.";
   const structured = output.structured_data || {};
-  for (const key of ["key_implication", "strategic_implication", "recommendation_rationale", "blue_ocean_shift", "portfolio_recommendation", "swot_implication"]) {
+  for (const key of [
+    "key_implication",
+    "strategic_implication",
+    "recommendation_rationale",
+    "blue_ocean_shift",
+    "portfolio_recommendation",
+    "swot_implication",
+  ]) {
     if (structured[key]) return String(structured[key]);
   }
   return output.implication || output.narrative;
@@ -122,6 +129,54 @@ export function summaryParagraphs(brief: StrategicBriefV4): string[] {
   ].filter(Boolean);
 }
 
+export function briefHeadline(brief: Record<string, any> | null | undefined): string {
+  if (!brief) return "Board brief";
+  if (typeof brief.executive_summary === "string" && brief.executive_summary.trim()) {
+    return brief.executive_summary.trim();
+  }
+  if (typeof brief.executive_summary?.headline === "string" && brief.executive_summary.headline.trim()) {
+    return brief.executive_summary.headline.trim();
+  }
+  if (typeof brief.decision_statement === "string" && brief.decision_statement.trim()) {
+    return brief.decision_statement.trim();
+  }
+  return "Board brief";
+}
+
+export function briefNarrative(brief: Record<string, any> | null | undefined): string {
+  if (!brief) return "Narrative pending.";
+  if (typeof brief.board_narrative === "string" && brief.board_narrative.trim()) {
+    return brief.board_narrative.trim();
+  }
+  if (typeof brief.decision_rationale === "string" && brief.decision_rationale.trim()) {
+    return brief.decision_rationale.trim();
+  }
+  if (typeof brief.executive_summary === "string" && brief.executive_summary.trim()) {
+    return brief.executive_summary.trim();
+  }
+  const summary = brief.executive_summary;
+  if (summary && typeof summary === "object") {
+    return [
+      summary.key_argument_1,
+      summary.key_argument_2,
+      summary.key_argument_3,
+      summary.critical_risk,
+      summary.next_step,
+    ]
+      .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+      .join(" ");
+  }
+  return "Narrative pending.";
+}
+
+export function briefRecommendation(brief: Record<string, any> | null | undefined): string {
+  if (!brief) return "";
+  if (typeof brief.recommendation === "string" && brief.recommendation.trim()) {
+    return brief.recommendation.trim();
+  }
+  return decisionLabel(typeof brief.decision_statement === "string" ? brief.decision_statement : "");
+}
+
 export function qualityGradeColor(quality?: QualityReport | null): string {
   const grade = quality?.overall_grade || "C";
   return (
@@ -138,6 +193,11 @@ export function normalizedPercent(value?: number | null): number {
   if (value == null) return 0;
   const numeric = value <= 1 ? value * 100 : value;
   return Math.max(0, Math.min(100, Math.round(numeric)));
+}
+
+export function displayConfidence(value?: number | null): number | null {
+  if (value == null) return null;
+  return normalizedPercent(value);
 }
 
 export function toCsv(records: Array<Record<string, unknown>>): string {
