@@ -7,6 +7,21 @@ ENV_TEMPLATE="${ROOT_DIR}/.env.gcp.example"
 ENV_FILE="${ROOT_DIR}/.env.gcp"
 COMPOSE_FILE="${ROOT_DIR}/docker-compose.gcp-free.yml"
 DEFAULT_DATA_DIR=""
+COMPOSE_PROJECT_NAME="asis-gcp-free"
+SUDO=""
+
+on_error() {
+  local exit_code="$1"
+  local line_no="$2"
+  local failed_command="$3"
+
+  echo "[gcp-free-bootstrap] Command failed with exit ${exit_code} at line ${line_no}: ${failed_command}" >&2
+  df -h || true
+  docker_cmd system df || true
+  exit "${exit_code}"
+}
+
+trap 'on_error "$?" "${LINENO}" "${BASH_COMMAND}"' ERR
 
 if [[ "$(uname -s)" != "Linux" ]]; then
   echo "This bootstrap script is intended for a Debian or Ubuntu VM on GCP."
@@ -34,7 +49,7 @@ log() {
 }
 
 run_root() {
-  if [[ -n "${SUDO}" ]]; then
+  if [[ -n "${SUDO:-}" ]]; then
     sudo "$@"
   else
     "$@"
@@ -42,7 +57,7 @@ run_root() {
 }
 
 docker_cmd() {
-  if [[ -n "${SUDO}" ]]; then
+  if [[ -n "${SUDO:-}" ]]; then
     sudo docker "$@"
   else
     docker "$@"
@@ -125,8 +140,8 @@ replace_env_value() {
   local key="$1"
   local value="$2"
 
-  if grep -q "^${key}=" "${ENV_FILE}"; then
-    sed -i "s#^${key}=.*#${key}=${value}#" "${ENV_FILE}"
+  if grep -Eq "^[[:space:]]*${key}=" "${ENV_FILE}"; then
+    sed -i "s#^[[:space:]]*${key}=.*#${key}=${value}#" "${ENV_FILE}"
   else
     printf "%s=%s\n" "${key}" "${value}" >>"${ENV_FILE}"
   fi
@@ -151,7 +166,7 @@ prepare_env_file() {
   fi
 
   local data_dir
-  data_dir="$(awk -F= '$1=="ASIS_DATA_DIR" { print $2 }' "${ENV_FILE}" | tail -n 1)"
+  data_dir="$(env_value "ASIS_DATA_DIR")"
   if [[ -z "${data_dir}" ]]; then
     if [[ -n "${DEFAULT_DATA_DIR}" ]]; then
       data_dir="${DEFAULT_DATA_DIR}"
@@ -174,7 +189,17 @@ validate_env_file() {
 
 env_value() {
   local key="$1"
-  awk -F= -v lookup="${key}" '$1==lookup { print substr($0, index($0, "=") + 1) }' "${ENV_FILE}" | tail -n 1
+  awk -F= -v lookup="${key}" '
+    {
+      current_key = $1
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", current_key)
+      if (current_key == lookup) {
+        current_value = substr($0, index($0, "=") + 1)
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", current_value)
+        print current_value
+      }
+    }
+  ' "${ENV_FILE}" | tail -n 1
 }
 
 legacy_conflicts_for_port() {
@@ -201,6 +226,11 @@ ensure_required_ports() {
       container_id="$(awk '{print $1}' <<<"${match}")"
       container_name="$(awk '{print $2}' <<<"${match}")"
       compose_project="$(awk '{print $3}' <<<"${match}")"
+
+      if [[ "${compose_project}" == "${COMPOSE_PROJECT_NAME}" || "${container_name}" == "${COMPOSE_PROJECT_NAME}"-* ]]; then
+        log "Port ${port} is already managed by ${container_name}; the current ASIS stack will be updated in place."
+        continue
+      fi
 
       if [[ "${compose_project}" == "strategic-decision-maker" || "${container_name}" == strategic-decision-maker-* ]]; then
         log "Removing legacy strategic-decision-maker container ${container_name} to free port ${port}."
@@ -246,6 +276,24 @@ docker_login_if_configured() {
   printf "%s\n" "${ghcr_read_token}" | docker_cmd login ghcr.io -u "${ghcr_username}" --password-stdin
 }
 
+prune_stale_asis_images() {
+  local current_backend_image current_frontend_image image_ref
+  current_backend_image="$(env_value "BACKEND_IMAGE")"
+  current_frontend_image="$(env_value "FRONTEND_IMAGE")"
+
+  while IFS= read -r image_ref; do
+    [[ -z "${image_ref}" ]] && continue
+    if [[ "${image_ref}" == "${current_backend_image}" || "${image_ref}" == "${current_frontend_image}" ]]; then
+      continue
+    fi
+
+    log "Removing stale ASIS image ${image_ref} to keep the VM disk healthy."
+    docker_cmd image rm -f "${image_ref}" >/dev/null 2>&1 || true
+  done < <(docker_cmd image ls --format '{{.Repository}}:{{.Tag}}' | grep -E '^asis-(backend|frontend):' || true)
+
+  docker_cmd image prune -f >/dev/null 2>&1 || true
+}
+
 local_image_exists() {
   local image_ref="$1"
   docker_cmd image inspect "${image_ref}" >/dev/null 2>&1
@@ -289,17 +337,43 @@ launch_stack() {
     echo "These tags are not registry-backed image names, so they must already be loaded on the VM."
     echo "If you are using the GitHub Actions VM deploy workflow, rerun it so the images are streamed onto the VM."
     echo "Otherwise unset BACKEND_IMAGE/FRONTEND_IMAGE in ${ENV_FILE} to fall back to a local VM build."
-    return
+    return 1
   fi
 
   log "Building and launching the free-tier Docker stack on the VM."
   docker_cmd compose -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" up -d --build
 }
 
+wait_for_container_health() {
+  local container_name="$1"
+  local timeout_seconds="$2"
+  local elapsed_seconds=0
+  local status
+
+  while (( elapsed_seconds < timeout_seconds )); do
+    status="$(docker_cmd inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "${container_name}" 2>/dev/null || true)"
+    if [[ "${status}" == "healthy" || "${status}" == "running" ]]; then
+      return 0
+    fi
+
+    sleep 5
+    elapsed_seconds=$((elapsed_seconds + 5))
+  done
+
+  echo "Container ${container_name} did not become healthy within ${timeout_seconds}s." >&2
+  docker_cmd logs "${container_name}" --tail 200 || true
+  return 1
+}
+
+verify_stack_health() {
+  wait_for_container_health "${COMPOSE_PROJECT_NAME}-backend-1" 180
+  wait_for_container_health "${COMPOSE_PROJECT_NAME}-frontend-1" 240
+}
+
 print_summary() {
   local frontend_url backend_url
-  frontend_url="$(awk -F= '$1=="FRONTEND_URL" { print $2 }' "${ENV_FILE}" | tail -n 1)"
-  backend_url="$(awk -F= '$1=="NEXT_PUBLIC_API_URL" { print $2 }' "${ENV_FILE}" | tail -n 1)"
+  frontend_url="$(env_value "FRONTEND_URL")"
+  backend_url="$(env_value "NEXT_PUBLIC_API_URL")"
 
   docker_cmd compose -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" ps
 
@@ -323,5 +397,7 @@ validate_env_file
 docker_login_if_configured
 ensure_required_ports
 clear_stale_pull_processes
+prune_stale_asis_images
 launch_stack
+verify_stack_health
 print_summary
