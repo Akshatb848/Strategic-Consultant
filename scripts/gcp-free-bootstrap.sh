@@ -64,6 +64,10 @@ docker_cmd() {
   fi
 }
 
+docker_compose_cmd() {
+  docker_cmd compose -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" "$@"
+}
+
 install_base_packages() {
   if [[ -z "${SUDO}" ]]; then
     log "Skipping OS package installation because passwordless sudo is not available."
@@ -314,34 +318,49 @@ launch_stack() {
   backend_image="$(env_value "BACKEND_IMAGE")"
   frontend_image="$(env_value "FRONTEND_IMAGE")"
 
-  if [[ -n "${backend_image}" && -n "${frontend_image}" ]]; then
-    log "Using prebuilt images from .env.gcp."
+  local attempt
+  for attempt in 1 2; do
+    if [[ -n "${backend_image}" && -n "${frontend_image}" ]]; then
+      log "Using prebuilt images from .env.gcp (attempt ${attempt}/2)."
 
-    if local_image_exists "${backend_image}" && local_image_exists "${frontend_image}"; then
-      log "Found both prebuilt images locally on the VM. Starting containers without rebuilding."
-      docker_cmd compose -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" up -d --remove-orphans --no-build backend frontend
-      return
+      if local_image_exists "${backend_image}" && local_image_exists "${frontend_image}"; then
+        log "Found both prebuilt images locally on the VM. Starting containers without rebuilding."
+        if docker_compose_cmd up -d --remove-orphans --force-recreate --no-build backend frontend; then
+          return
+        fi
+      elif is_registry_image "${backend_image}" && is_registry_image "${frontend_image}"; then
+        log "Prebuilt images are not present locally. Pulling them from the configured registry."
+        docker_cmd pull "${backend_image}"
+        docker_cmd pull "${frontend_image}"
+        if docker_compose_cmd up -d --remove-orphans --force-recreate --no-build backend frontend; then
+          return
+        fi
+      else
+        echo "Configured prebuilt images were not found locally:"
+        echo "  BACKEND_IMAGE=${backend_image}"
+        echo "  FRONTEND_IMAGE=${frontend_image}"
+        echo "These tags are not registry-backed image names, so they must already be loaded on the VM."
+        echo "If you are using the GitHub Actions VM deploy workflow, rerun it so the images are streamed onto the VM."
+        echo "Otherwise unset BACKEND_IMAGE/FRONTEND_IMAGE in ${ENV_FILE} to fall back to a local VM build."
+        return 1
+      fi
+    else
+      log "Building and launching the free-tier Docker stack on the VM (attempt ${attempt}/2)."
+      if docker_compose_cmd up -d --build; then
+        return
+      fi
     fi
 
-    if is_registry_image "${backend_image}" && is_registry_image "${frontend_image}"; then
-      log "Prebuilt images are not present locally. Pulling them from the configured registry."
-      docker_cmd pull "${backend_image}"
-      docker_cmd pull "${frontend_image}"
-      docker_cmd compose -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" up -d --remove-orphans --no-build backend frontend
-      return
+    if (( attempt == 1 )); then
+      log "Docker Compose launch attempt ${attempt} failed. Pruning stale Docker state and retrying once."
+      docker_cmd compose -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" down --remove-orphans >/dev/null 2>&1 || true
+      prune_stale_asis_images
+      docker_cmd container prune -f >/dev/null 2>&1 || true
+      sleep 10
     fi
+  done
 
-    echo "Configured prebuilt images were not found locally:"
-    echo "  BACKEND_IMAGE=${backend_image}"
-    echo "  FRONTEND_IMAGE=${frontend_image}"
-    echo "These tags are not registry-backed image names, so they must already be loaded on the VM."
-    echo "If you are using the GitHub Actions VM deploy workflow, rerun it so the images are streamed onto the VM."
-    echo "Otherwise unset BACKEND_IMAGE/FRONTEND_IMAGE in ${ENV_FILE} to fall back to a local VM build."
-    return 1
-  fi
-
-  log "Building and launching the free-tier Docker stack on the VM."
-  docker_cmd compose -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" up -d --build
+  return 1
 }
 
 wait_for_container_health() {
@@ -355,6 +374,11 @@ wait_for_container_health() {
     if [[ "${status}" == "healthy" || "${status}" == "running" ]]; then
       return 0
     fi
+    if [[ "${status}" == "exited" || "${status}" == "dead" ]]; then
+      echo "Container ${container_name} entered terminal state ${status}." >&2
+      docker_cmd logs "${container_name}" --tail 200 || true
+      return 1
+    fi
 
     sleep 5
     elapsed_seconds=$((elapsed_seconds + 5))
@@ -365,9 +389,24 @@ wait_for_container_health() {
   return 1
 }
 
+restart_stack_containers() {
+  log "Restarting ASIS containers before a final health verification attempt."
+  docker_compose_cmd ps || true
+  docker_compose_cmd logs --tail 200 backend frontend || true
+  docker_compose_cmd restart backend frontend || true
+  sleep 10
+}
+
 verify_stack_health() {
-  wait_for_container_health "${COMPOSE_PROJECT_NAME}-backend-1" 180
-  wait_for_container_health "${COMPOSE_PROJECT_NAME}-frontend-1" 240
+  if wait_for_container_health "${COMPOSE_PROJECT_NAME}-backend-1" 240 \
+    && wait_for_container_health "${COMPOSE_PROJECT_NAME}-frontend-1" 360; then
+    return 0
+  fi
+
+  log "Initial health verification failed. Retrying after a controlled container restart."
+  restart_stack_containers
+  wait_for_container_health "${COMPOSE_PROJECT_NAME}-backend-1" 240
+  wait_for_container_health "${COMPOSE_PROJECT_NAME}-frontend-1" 360
 }
 
 print_summary() {

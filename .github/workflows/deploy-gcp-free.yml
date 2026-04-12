@@ -112,11 +112,6 @@ jobs:
           )
           ssh-keyscan -H "${VM_HOST}" >> ~/.ssh/known_hosts 2>/dev/null || true
 
-          # Transfer runner-built images directly to the VM so deploys do not depend on GHCR pull access.
-          echo "Streaming prebuilt Docker images to ${VM_USER}@${VM_HOST}."
-          docker save "${BACKEND_IMAGE}" | gzip | ssh "${ssh_opts[@]}" "${VM_USER}@${VM_HOST}" 'gunzip | docker load'
-          docker save "${FRONTEND_IMAGE}" | gzip | ssh "${ssh_opts[@]}" "${VM_USER}@${VM_HOST}" 'gunzip | docker load'
-
           remote_env=(
             "BACKEND_IMAGE=${BACKEND_IMAGE}"
             "FRONTEND_IMAGE=${FRONTEND_IMAGE}"
@@ -126,8 +121,121 @@ jobs:
             "REPOSITORY=${REPOSITORY}"
           )
 
-          if ! ssh "${ssh_opts[@]}" "${VM_USER}@${VM_HOST}" \
-            "$(printf '%q ' env "${remote_env[@]}" /bin/bash -se)" <<'SCRIPT'
+          run_remote() {
+            ssh "${ssh_opts[@]}" "${VM_USER}@${VM_HOST}" \
+              "$(printf '%q ' env "${remote_env[@]}" /bin/bash -se)"
+          }
+
+          collect_remote_diagnostics() {
+            run_remote <<'SCRIPT'
+          set +e
+          set +u
+          set +o pipefail
+
+          if sudo -n true >/dev/null 2>&1; then
+            SUDO="sudo"
+            DEPLOY_ROOT="/opt/asis"
+          else
+            SUDO=""
+            DEPLOY_ROOT="${HOME}/.asis"
+          fi
+
+          APP_DIR="${DEPLOY_ROOT}/app"
+
+          docker_cmd() {
+            if [[ -n "${SUDO}" ]]; then
+              sudo docker "$@"
+            else
+              docker "$@"
+            fi
+          }
+
+          echo "[remote-diagnostics] Timestamp: $(date -Is)"
+          echo "[remote-diagnostics] Disk usage:"
+          df -h || true
+          echo "[remote-diagnostics] Memory usage:"
+          free -m || true
+
+          if command -v docker >/dev/null 2>&1; then
+            echo "[remote-diagnostics] Docker system df:"
+            docker_cmd system df || true
+            echo "[remote-diagnostics] Docker containers:"
+            docker_cmd ps -a || true
+            echo "[remote-diagnostics] Docker images:"
+            docker_cmd image ls || true
+
+            if [[ -f "${APP_DIR}/docker-compose.gcp-free.yml" && -f "${APP_DIR}/.env.gcp" ]]; then
+              echo "[remote-diagnostics] Compose service status:"
+              docker_cmd compose -f "${APP_DIR}/docker-compose.gcp-free.yml" --env-file "${APP_DIR}/.env.gcp" ps || true
+            fi
+
+            for container_name in asis-gcp-free-backend-1 asis-gcp-free-frontend-1; do
+              if docker_cmd inspect "${container_name}" >/dev/null 2>&1; then
+                echo "[remote-diagnostics] Inspect ${container_name}:"
+                docker_cmd inspect "${container_name}" || true
+                echo "[remote-diagnostics] Logs ${container_name}:"
+                docker_cmd logs "${container_name}" --tail 250 || true
+              fi
+            done
+          fi
+          SCRIPT
+          }
+
+          echo "Running preflight cleanup on ${VM_USER}@${VM_HOST} before streaming images."
+          run_remote <<'SCRIPT'
+          set -euo pipefail
+          trap 'echo "[remote-preflight] Failed at line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
+
+          if sudo -n true >/dev/null 2>&1; then
+            SUDO="sudo"
+            DEPLOY_ROOT="/opt/asis"
+          else
+            SUDO=""
+            DEPLOY_ROOT="${HOME}/.asis"
+          fi
+
+          docker_cmd() {
+            if [[ -n "${SUDO}" ]]; then
+              sudo docker "$@"
+            else
+              docker "$@"
+            fi
+          }
+
+          if [[ -n "${SUDO}" ]]; then
+            sudo install -d -m 0755 -o "${USER}" -g "${USER}" "${DEPLOY_ROOT}"
+          else
+            mkdir -p "${DEPLOY_ROOT}"
+          fi
+
+          if command -v docker >/dev/null 2>&1; then
+            echo "[remote-preflight] Disk usage before cleanup:"
+            df -h || true
+            echo "[remote-preflight] Docker usage before cleanup:"
+            docker_cmd system df || true
+
+            while IFS= read -r image_ref; do
+              [[ -z "${image_ref}" ]] && continue
+              if [[ "${image_ref}" == "${BACKEND_IMAGE}" || "${image_ref}" == "${FRONTEND_IMAGE}" ]]; then
+                continue
+              fi
+              echo "[remote-preflight] Removing stale ASIS image ${image_ref}"
+              docker_cmd image rm -f "${image_ref}" >/dev/null 2>&1 || true
+            done < <(docker_cmd image ls --format '{{.Repository}}:{{.Tag}}' | grep -E '^asis-(backend|frontend):' || true)
+
+            docker_cmd image prune -f >/dev/null 2>&1 || true
+            docker_cmd container prune -f >/dev/null 2>&1 || true
+            echo "[remote-preflight] Docker usage after cleanup:"
+            docker_cmd system df || true
+          fi
+          SCRIPT
+
+          # Transfer runner-built images directly to the VM so deploys do not depend on GHCR pull access.
+          echo "Streaming prebuilt Docker images to ${VM_USER}@${VM_HOST}."
+          docker save "${BACKEND_IMAGE}" | gzip | ssh "${ssh_opts[@]}" "${VM_USER}@${VM_HOST}" 'gunzip | docker load'
+          docker save "${FRONTEND_IMAGE}" | gzip | ssh "${ssh_opts[@]}" "${VM_USER}@${VM_HOST}" 'gunzip | docker load'
+
+          if ! run_remote <<'SCRIPT'
           set -euo pipefail
           trap 'echo "[remote-deploy] Failed at line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
 
@@ -204,6 +312,9 @@ jobs:
           bash scripts/gcp-free-bootstrap.sh
           SCRIPT
           then
+            echo "::group::Remote diagnostics"
+            collect_remote_diagnostics || true
+            echo "::endgroup::"
             echo "::error::Remote deploy failed. Review the [remote-deploy] lines above for the exact failing command and bootstrap diagnostics."
             exit 1
           fi
