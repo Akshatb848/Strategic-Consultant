@@ -15,6 +15,10 @@ class ReportResponse(OrmModel):
     strategic_brief: dict | StrategicBrief
     evaluation: dict | None
     pdf_url: str | None
+    pdf_status: str | None = None
+    pdf_progress: int | None = None
+    pdf_error: str | None = None
+    pdf_generated_at: datetime | None = None
     report_version: int
     created_at: datetime
     updated_at: datetime

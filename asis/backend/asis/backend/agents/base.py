@@ -17,13 +17,20 @@ class BaseAgent(ABC):
 
     def run(self, state: PipelineState) -> AgentOutput:
         start = perf_counter()
+        resolved_models = self.resolve_models()
         generated = self._generate(state)
         duration_ms = int((perf_counter() - start) * 1000)
+        model_used = generated.pop("_model_used", None)
+        tools_called = generated.pop("_tools_called", None) or []
+        langfuse_trace_id = generated.pop("_langfuse_trace_id", None)
         return AgentOutput(
             agent_id=self.agent_id,
             agent_name=self.agent_name,
             confidence_score=generated["confidence_score"],
             duration_ms=duration_ms,
+            model_used=model_used or ("demo-local" if get_settings().demo_mode else (resolved_models[0] if resolved_models else None)),
+            tools_called=tools_called,
+            langfuse_trace_id=langfuse_trace_id,
             citations=generated.get("citations") or build_citations(state.get("extracted_context") or state.get("company_context") or {}),
             data=generated,
         )

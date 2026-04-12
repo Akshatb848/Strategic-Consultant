@@ -3,7 +3,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 
 from asis.backend.config.settings import get_settings
-from asis.backend.graph.workflow import workflow
+from asis.backend.graph.pipeline import v4_workflow
 
 executor = ThreadPoolExecutor(max_workers=get_settings().local_worker_concurrency)
 
@@ -11,6 +11,6 @@ executor = ThreadPoolExecutor(max_workers=get_settings().local_worker_concurrenc
 def dispatch_analysis(analysis_id: str) -> None:
     settings = get_settings()
     if settings.run_analyses_inline:
-        workflow.run(analysis_id)
+        v4_workflow.run(analysis_id)
         return
-    executor.submit(workflow.run, analysis_id)
+    executor.submit(v4_workflow.run, analysis_id)

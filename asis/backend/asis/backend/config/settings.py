@@ -36,6 +36,7 @@ class Settings(BaseModel):
     api_v1_prefix: str = "/api/v1"
     health_prefix: str = "/v1"
     frontend_url: str = Field(default_factory=lambda: _env("FRONTEND_URL", "http://localhost:3001") or "http://localhost:3001")
+    frontend_internal_url: str = Field(default_factory=lambda: _env("FRONTEND_INTERNAL_URL", _env("FRONTEND_URL", "http://localhost:3001")) or "http://localhost:3001")
     allowed_origins: list[str] = Field(
         default_factory=lambda: [
             origin.strip()
@@ -75,6 +76,10 @@ class Settings(BaseModel):
     langfuse_public_key: str | None = Field(default_factory=lambda: _env("LANGFUSE_PUBLIC_KEY"))
     langfuse_secret_key: str | None = Field(default_factory=lambda: _env("LANGFUSE_SECRET_KEY"))
     langfuse_host: str | None = Field(default_factory=lambda: _env("LANGFUSE_HOST"))
+    langfuse_trace_base_url: str | None = Field(default_factory=lambda: _env("LANGFUSE_TRACE_BASE_URL"))
+    puppeteer_executable_path: str | None = Field(default_factory=lambda: _env("PUPPETEER_EXECUTABLE_PATH"))
+    pdf_max_pages: int = Field(default_factory=lambda: _env_int("PDF_MAX_PAGES", 60))
+    report_company_logo_url: str | None = Field(default_factory=lambda: _env("REPORT_COMPANY_LOGO_URL"))
     google_client_id: str | None = Field(default_factory=lambda: _env("GOOGLE_CLIENT_ID"))
     google_client_secret: str | None = Field(default_factory=lambda: _env("GOOGLE_CLIENT_SECRET"))
     google_callback_url: str = Field(default_factory=lambda: _env("GOOGLE_CALLBACK_URL", "http://localhost:8000/api/v1/auth/google/callback") or "http://localhost:8000/api/v1/auth/google/callback")

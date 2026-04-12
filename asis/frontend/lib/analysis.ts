@@ -1,6 +1,6 @@
 "use client";
 
-import type { Analysis, AgentLog } from "@/lib/api";
+import type { Analysis, AgentCollaborationEvent, AgentLog, FrameworkOutput, StrategicBriefV4 } from "@/lib/api";
 
 export function latestAgentLog(logs: AgentLog[] | undefined, agentId: string): AgentLog | undefined {
   return [...(logs || [])]
@@ -30,8 +30,9 @@ export function contextSummary(analysis: Analysis | null): string {
 
 export function confidenceColor(score?: number | null): string {
   if (score == null) return "#94a3b8";
-  if (score >= 82) return "#10b981";
-  if (score >= 65) return "#f59e0b";
+  const normalized = score <= 1 ? score * 100 : score;
+  if (normalized >= 82) return "#10b981";
+  if (normalized >= 65) return "#f59e0b";
   return "#ef4444";
 }
 
@@ -39,6 +40,8 @@ export function decisionColor(decision?: string | null): string {
   return (
     {
       PROCEED: "#10b981",
+      "CONDITIONAL PROCEED": "#f59e0b",
+      "DO NOT PROCEED": "#ef4444",
       HOLD: "#f59e0b",
       ESCALATE: "#f97316",
       REJECT: "#ef4444",
@@ -46,6 +49,59 @@ export function decisionColor(decision?: string | null): string {
       PASS: "#10b981",
     }[decision || ""] || "#94a3b8"
   );
+}
+
+export function decisionLabel(decisionStatement?: string | null): string {
+  if (!decisionStatement) return "";
+  const normalized = decisionStatement.trim();
+  for (const label of ["DO NOT PROCEED", "CONDITIONAL PROCEED", "PROCEED"]) {
+    if (normalized.startsWith(label)) return label;
+  }
+  const match = normalized.match(/^(.*?)(?:\s[-–—]\s|$)/);
+  return match?.[1] || normalized;
+}
+
+export function isStrategicBriefV4(brief: unknown): brief is StrategicBriefV4 {
+  if (!brief || typeof brief !== "object") return false;
+  return "framework_outputs" in brief && "decision_statement" in brief && "agent_collaboration_trace" in brief;
+}
+
+export function frameworkDisplayName(key: string): string {
+  return (
+    {
+      pestle: "PESTLE",
+      swot: "SWOT",
+      porters_five_forces: "Porter's Five Forces",
+      ansoff: "Ansoff Matrix",
+      bcg_matrix: "BCG Matrix",
+      mckinsey_7s: "McKinsey 7S",
+      blue_ocean: "Blue Ocean Canvas",
+      balanced_scorecard: "Balanced Scorecard",
+    }[key] || key
+  );
+}
+
+export function frameworkKeyFinding(output?: FrameworkOutput | null): string {
+  if (!output) return "Framework evidence supported the final recommendation.";
+  const structured = output.structured_data || {};
+  for (const key of ["key_implication", "strategic_implication", "recommendation_rationale", "blue_ocean_shift"]) {
+    if (structured[key]) return String(structured[key]);
+  }
+  return output.narrative;
+}
+
+export function latestAgentStatus(logs: AgentLog[] | undefined, agentId: string): "pending" | "running" | "completed" | "failed" {
+  const latest = latestAgentLog(logs, agentId);
+  if (!latest) return "pending";
+  if (latest.status === "failed") return "failed";
+  if (latest.status === "completed" || latest.status === "self_corrected") return "completed";
+  return "running";
+}
+
+export function uniqueSupportingFrameworks(events: AgentCollaborationEvent[], frameworkOutputs: Record<string, FrameworkOutput>): string[] {
+  const explicit = Object.keys(frameworkOutputs || {});
+  if (explicit.length > 0) return explicit;
+  return Array.from(new Set(events.map((event) => event.data_field).filter(Boolean)));
 }
 
 export function toCsv(records: Array<Record<string, unknown>>): string {

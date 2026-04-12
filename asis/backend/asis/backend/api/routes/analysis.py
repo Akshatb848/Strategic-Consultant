@@ -75,6 +75,7 @@ def create_analysis(
         company_context=payload.company_context.model_dump(),
         extracted_context=extracted,
         status="queued",
+        pipeline_version="4.0.0",
         run_baseline=payload.run_baseline,
     )
     user.analysis_count += 1
@@ -138,19 +139,57 @@ def stream_analysis_events(
         {"agent_id": log.agent_id, "duration_ms": log.duration_ms or 0, "created_at": log.created_at}
         for log in sorted(analysis.agent_logs, key=lambda item: item.created_at)
     ]
+    historical_events = sorted(
+        analysis.analysis_events,
+        key=lambda item: (item.timestamp_ms, item.created_at),
+    )
     historical_brief = analysis.strategic_brief
     historical_status = analysis.status
 
     def event_stream():
-        for log in historical_logs:
-            yield event_bus.format_message("agent_start", {"agent": log["agent_id"]})
-            yield event_bus.format_message("agent_complete", {"agent": log["agent_id"], "duration_ms": log["duration_ms"]})
-        if historical_status == "completed" and historical_brief:
-            yield event_bus.format_message(
-                "analysis_complete",
-                {"analysis_id": analysis.id, "strategic_brief": historical_brief},
-            )
-            return
+        if historical_events:
+            for event in historical_events:
+                yield event_bus.format_message(event.event_name, event.payload)
+            if historical_status == "completed" and any(event.event_name == "analysis_complete" for event in historical_events):
+                return
+        else:
+            for log in historical_logs:
+                yield event_bus.format_message("agent_start", {"agent": log["agent_id"]})
+                yield event_bus.format_message("agent_complete", {"agent": log["agent_id"], "duration_ms": log["duration_ms"]})
+            if historical_status == "completed" and historical_brief:
+                for event in historical_brief.get("agent_collaboration_trace", []):
+                    yield event_bus.format_message(
+                        "agent_collaboration",
+                        {
+                            "source": event.get("source_agent"),
+                            "target": event.get("target_agent"),
+                            "field": event.get("data_field"),
+                            "summary": event.get("contribution_summary"),
+                            "timestamp_ms": event.get("timestamp_ms"),
+                        },
+                    )
+                for framework, output in (historical_brief.get("framework_outputs") or {}).items():
+                    yield event_bus.format_message(
+                        "framework_complete",
+                        {
+                            "framework": framework,
+                            "agent": output.get("agent_author"),
+                            "confidence": output.get("confidence_score"),
+                        },
+                    )
+                if historical_brief.get("decision_statement"):
+                    yield event_bus.format_message(
+                        "decision_reached",
+                        {
+                            "statement": historical_brief.get("decision_statement"),
+                            "confidence": historical_brief.get("decision_confidence"),
+                        },
+                    )
+                yield event_bus.format_message(
+                    "analysis_complete",
+                    {"analysis_id": analysis.id, "strategic_brief": historical_brief},
+                )
+                return
         subscriber = event_bus.subscribe(analysis_id)
         try:
             while True:

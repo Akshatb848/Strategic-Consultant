@@ -5,7 +5,13 @@ import { getAccessToken } from "@/lib/api";
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 export interface AnalysisEvent {
-  event: "agent_start" | "agent_complete" | "analysis_complete";
+  event:
+    | "agent_start"
+    | "agent_complete"
+    | "analysis_complete"
+    | "agent_collaboration"
+    | "framework_complete"
+    | "decision_reached";
   data: Record<string, any>;
 }
 

@@ -18,6 +18,16 @@ function reportContext(report: Report): string {
   return `${company} - ${sector} - ${geography}`;
 }
 
+function recommendationBucket(value: unknown): string {
+  const normalized = String(value || "").toUpperCase();
+  if (normalized.includes("CONDITIONAL PROCEED")) return "conditional";
+  if (normalized.includes("DO NOT PROCEED")) return "no-proceed";
+  if (normalized.includes("PROCEED")) return "proceed";
+  if (normalized.includes("HOLD")) return "hold";
+  if (normalized.includes("ESCALATE")) return "escalate";
+  return "other";
+}
+
 export default function ReportsPage() {
   return (
     <AuthGuard>
@@ -46,7 +56,7 @@ function ReportsContent() {
     () =>
       reports.filter((report) => {
         const brief = report.strategic_brief || {};
-        const recommendation = String(brief.recommendation || "").toLowerCase();
+        const recommendation = recommendationBucket(brief.recommendation);
         const haystack = [brief.executive_summary, brief.board_narrative, reportContext(report)].join(" ").toLowerCase();
         if (filter !== "all" && recommendation !== filter) return false;
         if (search && !haystack.includes(search.toLowerCase())) return false;
@@ -118,13 +128,20 @@ function ReportsContent() {
               style={{ width: "100%", padding: "9px 14px 9px 36px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.08)", background: "#0c1220", color: "#f1f5f9", fontSize: 13, outline: "none" }}
             />
           </div>
-          {["all", "proceed", "hold", "escalate"].map((value) => (
+          {[
+            ["all", "All"],
+            ["proceed", "Proceed"],
+            ["conditional", "Conditional"],
+            ["no-proceed", "Do Not Proceed"],
+            ["hold", "Hold"],
+            ["escalate", "Escalate"],
+          ].map(([value, label]) => (
             <button
               key={value}
               onClick={() => setFilter(value)}
-              style={{ padding: "8px 16px", borderRadius: 8, border: "1px solid", borderColor: filter === value ? "#6366f1" : "rgba(255,255,255,0.08)", background: filter === value ? "rgba(99,102,241,0.1)" : "transparent", color: filter === value ? "#818cf8" : "#64748b", fontSize: 12, fontWeight: 500, cursor: "pointer", textTransform: "capitalize" }}
+              style={{ padding: "8px 16px", borderRadius: 8, border: "1px solid", borderColor: filter === value ? "#6366f1" : "rgba(255,255,255,0.08)", background: filter === value ? "rgba(99,102,241,0.1)" : "transparent", color: filter === value ? "#818cf8" : "#64748b", fontSize: 12, fontWeight: 500, cursor: "pointer" }}
             >
-              {value}
+              {label}
             </button>
           ))}
         </div>

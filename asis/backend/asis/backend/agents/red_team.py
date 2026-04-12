@@ -33,13 +33,31 @@ class RedTeamAgent(BaseAgent):
             )
         return {
             "pre_mortem_scenarios": [
-                {"scenario": "Launch stalls after compliance review", "probability": "Medium", "financial_impact": "-18% NPV", "mitigation": "Board phase gates and control testing"},
-                {"scenario": "Senior-manager attrition spikes during rollout", "probability": "Medium", "financial_impact": "-11% NPV", "mitigation": "Retention packages and phased staffing"},
+                {
+                    "scenario": "Launch stalls after compliance review",
+                    "probability": "Medium",
+                    "financial_impact": "-18% NPV",
+                    "mitigation": "Board phase gates and control testing",
+                    "trigger_condition": "Regulatory approvals or partner-control sign-off slip beyond the first release window.",
+                },
+                {
+                    "scenario": "Senior-manager attrition spikes during rollout",
+                    "probability": "Medium",
+                    "financial_impact": "-11% NPV",
+                    "mitigation": "Retention packages and phased staffing",
+                    "trigger_condition": "Transformation pressure outpaces visible sponsorship and role clarity.",
+                },
             ],
             "invalidated_claims": invalidated_claims,
             "surviving_claims": [scenario["scenario"] for scenario in scenarios[:2]],
             "overall_threat_level": "HIGH" if len(invalidated_claims) > 1 else "MEDIUM",
             "red_team_verdict": "The strategy remains investable, but only if the board accepts slower value capture and tighter governance than the optimistic case suggests.",
+            "talent_exodus_risk": "Moderate unless executive sponsorship, incentives, and role clarity are visible in the first 90 days.",
+            "competitor_response_scenarios": [
+                "Incumbents compress pricing to slow initial customer acquisition.",
+                "Top competitors accelerate partnerships to block channel access.",
+                "Category leaders increase marketing and trust messaging to frame the entrant as less proven.",
+            ],
             "confidence_score": calculate_confidence(query=state["query"], context=context, evidence_bonus=4),
             "citations": build_citations(context),
         }

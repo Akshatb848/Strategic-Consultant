@@ -1,6 +1,6 @@
 # ASIS v4.0
 
-ASIS is an enterprise strategic decision intelligence platform. It accepts a board-level question plus company context, runs an 8-agent LangGraph workflow, and returns a cited strategic brief with market analysis, financial reasoning, risk, Red Team challenge, CoVe verification, and synthesis.
+ASIS is an enterprise strategic decision intelligence platform. It accepts a board-level question plus company context, runs an 8-agent LangGraph workflow, and returns a cited `StrategicBriefV4` with a decision statement, framework-grounded evidence, collaboration provenance, implementation roadmap, and enterprise PDF export.
 
 ## Active Application Surface
 
@@ -13,26 +13,32 @@ Legacy root-level `src/`, `frontend/`, and other TypeScript draft assets are tre
 
 ## Architecture
 
-The production pipeline is:
+The production v4 pipeline is:
 
-`START -> Orchestrator -> Strategist -> [Quant + Market Intel] -> Risk -> [Red Team + Ethicist] -> CoVe -> Synthesis -> END`
+`START -> Orchestrator -> [Market Intel + Risk Assessment + Competitor Analysis + Geo Intel] -> Financial Reasoning -> Strategic Options -> Synthesis -> END`
 
-CoVe is the source of truth for overall confidence. If verification fails, CoVe can route back to one upstream node for up to two self-correction attempts.
+The shared state graph records:
+
+- `framework_outputs` for the 8 named strategy frameworks
+- `agent_collaboration_trace` for typed cross-agent handoffs
+- `decision_statement`, `decision_confidence`, and `decision_rationale`
+- `framework_citations` for per-framework provenance
+
+The synthesis step is responsible for producing the validated `StrategicBriefV4`, including the final decision statement, executive summary, implementation roadmap, SWOT, and Balanced Scorecard.
 
 ## Model Routing
 
-The backend now supports agent-specific model profiles through LiteLLM aliases.
+All LLM traffic flows through LiteLLM aliases.
 
-Default enterprise routes:
+Default v4 routes:
 
 - `orchestrator` -> `claude-haiku-4-5`
-- `strategist` -> `gemini-2.5-pro`
-- `quant` -> `gemini-2.5-pro`
 - `market_intel` -> `gemini-2.0-flash`
-- `risk` -> `claude-sonnet-4-5`
-- `red_team` -> `claude-sonnet-4-5`
-- `ethicist` -> `claude-sonnet-4-5`
-- `cove` -> `gemini-2.5-pro`
+- `risk_assessment` -> `claude-sonnet-4-5`
+- `competitor_analysis` -> `claude-sonnet-4-5`
+- `geo_intel` -> `claude-sonnet-4-5`
+- `financial_reasoning` -> `gemini-2.5-pro`
+- `strategic_options` -> `claude-sonnet-4-5`
 - `synthesis` -> `claude-sonnet-4-5`
 
 Open-model fallbacks, chosen from the [open-llms](https://github.com/eugeneyan/open-llms) landscape and wired as optional OpenAI-compatible aliases:
@@ -96,6 +102,11 @@ Use this path when you want one always-free Compute Engine VM and do **not** wan
 - `GET /api/v1/reports`
 - `GET /api/v1/reports/{id}`
 - `GET /api/v1/reports/{id}/evaluation`
+- `GET /api/v1/reports/{analysis_id}/frameworks`
+- `GET /api/v1/reports/{analysis_id}/collaboration`
+- `GET /api/v1/reports/{analysis_id}/decision`
+- `POST /api/v1/reports/{analysis_id}/pdf`
+- `GET /api/v1/reports/{analysis_id}/pdf/status`
 - `DELETE /api/v1/reports/{id}`
 
 ### Memory
@@ -133,7 +144,7 @@ Terraform definitions are included for:
 
 ## Verification
 
-Validated locally during migration:
+Validated locally for the v4 hybrid implementation:
 
-- `python -m pytest asis/backend/tests -q`
+- `pytest tests/test_agents/test_geo_intel.py tests/test_agents/test_strategic_options.py tests/test_graph/test_v4_pipeline.py tests/test_api/test_pdf_endpoint.py -q` in `asis/backend`
 - `npm run type-check` in `asis/frontend`

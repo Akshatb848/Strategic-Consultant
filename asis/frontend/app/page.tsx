@@ -1,80 +1,162 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect, useState } from "react";
+import { ArrowRight, ChevronRight, Sparkles } from "lucide-react";
 
-const differentiators = [
-  { title: "Debate-to-Verify", body: "Red Team and CoVe challenge the recommendation before it reaches the board." },
-  { title: "Weighted Confidence", body: "Confidence is propagated across specialist agents instead of hardcoded to a static comfort score." },
-  { title: "Board-Ready Output", body: "Every analysis ships with a recommendation, roadmap, scorecard, risk register, and citations." },
+import { useAuth } from "@/contexts/AuthContext";
+
+const ROTATING_ROLES = [
+  "a McKinsey Senior Partner",
+  "a Board-Level Strategist",
+  "a Chief Risk Officer",
+  "a BCG Strategy Director",
+  "a Bain & Company Advisor",
 ];
 
-const processSteps = [
-  "Strategist decomposes the board question into MECE workstreams.",
-  "Quant and Market Intel run in parallel on economics and market structure.",
-  "Risk assembles the enterprise register and heat-map priorities.",
-  "Red Team and Ethicist challenge the thesis from adversarial and stakeholder angles.",
-  "CoVe verifies claims, adjusts confidence, and gates the final synthesis.",
+const FRAMEWORK_PILLS = [
+  "McKinsey 7-S",
+  "COSO ERM 2017",
+  "Porter's Five Forces",
+  "NIST CSF 2.0",
+  "Balanced Scorecard",
+  "Monte Carlo",
+  "Minto Pyramid",
+  "PESTLE",
+];
+
+const PIPELINE_STEPS = [
+  { agent: "Strategist", copy: "Frames the board question using MECE decomposition." },
+  { agent: "Quant", copy: "Runs scenario economics, Monte Carlo, and capital logic." },
+  { agent: "Market Intel", copy: "Builds PESTLE, competition, and demand signals." },
+  { agent: "Risk", copy: "Maps the risk register and escalation posture." },
+  { agent: "Red Team", copy: "Attempts to invalidate the thesis before the board sees it." },
+  { agent: "Ethicist", copy: "Checks ESG, reputation, and stakeholder consequences." },
+  { agent: "CoVe", copy: "Verifies logic consistency and confidence adjustments." },
+  { agent: "Synthesis", copy: "Assembles the final decision-ready board narrative." },
 ];
 
 export default function LandingPage() {
+  const { isAuthenticated } = useAuth();
+  const [roleIndex, setRoleIndex] = useState(0);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setRoleIndex((current) => (current + 1) % ROTATING_ROLES.length);
+    }, 2200);
+    return () => window.clearInterval(timer);
+  }, []);
+
   return (
-    <main style={{ minHeight: "100vh", background: "radial-gradient(circle at top left, rgba(25,87,255,0.22), transparent 32%), radial-gradient(circle at 80% 20%, rgba(244,114,182,0.16), transparent 28%), radial-gradient(circle at bottom right, rgba(16,185,129,0.14), transparent 30%), #050914" }}>
-      <header style={{ position: "sticky", top: 0, zIndex: 40, backdropFilter: "blur(16px)", background: "rgba(5,9,20,0.72)", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
-        <div style={{ maxWidth: 1240, margin: "0 auto", padding: "18px 24px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <div style={{ width: 38, height: 38, borderRadius: 12, background: "linear-gradient(135deg, #0ea5e9, #2563eb 55%, #f97316)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800 }}>A</div>
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top,rgba(32,77,255,0.20),transparent_34%),radial-gradient(circle_at_80%_0%,rgba(24,185,157,0.16),transparent_28%),linear-gradient(180deg,#030712_0%,#07111f_44%,#09182c_100%)] text-slate-50">
+      <header className="sticky top-0 z-40 border-b border-white/8 bg-[#040913]/70 backdrop-blur-xl">
+        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-5">
+          <div className="flex items-center gap-3">
+            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[linear-gradient(135deg,#275df2,#17b4e6_60%,#8cf0cc)] text-lg font-black text-white shadow-[0_18px_40px_rgba(23,180,230,0.18)]">
+              A
+            </div>
             <div>
-              <div style={{ fontSize: 16, fontWeight: 700 }}>ASIS v4.0</div>
-              <div style={{ fontSize: 11, color: "#93a3b8" }}>The Silicon Consultancy</div>
+              <div className="text-sm font-semibold tracking-[0.22em] text-slate-300">ASIS</div>
+              <div className="text-xs text-slate-500">Autonomous Strategic Intelligence System</div>
             </div>
           </div>
-          <nav style={{ display: "flex", alignItems: "center", gap: 18, fontSize: 13 }}>
-            <span style={{ color: "#93a3b8" }}>For Enterprises</span>
-            <Link href="/login" style={{ color: "#dbe6f4" }}>Sign in</Link>
-            <Link href="/register" style={{ padding: "10px 16px", borderRadius: 999, background: "linear-gradient(135deg, #2563eb, #0ea5e9)", color: "white", fontWeight: 600 }}>Get Started</Link>
+
+          <nav className="flex items-center gap-3 text-sm text-slate-300">
+            <Link href="/dashboard" className="hidden rounded-full border border-white/10 px-4 py-2 transition hover:border-white/20 hover:bg-white/5 md:inline-flex">
+              Dashboard
+            </Link>
+            {isAuthenticated ? (
+              <Link href="/dashboard" className="inline-flex items-center gap-2 rounded-full bg-white px-5 py-2.5 font-semibold text-slate-950 transition hover:bg-slate-100">
+                Open Workspace
+                <ArrowRight size={15} />
+              </Link>
+            ) : (
+              <>
+                <Link href="/login" className="hidden rounded-full border border-white/10 px-4 py-2 transition hover:border-white/20 hover:bg-white/5 md:inline-flex">
+                  Sign in
+                </Link>
+                <Link href="/register" className="inline-flex items-center gap-2 rounded-full bg-white px-5 py-2.5 font-semibold text-slate-950 transition hover:bg-slate-100">
+                  Launch ASIS
+                  <ArrowRight size={15} />
+                </Link>
+              </>
+            )}
           </nav>
         </div>
       </header>
 
-      <section style={{ maxWidth: 1240, margin: "0 auto", padding: "84px 24px 64px", display: "grid", gridTemplateColumns: "minmax(0, 1.15fr) minmax(360px, 0.85fr)", gap: 40, alignItems: "center" }}>
+      <section className="mx-auto grid max-w-7xl gap-14 px-6 pb-20 pt-16 lg:grid-cols-[1.15fr_0.85fr] lg:items-center lg:pt-24">
         <div>
-          <div style={{ display: "inline-flex", alignItems: "center", gap: 10, padding: "8px 14px", borderRadius: 999, background: "rgba(37,99,235,0.12)", border: "1px solid rgba(37,99,235,0.24)", color: "#9bd0ff", fontSize: 12, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", marginBottom: 24 }}>
-            Powered By Multi-Agent AI
+          <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-cyan-400/20 bg-cyan-400/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-cyan-100">
+            <Sparkles size={14} />
+            Enterprise strategic intelligence
           </div>
-          <h1 style={{ fontSize: "clamp(42px, 7vw, 76px)", lineHeight: 0.98, letterSpacing: "-0.05em", marginBottom: 18 }}>
-            Strategic decisions,
-            <br />
-            stress-tested before the board sees them.
+
+          <h1 className="max-w-4xl text-[46px] font-semibold leading-[0.95] tracking-[-0.06em] text-white sm:text-[64px] lg:text-[78px]">
+            The AI That Thinks Like
+            <span className="mt-4 block bg-[linear-gradient(90deg,#ffffff,#9ad7ff_45%,#84f1cf)] bg-clip-text text-transparent">
+              {ROTATING_ROLES[roleIndex]}
+            </span>
           </h1>
-          <p style={{ maxWidth: 680, fontSize: 17, color: "#9db0c7", lineHeight: 1.75, marginBottom: 28 }}>
-            ASIS is an enterprise strategic intelligence system for boards, partners, and transformation leaders. It decomposes ambiguous decisions, debates them across specialist agents, verifies claims, and returns a cited strategic brief with confidence, risk, and financial reasoning.
+
+          <p className="mt-8 max-w-3xl text-lg leading-8 text-slate-300">
+            ASIS turns ambiguous strategic decisions into board-ready recommendations by routing the question through
+            specialist agents for strategy, market intelligence, financial reasoning, risk, red-teaming, ethics, and
+            verification before a final synthesis is produced.
           </p>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginBottom: 34 }}>
-            <Link href="/register" style={{ padding: "14px 20px", borderRadius: 14, background: "linear-gradient(135deg, #2563eb, #0ea5e9)", color: "white", fontWeight: 700 }}>Start Enterprise Trial</Link>
-            <Link href="/login" style={{ padding: "14px 20px", borderRadius: 14, border: "1px solid rgba(255,255,255,0.12)", color: "#dbe6f4", fontWeight: 600 }}>View Secure Workspace</Link>
+
+          <div className="mt-9 flex flex-wrap gap-3">
+            <Link
+              href={isAuthenticated ? "/dashboard" : "/register"}
+              className="inline-flex items-center gap-2 rounded-full bg-white px-6 py-3.5 text-sm font-semibold text-slate-950 transition hover:bg-slate-100"
+            >
+              {isAuthenticated ? "Open dashboard" : "Create workspace"}
+              <ArrowRight size={16} />
+            </Link>
+            <Link
+              href="/dashboard"
+              className="inline-flex items-center gap-2 rounded-full border border-white/12 px-6 py-3.5 text-sm font-medium text-slate-200 transition hover:border-white/20 hover:bg-white/5"
+            >
+              View product flow
+              <ChevronRight size={16} />
+            </Link>
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 14 }}>
-            {[
-              ["8", "visible specialist agents"],
-              ["1000", "Monte Carlo iterations"],
-              ["3", "board horizons in every roadmap"],
-            ].map(([metric, label]) => (
-              <div key={metric} style={{ padding: "16px 18px", borderRadius: 16, background: "rgba(10,18,34,0.82)", border: "1px solid rgba(255,255,255,0.06)" }}>
-                <div style={{ fontSize: 28, fontWeight: 800 }}>{metric}</div>
-                <div style={{ fontSize: 12, color: "#8fa1b7" }}>{label}</div>
-              </div>
+
+          <div className="mt-10 flex flex-wrap gap-3">
+            {FRAMEWORK_PILLS.map((framework) => (
+              <span
+                key={framework}
+                className="rounded-full border border-white/8 bg-white/[0.04] px-4 py-2 text-xs font-medium tracking-[0.06em] text-slate-300"
+              >
+                {framework}
+              </span>
             ))}
           </div>
         </div>
 
-        <div style={{ padding: 26, borderRadius: 24, background: "rgba(10,18,34,0.82)", border: "1px solid rgba(255,255,255,0.08)", boxShadow: "0 28px 80px rgba(0,0,0,0.38)" }}>
-          <div style={{ display: "grid", gap: 14 }}>
-            {["Strategist", "Quant", "Market Intel", "Risk", "Red Team", "Ethicist", "CoVe", "Synthesis"].map((agent, index) => (
-              <div key={agent} style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 14px", borderRadius: 14, background: index % 2 === 0 ? "rgba(255,255,255,0.03)" : "rgba(37,99,235,0.08)", border: "1px solid rgba(255,255,255,0.05)" }}>
-                <div style={{ width: 12, height: 12, borderRadius: 999, background: index < 2 ? "#0ea5e9" : index < 4 ? "#f59e0b" : index < 6 ? "#ef4444" : "#10b981" }} />
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 700 }}>{agent}</div>
-                  <div style={{ fontSize: 12, color: "#8fa1b7" }}>{processSteps[index] || "Board-ready assembly and verification."}</div>
+        <div className="rounded-[30px] border border-white/10 bg-[linear-gradient(180deg,rgba(13,22,39,0.96),rgba(10,18,34,0.92))] p-6 shadow-[0_30px_90px_rgba(0,0,0,0.45)]">
+          <div className="mb-5 flex items-center justify-between">
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-100">Multi-Agent Debate</div>
+              <div className="mt-2 text-2xl font-semibold tracking-[-0.04em]">Board question to decision</div>
+            </div>
+            <div className="rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-1 text-xs font-semibold text-emerald-200">
+              8 agents
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            {PIPELINE_STEPS.map((step, index) => (
+              <div
+                key={step.agent}
+                className="flex items-start gap-4 rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-4"
+              >
+                <div className="mt-0.5 flex h-8 w-8 flex-none items-center justify-center rounded-full bg-[linear-gradient(135deg,#1842c5,#1fb5dc)] text-sm font-semibold text-white">
+                  {index + 1}
+                </div>
+                <div>
+                  <div className="text-sm font-semibold text-white">{step.agent}</div>
+                  <div className="mt-1 text-sm leading-6 text-slate-400">{step.copy}</div>
                 </div>
               </div>
             ))}
@@ -82,34 +164,18 @@ export default function LandingPage() {
         </div>
       </section>
 
-      <section style={{ maxWidth: 1240, margin: "0 auto", padding: "20px 24px 54px" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 18 }}>
-          {differentiators.map((item) => (
-            <article key={item.title} style={{ padding: 24, borderRadius: 20, background: "rgba(10,18,34,0.82)", border: "1px solid rgba(255,255,255,0.06)" }}>
-              <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>{item.title}</h2>
-              <p style={{ fontSize: 14, lineHeight: 1.7, color: "#97a9bf" }}>{item.body}</p>
+      <section className="mx-auto max-w-7xl px-6 pb-24">
+        <div className="grid gap-4 md:grid-cols-3">
+          {[
+            ["Decision-ready output", "Every analysis returns a clear verdict, confidence score, board narrative, roadmap, and supporting evidence."],
+            ["Pressure-tested reasoning", "Red Team and CoVe do not simply polish the answer. They actively try to break it before the board sees it."],
+            ["Framework-grounded analysis", "PESTLE, Porter, Monte Carlo, risk registers, and scorecards are built into the operating logic of the workflow."],
+          ].map(([title, body]) => (
+            <article key={title} className="rounded-[26px] border border-white/8 bg-white/[0.04] p-6">
+              <div className="text-lg font-semibold tracking-[-0.03em] text-white">{title}</div>
+              <p className="mt-4 text-sm leading-7 text-slate-400">{body}</p>
             </article>
           ))}
-        </div>
-      </section>
-
-      <section style={{ maxWidth: 1240, margin: "0 auto", padding: "16px 24px 72px" }}>
-        <div style={{ padding: 28, borderRadius: 24, background: "rgba(8,14,28,0.86)", border: "1px solid rgba(255,255,255,0.06)" }}>
-          <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 18, marginBottom: 18 }}>
-            <div>
-              <div style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: "0.08em", color: "#8fa1b7", marginBottom: 8 }}>Debate-To-Verify</div>
-              <h2 style={{ fontSize: 28, fontWeight: 800, letterSpacing: "-0.03em" }}>How every recommendation gets pressure-tested</h2>
-            </div>
-            <Link href="/register?q=Should%20we%20enter%20the%20Indian%20fintech%20market%20in%202026%3F" style={{ color: "#9bd0ff", fontWeight: 600 }}>Try a live question</Link>
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: 12 }}>
-            {processSteps.map((step, index) => (
-              <div key={step} style={{ padding: "18px 16px", borderRadius: 18, background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.05)" }}>
-                <div style={{ width: 28, height: 28, borderRadius: 999, background: "rgba(37,99,235,0.18)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, marginBottom: 12 }}>{index + 1}</div>
-                <p style={{ fontSize: 13, lineHeight: 1.7, color: "#9db0c7" }}>{step}</p>
-              </div>
-            ))}
-          </div>
         </div>
       </section>
     </main>

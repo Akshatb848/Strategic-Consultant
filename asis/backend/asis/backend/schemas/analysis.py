@@ -12,6 +12,7 @@ class CompanyContext(BaseModel):
     company_name: str | None = None
     sector: str | None = None
     geography: str | None = None
+    decision_type: str | None = None
     headquarters: str | None = None
     annual_revenue: str | None = None
     employees: str | None = None
@@ -31,6 +32,9 @@ class AgentLogResponse(OrmModel):
     event_type: str
     status: str
     confidence_score: float | None
+    model_used: str | None = None
+    tools_called: list | None = None
+    langfuse_trace_id: str | None = None
     attempt_number: int
     self_corrected: bool
     correction_reason: str | None

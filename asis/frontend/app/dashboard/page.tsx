@@ -1,185 +1,294 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
 import { formatDistanceToNow } from "date-fns";
-import { BarChart3, ChevronRight, Clock, FileText, LogOut, Plus, Shield, TrendingUp, Zap } from "lucide-react";
+import {
+  BarChart3,
+  ChevronRight,
+  FileText,
+  Home,
+  LogOut,
+  Plus,
+  Search,
+  Sparkles,
+  TrendingUp,
+} from "lucide-react";
 
 import { AuthGuard } from "@/components/auth-guard";
 import { useAuth } from "@/contexts/AuthContext";
-import { contextSummary, confidenceColor } from "@/lib/analysis";
+import { confidenceColor, contextSummary, decisionColor } from "@/lib/analysis";
 import { analysesAPI, type Analysis } from "@/lib/api";
 
-function StatusDot({ status }: { status: string }) {
-  const colors: Record<string, string> = {
-    completed: "#10b981",
-    running: "#6366f1",
-    queued: "#f59e0b",
-    failed: "#ef4444",
-    pending: "#64748b",
-  };
-  return <span style={{ width: 8, height: 8, borderRadius: "50%", background: colors[status] || "#64748b", display: "inline-block", flexShrink: 0 }} />;
-}
+function DashboardShell() {
+  const { user, logout } = useAuth();
+  const [analyses, setAnalyses] = useState<Analysis[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
 
-function StatusBadge({ status }: { status: string }) {
-  const styles: Record<string, { bg: string; color: string }> = {
-    completed: { bg: "rgba(16,185,129,0.1)", color: "#10b981" },
-    running: { bg: "rgba(99,102,241,0.1)", color: "#818cf8" },
-    queued: { bg: "rgba(245,158,11,0.1)", color: "#f59e0b" },
-    failed: { bg: "rgba(239,68,68,0.1)", color: "#ef4444" },
-    pending: { bg: "rgba(100,116,139,0.1)", color: "#64748b" },
-  };
-  const style = styles[status] || styles.pending;
-  return <span style={{ padding: "2px 8px", borderRadius: 4, background: style.bg, color: style.color, fontSize: 11, fontWeight: 600, textTransform: "capitalize" }}>{status}</span>;
+  useEffect(() => {
+    analysesAPI
+      .list({ limit: 50 })
+      .then((response) => {
+        setAnalyses(response.data.analyses);
+        setError(null);
+      })
+      .catch(() => setError("Unable to load your analyses right now."))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const filtered = useMemo(() => {
+    if (!search.trim()) return analyses;
+    const needle = search.toLowerCase();
+    return analyses.filter((analysis) => {
+      const context = contextSummary(analysis).toLowerCase();
+      return analysis.query.toLowerCase().includes(needle) || context.includes(needle);
+    });
+  }, [analyses, search]);
+
+  const completed = analyses.filter((item) => item.status === "completed").length;
+  const avgConfidence = analyses.length
+    ? Math.round(
+        analyses.reduce((sum, item) => sum + Number(item.overall_confidence || 0), 0) /
+          Math.max(1, analyses.filter((item) => item.overall_confidence != null).length)
+      )
+    : 0;
+  const proceedCount = analyses.filter((item) => item.decision_recommendation === "PROCEED").length;
+
+  const stats = [
+    { label: "Total analyses", value: String(analyses.length), detail: "All strategic decisions", icon: FileText },
+    { label: "Completed", value: String(completed), detail: "Finished briefs", icon: TrendingUp },
+    { label: "Avg confidence", value: analyses.length ? `${avgConfidence}%` : "--", detail: "Across completed runs", icon: BarChart3 },
+    { label: "PROCEED verdicts", value: String(proceedCount), detail: "Positive recommendations", icon: Sparkles },
+  ];
+
+  const name = user ? `${user.first_name} ${user.last_name}`.trim() : "Strategist";
+
+  return (
+    <div className="min-h-screen bg-[linear-gradient(180deg,#040914_0%,#07101d_38%,#081423_100%)] text-slate-100">
+      <div className="mx-auto grid min-h-screen max-w-[1600px] lg:grid-cols-[272px_minmax(0,1fr)]">
+        <aside className="border-r border-white/8 bg-[#07101b]/90 px-5 py-6 backdrop-blur-xl">
+          <div className="flex items-center gap-3">
+            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[linear-gradient(135deg,#204df0,#17b8e6_60%,#84f1cf)] text-lg font-black text-white">
+              A
+            </div>
+            <div>
+              <div className="text-sm font-semibold tracking-[0.22em] text-slate-200">ASIS</div>
+              <div className="text-xs text-slate-500">Strategic workspace</div>
+            </div>
+          </div>
+
+          <div className="mt-8 space-y-2">
+            {[
+              { href: "/dashboard", icon: Home, label: "Dashboard", active: true },
+              { href: "/new-analysis", icon: Plus, label: "New Analysis", active: false },
+              { href: "/reports", icon: FileText, label: "Reports", active: false },
+            ].map(({ href, icon: Icon, label, active }) => (
+              <Link
+                key={href}
+                href={href}
+                className={`flex items-center gap-3 rounded-2xl px-4 py-3 text-sm transition ${
+                  active
+                    ? "bg-white text-slate-950 shadow-[0_16px_30px_rgba(255,255,255,0.08)]"
+                    : "text-slate-400 hover:bg-white/[0.04] hover:text-slate-100"
+                }`}
+              >
+                <Icon size={17} />
+                {label}
+              </Link>
+            ))}
+          </div>
+
+          <div className="mt-10 rounded-[26px] border border-white/8 bg-white/[0.04] p-4">
+            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-100">Decision stack</div>
+            <div className="mt-3 space-y-2 text-sm text-slate-400">
+              {["Strategist", "Quant", "Market Intel", "Risk", "Red Team", "Ethicist", "CoVe", "Synthesis"].map(
+                (agent) => (
+                  <div key={agent} className="flex items-center gap-3">
+                    <span className="h-2.5 w-2.5 rounded-full bg-cyan-300/80" />
+                    {agent}
+                  </div>
+                )
+              )}
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => void logout()}
+            className="mt-10 inline-flex items-center gap-2 rounded-full border border-white/10 px-4 py-2 text-sm text-slate-400 transition hover:border-white/20 hover:bg-white/[0.04] hover:text-slate-100"
+          >
+            <LogOut size={15} />
+            Sign out
+          </button>
+        </aside>
+
+        <main className="px-6 py-6 lg:px-10">
+          <div className="flex flex-col gap-6">
+            <section className="rounded-[30px] border border-white/8 bg-[linear-gradient(180deg,rgba(14,23,39,0.95),rgba(10,18,34,0.92))] p-6 shadow-[0_28px_80px_rgba(0,0,0,0.38)]">
+              <div className="flex flex-col gap-5 xl:flex-row xl:items-center xl:justify-between">
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Strategic Dashboard</div>
+                  <h1 className="mt-3 text-4xl font-semibold tracking-[-0.05em] text-white">Welcome back, {name}</h1>
+                  <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-400">
+                    Search prior analyses, monitor verdict quality, and start a new board-level decision review from
+                    the workspace below.
+                  </p>
+                </div>
+
+                <div className="flex flex-col gap-3 sm:flex-row">
+                  <div className="relative">
+                    <Search size={15} className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" />
+                    <input
+                      value={search}
+                      onChange={(event) => setSearch(event.target.value)}
+                      placeholder="Search analyses"
+                      className="w-full rounded-full border border-white/10 bg-white/[0.04] py-3 pl-11 pr-4 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-cyan-300/40 sm:w-72"
+                    />
+                  </div>
+                  <Link
+                    href="/new-analysis"
+                    className="inline-flex items-center justify-center gap-2 rounded-full bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-slate-100"
+                  >
+                    <Plus size={16} />
+                    New Strategic Analysis
+                  </Link>
+                </div>
+              </div>
+            </section>
+
+            <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_350px]">
+              <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-4">
+                {stats.map(({ label, value, detail, icon: Icon }) => (
+                  <article key={label} className="rounded-[26px] border border-white/8 bg-white/[0.04] p-5">
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">{label}</div>
+                        <div className="mt-4 text-3xl font-semibold tracking-[-0.04em] text-white">{value}</div>
+                        <div className="mt-2 text-sm text-slate-500">{detail}</div>
+                      </div>
+                      <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-cyan-300/10 text-cyan-100">
+                        <Icon size={18} />
+                      </div>
+                    </div>
+                  </article>
+                ))}
+              </div>
+
+              <Link
+                href="/new-analysis"
+                className="group rounded-[30px] border border-cyan-300/18 bg-[linear-gradient(145deg,rgba(16,171,231,0.20),rgba(10,18,34,0.95)_62%)] p-6 transition hover:border-cyan-200/40 hover:shadow-[0_25px_70px_rgba(16,171,231,0.16)]"
+              >
+                <div className="flex h-full flex-col justify-between">
+                  <div>
+                    <div className="inline-flex rounded-full border border-cyan-200/20 bg-cyan-300/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-cyan-100">
+                      Launch
+                    </div>
+                    <h2 className="mt-5 text-3xl font-semibold tracking-[-0.05em] text-white">New Strategic Analysis</h2>
+                    <p className="mt-4 text-sm leading-7 text-slate-300">
+                      Enter the question, organisation, industry, geography, and decision type. ASIS will run the full
+                      multi-agent debate and return a board-ready recommendation.
+                    </p>
+                  </div>
+                  <div className="mt-8 inline-flex items-center gap-2 text-sm font-semibold text-cyan-100">
+                    Start now
+                    <ChevronRight size={16} className="transition group-hover:translate-x-1" />
+                  </div>
+                </div>
+              </Link>
+            </section>
+
+            <section className="rounded-[30px] border border-white/8 bg-[#07101b]/92 p-6">
+              <div className="mb-5 flex items-center justify-between gap-4">
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Recent analyses</div>
+                  <h2 className="mt-2 text-2xl font-semibold tracking-[-0.04em] text-white">Your decision archive</h2>
+                </div>
+                <div className="text-sm text-slate-500">{filtered.length} visible</div>
+              </div>
+
+              {loading ? (
+                <div className="rounded-[24px] border border-white/8 bg-white/[0.03] px-5 py-14 text-center text-sm text-slate-400">
+                  Loading analyses...
+                </div>
+              ) : error ? (
+                <div className="rounded-[24px] border border-rose-400/20 bg-rose-400/10 px-5 py-8 text-sm text-rose-200">
+                  {error}
+                </div>
+              ) : filtered.length === 0 ? (
+                <div className="rounded-[24px] border border-white/8 bg-white/[0.03] px-5 py-14 text-center">
+                  <div className="text-lg font-semibold text-white">No matching analyses</div>
+                  <div className="mt-2 text-sm text-slate-400">Start a new strategic review to populate the dashboard.</div>
+                </div>
+              ) : (
+                <div className="grid gap-4">
+                  {filtered.map((analysis) => (
+                    <Link
+                      key={analysis.id}
+                      href={`/analysis/${analysis.id}`}
+                      className="group rounded-[26px] border border-white/8 bg-white/[0.03] p-5 transition hover:border-white/14 hover:bg-white/[0.05]"
+                    >
+                      <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="rounded-full border border-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                              {analysis.status}
+                            </span>
+                            {analysis.decision_recommendation ? (
+                              <span
+                                className="rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em]"
+                                style={{
+                                  color: decisionColor(analysis.decision_recommendation),
+                                  borderColor: `${decisionColor(analysis.decision_recommendation)}33`,
+                                  background: `${decisionColor(analysis.decision_recommendation)}14`,
+                                }}
+                              >
+                                {analysis.decision_recommendation}
+                              </span>
+                            ) : null}
+                          </div>
+
+                          <h3 className="mt-4 text-xl font-semibold tracking-[-0.04em] text-white">{analysis.query}</h3>
+                          <p className="mt-3 text-sm leading-7 text-slate-400">{contextSummary(analysis)}</p>
+
+                          <div className="mt-4 flex flex-wrap items-center gap-4 text-xs text-slate-500">
+                            <span>{formatDistanceToNow(new Date(analysis.created_at), { addSuffix: true })}</span>
+                            {analysis.duration_seconds != null ? <span>{Math.round(analysis.duration_seconds)}s runtime</span> : null}
+                            <span>Pipeline {analysis.pipeline_version}</span>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-5 xl:flex-col xl:items-end">
+                          <div className="text-right">
+                            <div className="text-xs uppercase tracking-[0.16em] text-slate-500">Confidence</div>
+                            <div className="mt-2 text-3xl font-semibold tracking-[-0.04em]" style={{ color: confidenceColor(analysis.overall_confidence) }}>
+                              {analysis.overall_confidence != null ? `${Math.round(analysis.overall_confidence)}%` : "--"}
+                            </div>
+                          </div>
+
+                          <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-300">
+                            Open analysis
+                            <ChevronRight size={17} className="transition group-hover:translate-x-1" />
+                          </div>
+                        </div>
+                      </div>
+                    </Link>
+                  ))}
+                </div>
+              )}
+            </section>
+          </div>
+        </main>
+      </div>
+    </div>
+  );
 }
 
 export default function DashboardPage() {
   return (
     <AuthGuard>
-      <DashboardContent />
+      <DashboardShell />
     </AuthGuard>
-  );
-}
-
-function DashboardContent() {
-  const { user, logout } = useAuth();
-  const [analyses, setAnalyses] = useState<Analysis[]>([]);
-  const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    analysesAPI
-      .list({ limit: 10 })
-      .then((response) => {
-        setAnalyses(response.data.analyses);
-        setTotal(response.data.total);
-      })
-      .catch(() => setError("Could not load analyses right now."))
-      .finally(() => setLoading(false));
-  }, []);
-
-  const completed = analyses.filter((analysis) => analysis.status === "completed").length;
-  const withConfidence = analyses.filter((analysis) => analysis.overall_confidence != null);
-  const withDuration = analyses.filter((analysis) => analysis.duration_seconds != null);
-  const avgConfidence = (
-    withConfidence.reduce((sum, analysis) => sum + (analysis.overall_confidence || 0), 0) /
-    (withConfidence.length || 1)
-  ).toFixed(0);
-  const avgDuration = withDuration.length
-    ? (
-        withDuration.reduce((sum, analysis) => sum + (analysis.duration_seconds || 0), 0) /
-        withDuration.length
-      ).toFixed(0)
-    : "-";
-
-  const stats = [
-    { icon: BarChart3, label: "Total Analyses", value: loading ? "-" : String(total), sub: "all time" },
-    { icon: TrendingUp, label: "Completed", value: loading ? "-" : String(completed), sub: "successfully" },
-    { icon: Shield, label: "Avg Confidence", value: loading ? "-" : `${avgConfidence}/100`, sub: "analysis confidence" },
-    { icon: Clock, label: "Avg Duration", value: loading ? "-" : `${avgDuration}s`, sub: "per analysis" },
-  ];
-
-  const displayName = user ? `${user.first_name} ${user.last_name}` : "User";
-
-  return (
-    <div style={{ minHeight: "100vh", background: "#070b14" }}>
-      <header style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 32px", borderBottom: "1px solid rgba(255,255,255,0.05)", background: "#0c1220", position: "sticky", top: 0, zIndex: 50 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <div style={{ width: 32, height: 32, borderRadius: 8, background: "linear-gradient(135deg, #6366f1, #7c3aed)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <Zap size={16} color="white" />
-          </div>
-          <span style={{ fontSize: 16, fontWeight: 700 }}>ASIS</span>
-          <span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 4, background: "rgba(99,102,241,0.15)", color: "#818cf8", fontWeight: 600 }}>v4.0</span>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-          <Link href="/analysis/new" style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 8, background: "linear-gradient(135deg, #6366f1, #7c3aed)", color: "white", fontSize: 13, fontWeight: 600, textDecoration: "none" }}>
-            <Plus size={14} />New Analysis
-          </Link>
-          <Link href="/reports" style={{ fontSize: 13, color: "#64748b", textDecoration: "none" }}>Reports</Link>
-          <Link href="/profile" style={{ fontSize: 13, color: "#64748b", textDecoration: "none" }}>Profile</Link>
-          <button onClick={logout} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", color: "#64748b", fontSize: 13 }}>
-            <LogOut size={14} />Sign out
-          </button>
-        </div>
-      </header>
-
-      <div style={{ padding: "32px 32px 80px", maxWidth: 1200, margin: "0 auto" }}>
-        <div style={{ marginBottom: 28 }}>
-          <h1 style={{ fontSize: 22, fontWeight: 700, letterSpacing: "-0.02em", marginBottom: 4 }}>Welcome back, {displayName}</h1>
-          <p style={{ fontSize: 13, color: "#64748b" }}>Board-level analysis powered by 8 specialist AI agents.</p>
-        </div>
-
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12, marginBottom: 28 }}>
-          {stats.map(({ icon: Icon, label, value, sub }) => (
-            <div key={label} style={{ padding: "16px 18px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.06)", background: "#0c1220" }}>
-              <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
-                <div style={{ width: 34, height: 34, borderRadius: 8, background: "rgba(99,102,241,0.1)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                  <Icon size={16} style={{ color: "#818cf8" }} />
-                </div>
-                <div>
-                  <div style={{ fontSize: 11, color: "#475569", marginBottom: 2, textTransform: "uppercase", letterSpacing: "0.04em" }}>{label}</div>
-                  <div style={{ fontSize: 22, fontWeight: 700, color: "#f1f5f9", lineHeight: 1.1 }}>{value}</div>
-                  <div style={{ fontSize: 11, color: "#475569", marginTop: 2 }}>{sub}</div>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-
-        <div style={{ background: "#0c1220", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 12 }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
-            <span style={{ fontSize: 13, fontWeight: 600, color: "#f1f5f9" }}>Recent Analyses</span>
-            <Link href="/reports" style={{ fontSize: 12, color: "#818cf8", textDecoration: "none", display: "flex", alignItems: "center", gap: 2 }}>
-              View all <ChevronRight size={12} />
-            </Link>
-          </div>
-
-          {loading && <div style={{ padding: "48px 20px", textAlign: "center", color: "#475569", fontSize: 13 }}>Loading...</div>}
-          {error && <div style={{ padding: "48px 20px", textAlign: "center", color: "#ef4444", fontSize: 13 }}>{error}</div>}
-          {!loading && !error && analyses.length === 0 && (
-            <div style={{ padding: "64px 20px", textAlign: "center" }}>
-              <FileText size={32} style={{ color: "#334155", margin: "0 auto 12px", display: "block" }} />
-              <p style={{ color: "#64748b", fontSize: 13, marginBottom: 16 }}>No analyses yet.</p>
-              <Link href="/analysis/new" style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 16px", background: "#6366f1", color: "white", borderRadius: 8, fontSize: 13, fontWeight: 500, textDecoration: "none" }}>
-                <Plus size={14} />Start your first analysis
-              </Link>
-            </div>
-          )}
-          {!loading && !error && analyses.length > 0 && (
-            <div>
-              {analyses.map((analysis, index) => (
-                <Link
-                  key={analysis.id}
-                  href={`/analysis/${analysis.id}`}
-                  style={{ display: "flex", alignItems: "center", padding: "14px 20px", borderBottom: index < analyses.length - 1 ? "1px solid rgba(255,255,255,0.04)" : "none", textDecoration: "none", transition: "background 0.15s" }}
-                  onMouseEnter={(event) => ((event.currentTarget as HTMLElement).style.backgroundColor = "rgba(255,255,255,0.02)")}
-                  onMouseLeave={(event) => ((event.currentTarget as HTMLElement).style.backgroundColor = "transparent")}
-                >
-                  <div style={{ marginRight: 12, flexShrink: 0 }}><StatusDot status={analysis.status} /></div>
-                  <div style={{ flex: 1, minWidth: 0, marginRight: 16 }}>
-                    <p style={{ fontSize: 13, fontWeight: 500, color: "#f1f5f9", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{analysis.query}</p>
-                    <p style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>{contextSummary(analysis)}</p>
-                    <p style={{ fontSize: 11, color: "#475569", marginTop: 2 }}>
-                      {formatDistanceToNow(new Date(analysis.created_at), { addSuffix: true })}
-                      {analysis.duration_seconds != null && <span> · {analysis.duration_seconds.toFixed(0)}s</span>}
-                    </p>
-                  </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
-                    {analysis.overall_confidence != null && (
-                      <span style={{ fontSize: 11, color: confidenceColor(analysis.overall_confidence), fontWeight: 600 }}>
-                        {analysis.overall_confidence.toFixed(0)}/100
-                      </span>
-                    )}
-                    <StatusBadge status={analysis.status} />
-                    <ChevronRight size={14} style={{ color: "#334155" }} />
-                  </div>
-                </Link>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
   );
 }

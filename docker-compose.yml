@@ -11,6 +11,8 @@ services:
       - "3001:3000"
     env_file:
       - .env
+    environment:
+      PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium
     depends_on:
       - backend
 
@@ -31,6 +33,7 @@ services:
       LITELLM_PROXY_URL: http://litellm:4000
       LANGFUSE_HOST: http://langfuse:3000
       FRONTEND_URL: http://localhost:3001
+      FRONTEND_INTERNAL_URL: http://frontend:3000
       ALLOWED_ORIGINS: http://localhost:3001
     depends_on:
       - postgres
@@ -118,4 +121,3 @@ services:
 volumes:
   postgres-data:
   qdrant-data:
-

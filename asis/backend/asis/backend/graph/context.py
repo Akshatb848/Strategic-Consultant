@@ -20,7 +20,7 @@ def extract_problem_context(query: str, company_context: dict) -> dict:
     extracted.setdefault("company_name", _extract_company_name(query))
     extracted.setdefault("sector", _extract_sector(text))
     extracted.setdefault("geography", _extract_geography(text))
-    extracted["decision_type"] = _extract_decision_type(text)
+    extracted["decision_type"] = company_context.get("decision_type") or _extract_decision_type(text)
     return extracted
 
 

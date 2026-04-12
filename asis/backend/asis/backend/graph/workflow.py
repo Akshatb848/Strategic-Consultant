@@ -137,10 +137,15 @@ class EnterpriseWorkflow:
                 analysis_id=analysis.id,
                 user_id=analysis.user_id,
                 strategic_brief=analysis.strategic_brief,
+                pdf_status="ready",
+                pdf_progress=0,
             )
             db.add(report)
         else:
             report.strategic_brief = analysis.strategic_brief
+            report.pdf_status = "ready"
+            report.pdf_progress = 0
+            report.pdf_error = None
         if analysis.run_baseline:
             baseline_brief = self.baseline.build_brief(analysis.query, analysis.extracted_context or analysis.company_context or {})
             report.evaluation = self.evaluation.score(analysis.strategic_brief, baseline_brief)
@@ -186,6 +191,9 @@ class EnterpriseWorkflow:
                 event_type="agent_complete",
                 status=result.status,
                 confidence_score=result.confidence_score,
+                model_used=result.model_used,
+                tools_called=result.tools_called,
+                langfuse_trace_id=result.langfuse_trace_id,
                 attempt_number=result.attempt_number,
                 self_corrected=result.self_corrected,
                 correction_reason=result.correction_reason,

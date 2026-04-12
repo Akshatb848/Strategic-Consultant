@@ -23,10 +23,10 @@ class RiskAgent(BaseAgent):
     def local_result(self, state: PipelineState) -> dict:
         context = state.get("extracted_context") or {}
         items = [
-            ("R1", "Regulatory approval or compliance drag", "Regulatory", "High", "Critical", "Moderate", "Chief Risk Officer"),
-            ("R2", "Talent attrition during transformation", "Talent", "Medium", "High", "Fast", "CHRO"),
-            ("R3", "Execution overruns on product and process redesign", "Operational", "Medium", "High", "Moderate", "COO"),
-            ("R4", "Partner and third-party concentration", "Strategic", "Low", "High", "Slow", "Chief Strategy Officer"),
+            ("R01", "Regulatory approval or compliance drag", "Regulatory", "High", "Critical", "Moderate", "Chief Risk Officer"),
+            ("R02", "Talent attrition during transformation", "Talent", "Medium", "High", "Fast", "CHRO"),
+            ("R03", "Execution overruns on product and process redesign", "Operational", "Medium", "High", "Moderate", "COO"),
+            ("R04", "Partner and third-party concentration", "Strategic", "Low", "High", "Slow", "Chief Strategy Officer"),
         ]
         register = []
         for identifier, risk, category, likelihood, impact, velocity, owner in items:
@@ -40,6 +40,7 @@ class RiskAgent(BaseAgent):
                     "impact": impact,
                     "velocity": velocity,
                     "owner": owner,
+                    "current_control": "Named executive owner, phase-gate review, and control testing prior to scale-up.",
                     "mitigation": "Phase-gate investment, pre-negotiate controls, and assign named control owners.",
                     "residual_score": max(20, severity - 18),
                     "severity_score": severity,
@@ -48,9 +49,31 @@ class RiskAgent(BaseAgent):
                 }
             )
         register.sort(key=lambda item: item["severity_score"], reverse=True)
+        critical_risks = [item["risk"] for item in register if item["severity_score"] >= 60][:3]
         return {
             "risk_register": register,
             "top_strategic_risk": register[0]["risk"],
+            "critical_risks": critical_risks,
+            "mitigation_strategies": [
+                "Stage capital deployment against explicit control and commercial gates.",
+                "Assign single-threaded owners for regulatory, talent, and execution exposures.",
+                "Pre-negotiate partner controls before customer-facing scale-up.",
+            ],
+            "residual_risk_level": "MODERATE-HIGH" if register[0]["residual_score"] >= 50 else "MODERATE",
+            "risk_appetite_alignment": "Within appetite only if the board enforces phased execution and explicit stop/go triggers.",
+            "framework_used": "COSO ERM + NIST CSF 2.0",
+            "heat_map_data": [
+                {
+                    "id": item["id"],
+                    "x": item["heat_map_x"],
+                    "y": item["heat_map_y"],
+                    "severity": item["severity_score"],
+                    "label": item["risk"],
+                }
+                for item in register
+            ],
+            "board_escalation_required": True,
+            "escalation_rationale": "The leading risks are manageable, but they span regulatory, talent, and execution domains that require board-sponsored gating.",
             "confidence_score": calculate_confidence(query=state["query"], context=context, evidence_bonus=6),
             "citations": build_citations(context),
         }

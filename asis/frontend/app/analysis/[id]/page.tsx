@@ -1,51 +1,51 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import Link from "next/link";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
-import { formatDistanceToNow } from "date-fns";
-import { ArrowLeft, CheckCircle, RefreshCw, Shield, XCircle } from "lucide-react";
+import { ChevronDown, ChevronUp } from "lucide-react";
 
 import { AuthGuard } from "@/components/auth-guard";
-import { activeContext, confidenceColor, contextSummary, latestAgentOutput } from "@/lib/analysis";
-import { analysesAPI, type Analysis, type AgentLog } from "@/lib/api";
+import { AgentCollaborationGraph } from "@/components/AgentCollaborationGraph";
+import { DecisionBanner } from "@/components/DecisionBanner";
+import { DecisionProvenanceDrawer } from "@/components/DecisionProvenanceDrawer";
+import { FrameworkVisualisationPanel } from "@/components/FrameworkVisualisationPanel";
+import { ImplementationRoadmap } from "@/components/ImplementationRoadmap";
+import { LegacyAnalysisView } from "@/components/LegacyAnalysisView";
+import { ReportDownloadButton } from "@/components/ReportDownloadButton";
+import {
+  analysesAPI,
+  type Analysis,
+  type AgentCollaborationEvent,
+  type FrameworkOutput,
+  type StrategicBriefV4,
+} from "@/lib/api";
+import {
+  decisionLabel,
+  frameworkDisplayName,
+  isStrategicBriefV4,
+  latestAgentLog,
+  latestAgentStatus,
+  uniqueSupportingFrameworks,
+} from "@/lib/analysis";
 import { subscribeToAnalysisEvents } from "@/lib/sse";
 
-const AGENTS = [
-  ["strategist", "Strategist"],
-  ["quant", "Quant"],
-  ["market_intel", "Market Intel"],
-  ["risk", "Risk"],
-  ["red_team", "Red Team"],
-  ["ethicist", "Ethicist"],
-  ["cove", "CoVe"],
-  ["synthesis", "Synthesis"],
+const V4_AGENTS = [
+  { id: "orchestrator", label: "Orchestrator" },
+  { id: "market_intel", label: "Market Intel" },
+  { id: "risk_assessment", label: "Risk Assessment" },
+  { id: "competitor_analysis", label: "Competitor Analysis" },
+  { id: "geo_intel", label: "Geo Intel" },
+  { id: "financial_reasoning", label: "Financial Reasoning" },
+  { id: "strategic_options", label: "Strategic Options" },
+  { id: "synthesis", label: "Synthesis" },
 ] as const;
 
-function cardTitle(title: string, subtitle?: string) {
-  return (
-    <div style={{ marginBottom: 12 }}>
-      <h2 style={{ fontSize: 14, fontWeight: 700, color: "#f8fafc" }}>{title}</h2>
-      {subtitle && <p style={{ fontSize: 12, color: "#64748b", marginTop: 4 }}>{subtitle}</p>}
-    </div>
-  );
-}
-
-function card(children: React.ReactNode) {
-  return <section style={{ background: "#0c1220", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 14, padding: 18 }}>{children}</section>;
-}
-
-function agentStatus(logs: AgentLog[], agentId: string): "pending" | "running" | "completed" | "failed" {
-  const entries = logs.filter((log) => log.agent_id === agentId);
-  if (entries.length === 0) return "pending";
-  const latest = entries[entries.length - 1];
-  if (latest.status === "failed") return "failed";
-  if (latest.status === "completed" || latest.status === "self_corrected") return "completed";
-  return "running";
-}
-
 export default function AnalysisDetailPage() {
-  return <AuthGuard><AnalysisDetailContent /></AuthGuard>;
+  return (
+    <AuthGuard>
+      <AnalysisDetailContent />
+    </AuthGuard>
+  );
 }
 
 function AnalysisDetailContent() {
@@ -55,11 +55,16 @@ function AnalysisDetailContent() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [streamError, setStreamError] = useState<string | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [summaryExpanded, setSummaryExpanded] = useState(true);
+  const [collaborationEvents, setCollaborationEvents] = useState<AgentCollaborationEvent[]>([]);
+  const [completedFrameworks, setCompletedFrameworks] = useState<string[]>([]);
+  const [decisionVisible, setDecisionVisible] = useState(false);
 
   const load = useCallback(async () => {
     try {
       const response = await analysesAPI.get(analysisId);
-      setAnalysis(response.data.analysis);
+      setAnalysis(response.data.analysis as Analysis);
       setError(null);
     } catch (caughtError: any) {
       setError(caughtError?.response?.data?.detail || "Failed to load analysis.");
@@ -72,209 +77,285 @@ function AnalysisDetailContent() {
     void load();
   }, [load]);
 
+  const brief = useMemo<StrategicBriefV4 | null>(() => {
+    if (!isStrategicBriefV4(analysis?.strategic_brief)) return null;
+    return analysis.strategic_brief;
+  }, [analysis]);
+
   useEffect(() => {
-    if (!analysis || analysis.status === "completed" || analysis.status === "failed") return;
+    if (!brief) {
+      setCollaborationEvents([]);
+      setCompletedFrameworks([]);
+      setDecisionVisible(false);
+      return;
+    }
+    setCollaborationEvents(brief.agent_collaboration_trace || []);
+    setCompletedFrameworks(Object.keys(brief.framework_outputs || {}));
+    setDecisionVisible(Boolean(brief.decision_statement));
+  }, [brief]);
+
+  useEffect(() => {
+    if (!analysis || analysis.status === "failed") return;
     return subscribeToAnalysisEvents(analysisId, {
-      onEvent: () => void load(),
+      onEvent: (event) => {
+        if (event.event === "agent_complete" || event.event === "analysis_complete") {
+          void load();
+        }
+
+        if (event.event === "agent_collaboration") {
+          setCollaborationEvents((current) => [
+            ...current,
+            {
+              source_agent: String(event.data.source || ""),
+              target_agent: String(event.data.target || ""),
+              data_field: String(event.data.field || ""),
+              timestamp_ms: Number(event.data.timestamp_ms || Date.now()),
+              contribution_summary: String(event.data.summary || ""),
+            },
+          ]);
+        }
+
+        if (event.event === "framework_complete") {
+          const framework = String(event.data.framework || "");
+          if (framework) {
+            setCompletedFrameworks((current) => (current.includes(framework) ? current : [...current, framework]));
+          }
+        }
+
+        if (event.event === "decision_reached") {
+          setDecisionVisible(true);
+          window.setTimeout(() => {
+            document.getElementById("decision-banner")?.scrollIntoView({ behavior: "smooth", block: "start" });
+          }, 60);
+        }
+      },
       onError: (caughtError) => setStreamError(caughtError.message),
     });
   }, [analysis, analysisId, load]);
 
   if (loading) {
-    return <div style={{ minHeight: "100vh", background: "#070b14", display: "flex", alignItems: "center", justifyContent: "center", color: "#94a3b8" }}>Loading analysis...</div>;
-  }
-  if (error || !analysis) {
-    return <div style={{ minHeight: "100vh", background: "#070b14", display: "flex", alignItems: "center", justifyContent: "center", color: "#ef4444" }}>{error || "Analysis not found"}</div>;
+    return <div className="flex min-h-screen items-center justify-center bg-[#040914] text-slate-400">Loading analysis...</div>;
   }
 
-  const logs = analysis.agent_logs || [];
-  const brief = analysis.strategic_brief || {};
-  const context = activeContext(analysis);
-  const strategist = latestAgentOutput(analysis, "strategist");
-  const quant = latestAgentOutput(analysis, "quant");
-  const market = latestAgentOutput(analysis, "market_intel");
-  const risk = latestAgentOutput(analysis, "risk");
-  const redTeam = latestAgentOutput(analysis, "red_team");
-  const ethicist = latestAgentOutput(analysis, "ethicist");
-  const cove = latestAgentOutput(analysis, "cove");
-  const confidence = analysis.overall_confidence ?? brief.overall_confidence ?? null;
+  if (error || !analysis) {
+    return <div className="flex min-h-screen items-center justify-center bg-[#040914] text-rose-300">{error || "Analysis not found"}</div>;
+  }
+
+  if (!brief) {
+    if (analysis.pipeline_version.startsWith("4")) {
+      return <V4AnalysisLoadingView analysis={analysis} streamError={streamError} />;
+    }
+    return <LegacyAnalysisView analysis={analysis} streamError={streamError} />;
+  }
+
+  const supportingFrameworkKeys = uniqueSupportingFrameworks(
+    collaborationEvents,
+    brief.framework_outputs || {}
+  );
+  const supportingFrameworkLabels = supportingFrameworkKeys.map((framework) => frameworkDisplayName(framework));
+  const decisionRationale = brief.decision_rationale || brief.board_narrative || brief.executive_summary;
 
   return (
-    <div style={{ minHeight: "100vh", background: "#070b14" }}>
-      <header style={{ display: "flex", alignItems: "center", gap: 16, padding: "14px 28px", borderBottom: "1px solid rgba(255,255,255,0.05)", background: "#0c1220" }}>
-        <Link href="/dashboard" style={{ display: "flex", alignItems: "center", gap: 6, color: "#64748b", fontSize: 12, textDecoration: "none" }}>
-          <ArrowLeft size={14} />Dashboard
-        </Link>
-        <div style={{ width: 1, height: 16, background: "rgba(255,255,255,0.06)" }} />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 12, color: "#f8fafc", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{analysis.query}</div>
-          <div style={{ fontSize: 11, color: "#64748b" }}>{contextSummary(analysis)}</div>
-        </div>
-        {(analysis.status === "queued" || analysis.status === "running") && <RefreshCw size={14} style={{ color: "#818cf8", animation: "spin 1s linear infinite" }} />}
-      </header>
+    <>
+      <div className="min-h-screen bg-[linear-gradient(180deg,#040914_0%,#08111e_38%,#091624_100%)] px-6 py-10 text-slate-100">
+        <div className="mx-auto max-w-7xl space-y-6">
+          {streamError ? (
+            <div className="rounded-2xl border border-amber-400/20 bg-amber-400/10 px-4 py-3 text-sm text-amber-100">
+              {streamError}
+            </div>
+          ) : null}
 
-      <div style={{ maxWidth: 1220, margin: "0 auto", padding: "24px 24px 80px", display: "grid", gap: 18 }}>
-        {streamError && <div style={{ padding: "10px 14px", borderRadius: 10, background: "rgba(245,158,11,0.1)", border: "1px solid rgba(245,158,11,0.2)", color: "#fbbf24", fontSize: 12 }}>Live stream disconnected. Showing the latest persisted state.</div>}
-
-        {card(
-          <>
-            {cardTitle("Board Summary", "Decision narrative and confidence propagated from CoVe")}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 180px", gap: 18 }}>
-              <div>
-                <h1 style={{ fontSize: 28, fontWeight: 700, letterSpacing: "-0.03em", marginBottom: 10 }}>{brief.executive_summary || analysis.executive_summary || "Strategic brief in progress"}</h1>
-                <p style={{ fontSize: 15, color: "#cbd5e1", lineHeight: 1.8 }}>{brief.board_narrative || analysis.board_narrative || "Synthesis is still assembling the board narrative."}</p>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 14 }}>
-                  {(Array.isArray(brief.frameworks_applied) ? brief.frameworks_applied : []).map((framework: string) => (
-                    <span key={framework} style={{ padding: "6px 10px", borderRadius: 999, background: "rgba(99,102,241,0.12)", border: "1px solid rgba(99,102,241,0.2)", color: "#c4b5fd", fontSize: 11, fontWeight: 600 }}>{framework}</span>
-                  ))}
+          <section className="rounded-3xl border border-white/10 bg-[#08101d] p-6">
+            <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+              <div className="space-y-3">
+                <div className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Strategic Brief v4.0</div>
+                <h1 className="text-3xl font-semibold text-slate-50">{analysis.query}</h1>
+                <div className="flex flex-wrap gap-3 text-sm text-slate-400">
+                  <span>{brief.report_metadata.company_name}</span>
+                  <span>•</span>
+                  <span>{new Date(analysis.created_at).toLocaleDateString()}</span>
+                  <span>•</span>
+                  <span>{analysis.status}</span>
                 </div>
               </div>
-              <div style={{ display: "grid", gap: 12 }}>
-                <div style={{ padding: 14, borderRadius: 12, background: "rgba(255,255,255,0.03)" }}>
-                  <div style={{ fontSize: 11, color: "#64748b", marginBottom: 6 }}>Confidence</div>
-                  <div style={{ fontSize: 28, fontWeight: 700, color: confidenceColor(confidence) }}>{confidence != null ? `${confidence.toFixed(0)}/100` : "-"}</div>
-                </div>
-                <div style={{ padding: 14, borderRadius: 12, background: "rgba(255,255,255,0.03)" }}>
-                  <div style={{ fontSize: 11, color: "#64748b", marginBottom: 6 }}>Status</div>
-                  <div style={{ fontSize: 18, fontWeight: 700, color: "#f8fafc", textTransform: "capitalize" }}>{analysis.status}</div>
-                  <div style={{ fontSize: 11, color: "#64748b", marginTop: 4 }}>{formatDistanceToNow(new Date(analysis.created_at), { addSuffix: true })}</div>
-                </div>
+              <div className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-slate-200">
+                {decisionLabel(brief.decision_statement)}
               </div>
             </div>
-          </>
-        )}
+            <div className="mt-6 grid gap-3 md:grid-cols-3">
+              <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-4">
+                <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Decision Confidence</div>
+                <div className="mt-2 text-2xl font-semibold text-slate-50">{Math.round(brief.decision_confidence * 100)}%</div>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-4">
+                <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Frameworks Completed</div>
+                <div className="mt-2 text-2xl font-semibold text-slate-50">{Object.keys(brief.framework_outputs || {}).length}</div>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-4">
+                <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Collaboration Events</div>
+                <div className="mt-2 text-2xl font-semibold text-slate-50">{collaborationEvents.length}</div>
+              </div>
+            </div>
+          </section>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18 }}>
-          {card(
-            <>
-              {cardTitle("Pipeline Status", "Per-agent completion and confidence snapshots")}
-              <div style={{ display: "grid", gap: 8 }}>
-                {AGENTS.map(([agentId, label]) => {
-                  const latest = logs.filter((log) => log.agent_id === agentId).at(-1);
-                  const status = agentStatus(logs, agentId);
+          {decisionVisible ? (
+            <section id="decision-banner">
+              <DecisionBanner
+                decision_statement={brief.decision_statement}
+                decision_confidence={brief.decision_confidence}
+                decision_rationale={decisionRationale}
+                supporting_frameworks={supportingFrameworkLabels}
+                onClick={() => setDrawerOpen(true)}
+              />
+            </section>
+          ) : null}
+
+          <section className="rounded-3xl border border-white/10 bg-[#08101d] p-5">
+            <button
+              type="button"
+              onClick={() => setSummaryExpanded((current) => !current)}
+              className="flex w-full items-center justify-between gap-4 text-left"
+            >
+              <div>
+                <h2 className="text-lg font-semibold text-slate-50">Executive Summary</h2>
+                <p className="mt-1 text-sm text-slate-400">Board-level narrative and recommendation context.</p>
+              </div>
+              {summaryExpanded ? <ChevronUp size={18} className="text-slate-400" /> : <ChevronDown size={18} className="text-slate-400" />}
+            </button>
+            {summaryExpanded ? (
+              <div className="mt-5 space-y-4 text-sm leading-7 text-slate-300">
+                {brief.executive_summary
+                  .split(/\n+/)
+                  .map((paragraph) => paragraph.trim())
+                  .filter(Boolean)
+                  .map((paragraph, index) => (
+                    <p key={`summary-${index}`}>{paragraph}</p>
+                  ))}
+              </div>
+            ) : null}
+          </section>
+
+          <section className="grid gap-6 xl:grid-cols-[1.6fr,1fr]">
+            <AgentCollaborationGraph
+              collaborationEvents={collaborationEvents}
+              agentLogs={analysis.agent_logs || []}
+              frameworkOutputs={brief.framework_outputs || {}}
+            />
+
+            <div className="rounded-3xl border border-white/10 bg-[#08101d] p-5">
+              <h3 className="text-lg font-semibold text-slate-50">Agent Status</h3>
+              <p className="mt-1 text-sm text-slate-400">Execution progress across the v4 framework pipeline.</p>
+              <div className="mt-5 space-y-3">
+                {V4_AGENTS.map((agent) => {
+                  const status = latestAgentStatus(analysis.agent_logs, agent.id);
+                  const log = latestAgentLog(analysis.agent_logs, agent.id);
+                  const ownedFrameworks = Object.entries(brief.framework_outputs || {}).filter(
+                    ([, output]) => output.agent_author === agent.id
+                  );
                   return (
-                    <div key={agentId} style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "10px 12px", borderRadius: 10, background: "rgba(255,255,255,0.03)" }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        {status === "completed" ? <CheckCircle size={14} style={{ color: "#10b981" }} /> : status === "failed" ? <XCircle size={14} style={{ color: "#ef4444" }} /> : <Shield size={14} style={{ color: status === "running" ? "#818cf8" : "#475569" }} />}
-                        <span style={{ fontSize: 12, color: "#f8fafc", fontWeight: 600 }}>{label}</span>
+                    <div key={agent.id} className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-sm font-semibold text-slate-100">{agent.label}</div>
+                        <span className="rounded-full border border-white/10 bg-black/20 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-300">
+                          {status}
+                        </span>
                       </div>
-                      <span style={{ fontSize: 11, color: latest?.confidence_score != null ? confidenceColor(latest.confidence_score) : "#64748b" }}>{latest?.confidence_score != null ? `${latest.confidence_score.toFixed(0)}/100` : status}</span>
+                      <div className="mt-2 text-xs text-slate-500">
+                        {log?.duration_ms != null ? `${log.duration_ms} ms` : "No execution log yet"}
+                      </div>
+                      {ownedFrameworks.length > 0 ? (
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {ownedFrameworks.map(([frameworkKey]) => (
+                            <span
+                              key={`${agent.id}-${frameworkKey}`}
+                              className="rounded-full border border-white/10 bg-white/5 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-slate-400"
+                            >
+                              {frameworkDisplayName(frameworkKey)}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
                     </div>
                   );
                 })}
               </div>
-            </>
-          )}
+            </div>
+          </section>
 
-          {card(
-            <>
-              {cardTitle("Context Snapshot", "Structured and extracted company context")}
-              <div style={{ display: "grid", gap: 8 }}>
-                {[
-                  ["Company", context.company_name || "-"],
-                  ["Sector", context.sector || "-"],
-                  ["Geography", context.geography || "-"],
-                  ["Decision Type", context.decision_type || "-"],
-                  ["Revenue", context.annual_revenue || "-"],
-                  ["Employees", context.employees || "-"],
-                ].map(([label, value]) => (
-                  <div key={label as string} style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "10px 12px", borderRadius: 10, background: "rgba(255,255,255,0.03)" }}>
-                    <span style={{ fontSize: 12, color: "#64748b" }}>{label}</span>
-                    <span style={{ fontSize: 12, color: "#f8fafc", fontWeight: 600 }}>{value as string}</span>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
+          <FrameworkVisualisationPanel
+            frameworkOutputs={brief.framework_outputs || {}}
+            completedFrameworks={completedFrameworks}
+          />
+
+          <ImplementationRoadmap roadmap={brief.implementation_roadmap || []} />
+
+          <div className="flex justify-end">
+            <ReportDownloadButton analysisId={analysis.id} />
+          </div>
         </div>
+      </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18 }}>
-          {card(
-            <>
-              {cardTitle("Market And Risk", "Market sizing, Porter forces, and top enterprise risks")}
-              <div style={{ display: "grid", gap: 10 }}>
-                <div style={{ padding: "12px 14px", borderRadius: 10, background: "rgba(255,255,255,0.03)" }}>
-                  <div style={{ fontSize: 12, color: "#f8fafc", fontWeight: 700 }}>{market.market_size_summary?.headline || "Market thesis pending."}</div>
-                  <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 6 }}>{market.market_size_summary?.growth_rate || "-"} · {market.market_size_summary?.regulatory_landscape || "-"}</div>
+      <DecisionProvenanceDrawer
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        decision_statement={brief.decision_statement}
+        decision_rationale={decisionRationale}
+        decision_confidence={brief.decision_confidence}
+        supporting_frameworks={supportingFrameworkKeys}
+        framework_outputs={brief.framework_outputs as Record<string, FrameworkOutput>}
+      />
+    </>
+  );
+}
+
+function V4AnalysisLoadingView({
+  analysis,
+  streamError,
+}: {
+  analysis: Analysis;
+  streamError: string | null;
+}) {
+  return (
+    <div className="min-h-screen bg-[linear-gradient(180deg,#040914_0%,#08111e_45%,#091624_100%)] px-6 py-10 text-slate-100">
+      <div className="mx-auto max-w-7xl space-y-6">
+        {streamError ? (
+          <div className="rounded-2xl border border-amber-400/20 bg-amber-400/10 px-4 py-3 text-sm text-amber-100">
+            {streamError}
+          </div>
+        ) : null}
+
+        <section className="rounded-3xl border border-white/10 bg-[#08101d] p-6">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <div className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Analysis in progress</div>
+              <h1 className="mt-2 text-3xl font-semibold text-slate-50">{analysis.query}</h1>
+              <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-400">
+                ASIS is generating the framework-driven strategic brief. The decision banner and framework tabs will appear as the synthesis step finishes.
+              </p>
+            </div>
+            <div className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-4 py-2 text-sm font-semibold text-cyan-100">
+              {analysis.status}
+            </div>
+          </div>
+
+          <div className="mt-8 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            {V4_AGENTS.map((agent) => {
+              const status = latestAgentStatus(analysis.agent_logs, agent.id);
+              const log = latestAgentLog(analysis.agent_logs, agent.id);
+              return (
+                <div key={agent.id} className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-sm font-semibold text-slate-100">{agent.label}</div>
+                    <span className="rounded-full bg-white/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-300">
+                      {status}
+                    </span>
+                  </div>
+                  <div className="mt-2 text-xs text-slate-500">{log?.duration_ms != null ? `${log.duration_ms} ms` : "Waiting"}</div>
                 </div>
-                {(Array.isArray(market.named_competitors) ? market.named_competitors : []).map((competitor: string) => (
-                  <div key={competitor} style={{ fontSize: 11, color: "#67e8f9" }}>{competitor}</div>
-                ))}
-                {(Array.isArray(risk.risk_register) ? risk.risk_register : []).slice(0, 4).map((item: any) => (
-                  <div key={item.id} style={{ padding: "12px 14px", borderRadius: 10, background: "rgba(255,255,255,0.03)" }}>
-                    <div style={{ fontSize: 12, color: "#f8fafc", fontWeight: 700 }}>{item.id} · {item.risk}</div>
-                    <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 4 }}>{item.category} · {item.likelihood} likelihood · {item.impact} impact · {item.velocity} velocity</div>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
-
-          {card(
-            <>
-              {cardTitle("Financial And Roadmap", "Monte Carlo ranges, scenarios, and execution phases")}
-              <div style={{ display: "grid", gap: 10 }}>
-                {[
-                  ["P10", quant.monte_carlo_summary?.p10_outcome || "-"],
-                  ["P50", quant.monte_carlo_summary?.p50_outcome || "-"],
-                  ["P90", quant.monte_carlo_summary?.p90_outcome || "-"],
-                  ["Worst case", quant.monte_carlo_summary?.worst_case || "-"],
-                ].map(([label, value]) => (
-                  <div key={label as string} style={{ padding: "10px 12px", borderRadius: 10, background: "rgba(255,255,255,0.03)" }}>
-                    <div style={{ fontSize: 10, color: "#64748b" }}>{label}</div>
-                    <div style={{ fontSize: 12, color: "#f8fafc", fontWeight: 600, marginTop: 4 }}>{value as string}</div>
-                  </div>
-                ))}
-                {(Array.isArray(brief.roadmap) ? brief.roadmap : []).map((phase: any) => (
-                  <div key={phase.phase} style={{ padding: "10px 12px", borderRadius: 10, background: "rgba(99,102,241,0.08)" }}>
-                    <div style={{ fontSize: 12, color: "#f8fafc", fontWeight: 700 }}>{phase.phase}</div>
-                    <div style={{ fontSize: 11, color: "#cbd5e1", marginTop: 4 }}>{phase.timeline} · {phase.success_metric}</div>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
-        </div>
-
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18 }}>
-          {card(
-            <>
-              {cardTitle("Red Team And Ethicist", "Challenge findings and stakeholder guardrails")}
-              <div style={{ display: "grid", gap: 10 }}>
-                <div style={{ padding: "12px 14px", borderRadius: 10, background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.18)" }}>
-                  <div style={{ fontSize: 12, color: "#f8fafc", fontWeight: 700 }}>{redTeam.red_team_verdict || "Red Team verdict pending."}</div>
-                </div>
-                {(Array.isArray(redTeam.invalidated_claims) ? redTeam.invalidated_claims : []).map((claim: any, index: number) => (
-                  <div key={index} style={{ fontSize: 11, color: "#fecaca" }}>{claim.severity} · {claim.original_claim}</div>
-                ))}
-                {(Array.isArray(ethicist.brand_guardrails) ? ethicist.brand_guardrails : []).map((item: string) => (
-                  <div key={item} style={{ padding: "10px 12px", borderRadius: 10, background: "rgba(236,72,153,0.08)", color: "#fbcfe8", fontSize: 11 }}>{item}</div>
-                ))}
-              </div>
-            </>
-          )}
-
-          {card(
-            <>
-              {cardTitle("CoVe Verification", "Verification checks and self-corrections")}
-              <div style={{ display: "grid", gap: 10 }}>
-                <div style={{ padding: "12px 14px", borderRadius: 10, background: "rgba(255,255,255,0.03)" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    {cove.logic_consistent ? <CheckCircle size={14} style={{ color: "#10b981" }} /> : <XCircle size={14} style={{ color: "#ef4444" }} />}
-                    <span style={{ fontSize: 12, color: "#f8fafc", fontWeight: 700 }}>{cove.logic_consistent ? "Logic consistent" : "Logic challenged"}</span>
-                  </div>
-                  <div style={{ fontSize: 11, color: "#64748b", marginTop: 6 }}>Verification score {cove.overall_verification_score || confidence || "-"}/100</div>
-                </div>
-                {(Array.isArray(cove.verification_checks) ? cove.verification_checks : []).map((check: any, index: number) => (
-                  <div key={index} style={{ padding: "10px 12px", borderRadius: 10, background: "rgba(255,255,255,0.03)" }}>
-                    <div style={{ fontSize: 12, color: "#f8fafc", fontWeight: 700 }}>{check.claim}</div>
-                    <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 4 }}>{check.evidence}</div>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
-        </div>
+              );
+            })}
+          </div>
+        </section>
       </div>
     </div>
   );

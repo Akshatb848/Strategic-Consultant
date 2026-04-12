@@ -1,27 +1,45 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft, Loader, Zap } from "lucide-react";
+import { ArrowLeft, Loader2, Sparkles } from "lucide-react";
 
 import { useAuth } from "@/contexts/AuthContext";
 import { analysesAPI } from "@/lib/api";
+import { subscribeToAnalysisEvents } from "@/lib/sse";
 
-function NewAnalysisPageContent() {
+type AgentStatus = "pending" | "in_progress" | "completed";
+
+const PIPELINE = [
+  { id: "orchestrator", label: "Orchestrator", message: "Framing the board question and routing the specialist agents..." },
+  { id: "market_intel", label: "Market Intel", message: "Sizing demand, trends, and external market structure..." },
+  { id: "risk_assessment", label: "Risk Assessment", message: "Building the risk register and downside exposures..." },
+  { id: "competitor_analysis", label: "Competitor Analysis", message: "Scoring rivalry and competitive positioning..." },
+  { id: "geo_intel", label: "Geo Intel", message: "Scanning geopolitical, regulatory, and CAGE distance factors..." },
+  { id: "financial_reasoning", label: "Financial Reasoning", message: "Testing the capital case, BCG view, and balanced scorecard seed..." },
+  { id: "strategic_options", label: "Strategic Options", message: "Scoring Ansoff, Blue Ocean, and McKinsey 7S fit..." },
+  { id: "synthesis", label: "Synthesis", message: "Finalising the decision statement, executive summary, and roadmap..." },
+] as const;
+
+function NewAnalysisContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { isAuthenticated, loading } = useAuth();
 
-  const [problem, setProblem] = useState(searchParams.get("q") || "");
-  const [companyName, setCompanyName] = useState("");
-  const [sector, setSector] = useState("");
+  const [query, setQuery] = useState(searchParams.get("q") || "");
+  const [organisation, setOrganisation] = useState("");
+  const [industry, setIndustry] = useState("");
   const [geography, setGeography] = useState("");
-  const [headquarters, setHeadquarters] = useState("");
-  const [annualRevenue, setAnnualRevenue] = useState("");
-  const [employees, setEmployees] = useState("");
+  const [decisionType, setDecisionType] = useState("");
+  const [analysisId, setAnalysisId] = useState<string | null>(searchParams.get("analysisId"));
+  const [statuses, setStatuses] = useState<Record<string, AgentStatus>>(
+    Object.fromEntries(PIPELINE.map((step) => [step.id, "pending"])) as Record<string, AgentStatus>
+  );
+  const [liveMessage, setLiveMessage] = useState("ASIS is preparing your strategic review...");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [streamError, setStreamError] = useState("");
 
   useEffect(() => {
     if (!loading && !isAuthenticated) {
@@ -29,150 +47,275 @@ function NewAnalysisPageContent() {
     }
   }, [isAuthenticated, loading, router]);
 
+  useEffect(() => {
+    if (!analysisId) return;
+    const unsubscribe = subscribeToAnalysisEvents(analysisId, {
+      onEvent: (event) => {
+        if (event.event === "agent_start") {
+          const agentId = String(event.data.agent);
+          setStatuses((current) => {
+            const next = { ...current };
+            for (const step of PIPELINE) {
+              if (step.id === agentId) {
+                next[step.id] = "in_progress";
+                break;
+              }
+              if (next[step.id] === "pending") break;
+            }
+            return next;
+          });
+          const active = PIPELINE.find((step) => step.id === agentId);
+          if (active) setLiveMessage(active.message);
+        }
+
+        if (event.event === "agent_complete") {
+          const agentId = String(event.data.agent);
+          setStatuses((current) => ({ ...current, [agentId]: "completed" }));
+        }
+
+        if (event.event === "analysis_complete") {
+          setStatuses(Object.fromEntries(PIPELINE.map((step) => [step.id, "completed"])) as Record<string, AgentStatus>);
+          setLiveMessage("Strategic brief complete. Opening the analysis workspace...");
+          window.setTimeout(() => router.replace(`/analysis/${analysisId}`), 900);
+        }
+
+        if (event.event === "framework_complete") {
+          const framework = String(event.data.framework || "").replaceAll("_", " ");
+          if (framework) {
+            setLiveMessage(`Framework completed: ${framework}.`);
+          }
+        }
+
+        if (event.event === "decision_reached") {
+          setLiveMessage(String(event.data.statement || "Decision reached. Preparing the full brief..."));
+        }
+      },
+      onError: () => {
+        setStreamError("Live progress disconnected. The analysis is still running and will appear on the dashboard.");
+      },
+    });
+    return unsubscribe;
+  }, [analysisId, router]);
+
+  const progress = useMemo(() => {
+    const completed = PIPELINE.filter((step) => statuses[step.id] === "completed").length;
+    return Math.round((completed / PIPELINE.length) * 100);
+  }, [statuses]);
+
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
-    if (problem.trim().length < 20) {
-      setError("Please provide more detail in the board question.");
+    if (query.trim().length < 20) {
+      setError("Enter a fuller strategic question so the agents have enough context.");
       return;
     }
 
     setSubmitting(true);
     setError("");
+    setStreamError("");
+    setStatuses(Object.fromEntries(PIPELINE.map((step) => [step.id, "pending"])) as Record<string, AgentStatus>);
+    setLiveMessage("ASIS is preparing your strategic review...");
 
     try {
       const response = await analysesAPI.create({
-        query: problem.trim(),
+        query: query.trim(),
         company_context: {
-          company_name: companyName || undefined,
-          sector: sector || undefined,
+          company_name: organisation || undefined,
+          sector: industry || undefined,
           geography: geography || undefined,
-          headquarters: headquarters || undefined,
-          annual_revenue: annualRevenue || undefined,
-          employees: employees || undefined,
+          decision_type: decisionType || undefined,
         },
       });
-      router.replace(`/analysis/${response.data.analysis.id}`);
+      const createdId = response.data.analysis.id;
+      setAnalysisId(createdId);
+      setSubmitting(false);
+      router.replace(`/new-analysis?analysisId=${createdId}`);
     } catch (caughtError: any) {
-      setError(caughtError?.response?.data?.detail || "Failed to create analysis. Please try again.");
+      setError(caughtError?.response?.data?.detail || "ASIS could not start the analysis. Please try again.");
       setSubmitting(false);
     }
   }
 
-  const contextFields = [
-    { label: "Company", value: companyName, setter: setCompanyName, placeholder: "Acme Financial" },
-    { label: "Sector", value: sector, setter: setSector, placeholder: "Financial Services" },
-    { label: "Geography", value: geography, setter: setGeography, placeholder: "India" },
-    { label: "Headquarters", value: headquarters, setter: setHeadquarters, placeholder: "London, UK" },
-    { label: "Annual Revenue", value: annualRevenue, setter: setAnnualRevenue, placeholder: "GBP 850M" },
-    { label: "Employees", value: employees, setter: setEmployees, placeholder: "4200" },
-  ];
+  if (analysisId) {
+    return (
+      <div className="min-h-screen bg-[radial-gradient(circle_at_top,rgba(24,116,255,0.18),transparent_34%),linear-gradient(180deg,#040914_0%,#08111e_38%,#091624_100%)] text-slate-100">
+        <div className="mx-auto flex min-h-screen max-w-5xl flex-col px-6 py-10">
+          <Link href="/dashboard" className="inline-flex items-center gap-2 text-sm text-slate-400 transition hover:text-slate-200">
+            <ArrowLeft size={15} />
+            Back to dashboard
+          </Link>
 
-  const tips = [
-    "Name the organisation, sector, and geography to raise confidence scores.",
-    "State the decision type clearly: enter, invest, restructure, acquire, or exit.",
-    "Add operating constraints or KPIs so the Quant and Risk agents can anchor trade-offs.",
-    "Include timing and scale if the board decision is capital-intensive or regulated.",
-  ];
+          <div className="mt-10 rounded-[32px] border border-white/8 bg-[linear-gradient(180deg,rgba(14,23,39,0.96),rgba(10,18,34,0.92))] p-8 shadow-[0_30px_80px_rgba(0,0,0,0.4)]">
+            <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-100">Analysis Running</div>
+                <h1 className="mt-3 text-4xl font-semibold tracking-[-0.05em] text-white">Creating your strategic brief</h1>
+                <p className="mt-4 max-w-3xl text-sm leading-7 text-slate-400">{liveMessage}</p>
+              </div>
+
+              <div className="flex items-center gap-3 rounded-full border border-cyan-300/20 bg-cyan-300/10 px-4 py-2 text-sm font-semibold text-cyan-100">
+                <Loader2 size={15} className="animate-spin" />
+                {progress}% complete
+              </div>
+            </div>
+
+            <div className="mt-8 h-2 overflow-hidden rounded-full bg-white/6">
+              <div className="h-full rounded-full bg-[linear-gradient(90deg,#1b6af2,#2dd4bf)] transition-all duration-500" style={{ width: `${progress}%` }} />
+            </div>
+
+            {streamError ? (
+              <div className="mt-6 rounded-2xl border border-amber-400/20 bg-amber-400/10 px-4 py-3 text-sm text-amber-100">
+                {streamError}
+              </div>
+            ) : null}
+
+            <div className="mt-8 grid gap-3 md:grid-cols-2">
+              {PIPELINE.map((step, index) => {
+                const status = statuses[step.id];
+                const isActive = status === "in_progress";
+                const isComplete = status === "completed";
+                return (
+                  <div
+                    key={step.id}
+                    className={`rounded-[24px] border px-5 py-4 transition ${
+                      isActive
+                        ? "border-cyan-300/30 bg-cyan-300/10"
+                        : isComplete
+                          ? "border-emerald-300/18 bg-emerald-300/10"
+                          : "border-white/8 bg-white/[0.03]"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-4">
+                      <div className="flex items-center gap-3">
+                        <div
+                          className={`flex h-9 w-9 items-center justify-center rounded-full text-sm font-semibold ${
+                            isActive
+                              ? "bg-cyan-200 text-slate-950"
+                              : isComplete
+                                ? "bg-emerald-200 text-slate-950"
+                                : "bg-white/8 text-slate-300"
+                          }`}
+                        >
+                          {index + 1}
+                        </div>
+                        <div>
+                          <div className="text-sm font-semibold text-white">{step.label}</div>
+                          <div className="text-xs text-slate-500">{step.message}</div>
+                        </div>
+                      </div>
+                      <span
+                        className={`rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] ${
+                          isActive
+                            ? "bg-cyan-200 text-slate-950"
+                            : isComplete
+                              ? "bg-emerald-200 text-slate-950"
+                              : "bg-white/8 text-slate-400"
+                        }`}
+                      >
+                        {status === "in_progress" ? "In Progress" : status === "completed" ? "Completed" : "Pending"}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div style={{ minHeight: "100vh", background: "#070b14" }}>
-      <header style={{ display: "flex", alignItems: "center", gap: 16, padding: "16px 32px", borderBottom: "1px solid rgba(255,255,255,0.05)", background: "#0c1220" }}>
-        <Link href="/dashboard" style={{ display: "flex", alignItems: "center", gap: 6, color: "#64748b", fontSize: 13, textDecoration: "none" }}>
-          <ArrowLeft size={14} />Dashboard
+    <div className="min-h-screen bg-[radial-gradient(circle_at_top,rgba(24,116,255,0.18),transparent_34%),linear-gradient(180deg,#040914_0%,#08111e_38%,#091624_100%)] text-slate-100">
+      <div className="mx-auto max-w-4xl px-6 py-10">
+        <Link href="/dashboard" className="inline-flex items-center gap-2 text-sm text-slate-400 transition hover:text-slate-200">
+          <ArrowLeft size={15} />
+          Back to dashboard
         </Link>
-        <div style={{ width: 1, height: 16, background: "rgba(255,255,255,0.06)" }} />
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <div style={{ width: 24, height: 24, borderRadius: 6, background: "linear-gradient(135deg, #6366f1, #7c3aed)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <Zap size={12} color="white" />
-          </div>
-          <span style={{ fontSize: 14, fontWeight: 600 }}>New Analysis</span>
-        </div>
-      </header>
 
-      <div style={{ maxWidth: 820, margin: "0 auto", padding: "40px 24px 80px" }}>
-        <div style={{ marginBottom: 32 }}>
-          <h1 style={{ fontSize: 28, fontWeight: 700, letterSpacing: "-0.02em", marginBottom: 8 }}>What strategic decision is in front of the board?</h1>
-          <p style={{ fontSize: 14, color: "#64748b", lineHeight: 1.7 }}>
-            ASIS will route your question through Strategist, Quant, Market Intelligence, Risk, Red Team, Ethicist, CoVe, and Synthesis to generate a cited enterprise brief.
-          </p>
-        </div>
-
-        <form onSubmit={handleSubmit}>
-          <div style={{ marginBottom: 24 }}>
-            <textarea
-              value={problem}
-              onChange={(event) => setProblem(event.target.value)}
-              placeholder="Should Acme Financial enter the Indian fintech market in 2026 with a phased launch strategy and a 24-month payback target?"
-              rows={7}
-              style={{ width: "100%", padding: "16px 18px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.1)", background: "#0c1220", color: "#f1f5f9", fontSize: 14, lineHeight: 1.6, outline: "none", resize: "vertical" }}
-            />
-            <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8 }}>
-              <span style={{ fontSize: 11, color: "#334155" }}>{problem.length} characters</span>
-              <span style={{ fontSize: 11, color: problem.length >= 20 ? "#10b981" : "#475569" }}>
-                {problem.length >= 20 ? "Ready to submit" : "Minimum 20 characters"}
-              </span>
+        <div className="mt-10 rounded-[32px] border border-white/8 bg-[linear-gradient(180deg,rgba(14,23,39,0.96),rgba(10,18,34,0.92))] p-8 shadow-[0_30px_80px_rgba(0,0,0,0.4)]">
+          <div className="mb-8 text-center">
+            <div className="inline-flex items-center gap-2 rounded-full border border-cyan-300/20 bg-cyan-300/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-cyan-100">
+              <Sparkles size={14} />
+              New analysis
             </div>
+            <h1 className="mt-5 text-5xl font-semibold tracking-[-0.06em] text-white">Start a strategic review</h1>
+            <p className="mx-auto mt-4 max-w-2xl text-sm leading-7 text-slate-400">
+              Enter the question the board is trying to answer. ASIS will route the query through orchestrator,
+              market intelligence, risk assessment, competitor analysis, geo intelligence, financial reasoning,
+              strategic options, and synthesis before returning the final brief.
+            </p>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 12, marginBottom: 24 }}>
-            {contextFields.map((field) => (
-              <label key={field.label} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                <span style={{ fontSize: 12, color: "#94a3b8" }}>{field.label}</span>
-                <input
-                  value={field.value}
-                  onChange={(event) => field.setter(event.target.value)}
-                  placeholder={field.placeholder}
-                  style={{ width: "100%", padding: "12px 14px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.08)", background: "#0c1220", color: "#f1f5f9", outline: "none" }}
-                />
-              </label>
-            ))}
-          </div>
-
-          {error && (
-            <div style={{ padding: "10px 14px", borderRadius: 8, background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.2)", color: "#ef4444", fontSize: 12, marginBottom: 16 }}>
-              {error}
+          <form onSubmit={handleSubmit} className="space-y-5">
+            <div>
+              <label className="mb-2 block text-sm font-medium text-slate-300">Strategic Question</label>
+              <textarea
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Should Silicon Consultancy enter the Indian fintech market in 2026 through a phased partnership strategy?"
+                rows={6}
+                className="w-full rounded-[24px] border border-white/8 bg-white/[0.04] px-5 py-4 text-base text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-cyan-300/40"
+              />
             </div>
-          )}
 
-          <button
-            type="submit"
-            disabled={submitting || problem.trim().length < 20}
-            style={{ width: "100%", padding: "13px 24px", borderRadius: 10, background: submitting || problem.trim().length < 20 ? "rgba(99,102,241,0.4)" : "linear-gradient(135deg, #6366f1, #7c3aed)", color: "white", fontSize: 15, fontWeight: 600, border: "none", cursor: submitting || problem.trim().length < 20 ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}
-          >
-            {submitting ? <><Loader size={16} style={{ animation: "spin 1s linear infinite" }} />Running 8-agent pipeline...</> : <><Zap size={16} />Run Strategic Analysis</>}
-          </button>
-        </form>
+            <div className="grid gap-4 md:grid-cols-2">
+              <Field label="Organisation" value={organisation} onChange={setOrganisation} placeholder="Silicon Consultancy" />
+              <Field label="Industry" value={industry} onChange={setIndustry} placeholder="Strategy & Management Consulting" />
+              <Field label="Geography" value={geography} onChange={setGeography} placeholder="India" />
+              <Field label="Decision Type" value={decisionType} onChange={setDecisionType} placeholder="Market entry" />
+            </div>
 
-        <div style={{ marginTop: 28, padding: "16px 18px", borderRadius: 10, background: "rgba(99,102,241,0.05)", border: "1px solid rgba(99,102,241,0.12)" }}>
-          <p style={{ fontSize: 12, fontWeight: 600, color: "#818cf8", marginBottom: 10 }}>Tips for stronger briefs</p>
-          <ul style={{ listStyle: "none", display: "flex", flexDirection: "column", gap: 6 }}>
-            {tips.map((tip) => (
-              <li key={tip} style={{ fontSize: 12, color: "#64748b", display: "flex", gap: 8 }}>
-                <span style={{ color: "#6366f1", flexShrink: 0 }}>&gt;</span>
-                {tip}
-              </li>
-            ))}
-          </ul>
-        </div>
+            {error ? (
+              <div className="rounded-2xl border border-rose-400/20 bg-rose-400/10 px-4 py-3 text-sm text-rose-200">{error}</div>
+            ) : null}
 
-        <div style={{ marginTop: 20, padding: "14px 16px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.05)", background: "#0c1220" }}>
-          <p style={{ fontSize: 11, color: "#334155", lineHeight: 1.6 }}>
-            The execution order is Strategist {"->"} Quant and Market Intel in parallel {"->"} Risk {"->"} Red Team and Ethicist in parallel {"->"} CoVe {"->"} Synthesis.
-          </p>
+            <button
+              type="submit"
+              disabled={submitting}
+              className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-white px-6 py-3.5 text-sm font-semibold text-slate-950 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:bg-slate-300"
+            >
+              {submitting ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
+              {submitting ? "Starting analysis..." : "Create Analysis"}
+            </button>
+          </form>
         </div>
       </div>
     </div>
   );
 }
 
-export default function NewAnalysisPage() {
+function Field({
+  label,
+  value,
+  onChange,
+  placeholder,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+}) {
   return (
-    <Suspense fallback={<PageShell />}>
-      <NewAnalysisPageContent />
-    </Suspense>
+    <label className="block">
+      <span className="mb-2 block text-sm font-medium text-slate-300">{label}</span>
+      <input
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={placeholder}
+        className="w-full rounded-[18px] border border-white/8 bg-white/[0.04] px-4 py-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-cyan-300/40"
+      />
+    </label>
   );
 }
 
-function PageShell() {
-  return <div style={{ minHeight: "100vh", background: "#070b14" }} />;
+function NewAnalysisShell() {
+  return <div className="min-h-screen bg-[#040914]" />;
+}
+
+export default function NewAnalysisPage() {
+  return (
+    <Suspense fallback={<NewAnalysisShell />}>
+      <NewAnalysisContent />
+    </Suspense>
+  );
 }

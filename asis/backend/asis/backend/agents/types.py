@@ -14,6 +14,9 @@ class AgentOutput(BaseModel):
     status: Literal["completed", "failed", "self_corrected"] = "completed"
     confidence_score: float
     duration_ms: int
+    model_used: str | None = None
+    tools_called: list[dict] = Field(default_factory=list)
+    langfuse_trace_id: str | None = None
     attempt_number: int = 1
     self_corrected: bool = False
     correction_reason: str | None = None

@@ -96,6 +96,9 @@ export interface AgentLog {
   event_type: string;
   status: string;
   confidence_score?: number | null;
+  model_used?: string | null;
+  tools_called?: AgentToolCall[] | null;
+  langfuse_trace_id?: string | null;
   attempt_number: number;
   self_corrected: boolean;
   correction_reason?: string | null;
@@ -104,6 +107,99 @@ export interface AgentLog {
   citations?: Array<Record<string, unknown>> | null;
   parsed_output?: Record<string, unknown> | null;
   created_at: string;
+}
+
+export interface AgentToolCall {
+  tool_name: string;
+  query: string;
+  response_size: number;
+  latency_ms: number;
+}
+
+export interface AgentCollaborationEvent {
+  source_agent: string;
+  target_agent: string;
+  data_field: string;
+  timestamp_ms: number;
+  contribution_summary: string;
+}
+
+export interface FrameworkOutput {
+  framework_name: string;
+  agent_author: string;
+  structured_data: Record<string, any>;
+  narrative: string;
+  citations: Array<Record<string, any>>;
+  confidence_score: number;
+}
+
+export interface RoadmapItem {
+  phase: string;
+  actions: string[];
+  owner_function: string;
+  success_metrics: string[];
+  estimated_investment_usd?: number | null;
+}
+
+export interface BalancedScorecardPerspective {
+  objectives: string[];
+  measures: string[];
+  targets: string[];
+  initiatives: string[];
+}
+
+export interface BalancedScorecardOutput {
+  financial: BalancedScorecardPerspective;
+  customer: BalancedScorecardPerspective;
+  internal_process: BalancedScorecardPerspective;
+  learning_and_growth: BalancedScorecardPerspective;
+}
+
+export interface ReportMetadata {
+  analysis_id: string;
+  company_name: string;
+  query: string;
+  generated_at: string;
+  asis_version: string;
+  confidentiality_level: string;
+  disclaimer: string;
+}
+
+export interface StrategicBriefV4 {
+  decision_statement: string;
+  decision_confidence: number;
+  decision_rationale: string;
+  framework_outputs: Record<string, FrameworkOutput>;
+  agent_collaboration_trace: AgentCollaborationEvent[];
+  executive_summary: string;
+  implementation_roadmap: RoadmapItem[];
+  balanced_scorecard: BalancedScorecardOutput;
+  report_metadata: ReportMetadata;
+  board_narrative: string;
+  recommendation: string;
+  overall_confidence: number;
+  frameworks_applied: string[];
+  context: Record<string, any>;
+  market_analysis: Record<string, any>;
+  financial_analysis: Record<string, any>;
+  risk_analysis: Record<string, any>;
+  red_team: Record<string, any>;
+  verification: Record<string, any>;
+  roadmap: RoadmapItem[];
+  citations: Array<Record<string, any>>;
+}
+
+export interface DecisionPayload {
+  decision_statement: string;
+  decision_confidence: number;
+  decision_rationale: string;
+  supporting_frameworks: string[];
+}
+
+export interface PdfStatus {
+  status: "generating" | "ready" | "error";
+  progress: number;
+  error?: string | null;
 }
 
 export interface Analysis {
@@ -121,7 +217,7 @@ export interface Analysis {
   duration_seconds?: number | null;
   created_at: string;
   completed_at?: string | null;
-  strategic_brief?: Record<string, any> | null;
+  strategic_brief?: Record<string, any> | StrategicBriefV4 | null;
   logic_consistency_passed?: boolean | null;
   self_correction_count?: number;
   agent_logs?: AgentLog[];
@@ -132,9 +228,13 @@ export interface Report {
   id: string;
   analysis_id: string;
   user_id: string;
-  strategic_brief: Record<string, any>;
+  strategic_brief: Record<string, any> | StrategicBriefV4;
   evaluation?: Record<string, any> | null;
   pdf_url?: string | null;
+  pdf_status?: string | null;
+  pdf_progress?: number | null;
+  pdf_error?: string | null;
+  pdf_generated_at?: string | null;
   report_version: number;
   created_at: string;
   updated_at: string;
@@ -168,5 +268,10 @@ export const reportsAPI = {
   list: () => api.get("/api/v1/reports"),
   get: (id: string) => api.get(`/api/v1/reports/${id}`),
   evaluation: (id: string) => api.get(`/api/v1/reports/${id}/evaluation`),
+  frameworks: (analysisId: string) => api.get(`/api/v1/reports/${analysisId}/frameworks`),
+  collaboration: (analysisId: string) => api.get(`/api/v1/reports/${analysisId}/collaboration`),
+  decision: (analysisId: string) => api.get(`/api/v1/reports/${analysisId}/decision`),
+  pdf: (analysisId: string) => api.post(`/api/v1/reports/${analysisId}/pdf`, {}, { responseType: "blob" }),
+  pdfStatus: (analysisId: string) => api.get(`/api/v1/reports/${analysisId}/pdf/status`),
   remove: (id: string) => api.delete(`/api/v1/reports/${id}`),
 };

@@ -95,6 +95,7 @@ class Analysis(Base):
     user: Mapped[User] = relationship(back_populates="analyses")
     organisation: Mapped[Organisation | None] = relationship(back_populates="analyses")
     agent_logs: Mapped[list["AgentLog"]] = relationship(back_populates="analysis", cascade="all, delete-orphan")
+    analysis_events: Mapped[list["AnalysisEvent"]] = relationship(back_populates="analysis", cascade="all, delete-orphan")
     report: Mapped["Report | None"] = relationship(back_populates="analysis", uselist=False, cascade="all, delete-orphan")
 
 
@@ -108,6 +109,9 @@ class AgentLog(Base):
     event_type: Mapped[str] = mapped_column(String(32))
     status: Mapped[str] = mapped_column(String(32))
     confidence_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    model_used: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    tools_called: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    langfuse_trace_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     attempt_number: Mapped[int] = mapped_column(Integer, default=1)
     self_corrected: Mapped[bool] = mapped_column(Boolean, default=False)
     correction_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -129,6 +133,10 @@ class Report(Base):
     strategic_brief: Mapped[dict] = mapped_column(JSON)
     evaluation: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     pdf_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    pdf_status: Mapped[str] = mapped_column(String(32), default="ready")
+    pdf_progress: Mapped[int] = mapped_column(Integer, default=0)
+    pdf_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    pdf_generated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     report_version: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -149,3 +157,16 @@ class MemoryRecord(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     user: Mapped[User] = relationship(back_populates="memory_records")
+
+
+class AnalysisEvent(Base):
+    __tablename__ = "analysis_events"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    analysis_id: Mapped[str] = mapped_column(ForeignKey("analyses.id"), index=True)
+    event_name: Mapped[str] = mapped_column(String(64), index=True)
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    timestamp_ms: Mapped[int] = mapped_column(Integer, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+    analysis: Mapped[Analysis] = relationship(back_populates="analysis_events")

@@ -246,6 +246,21 @@ docker_login_if_configured() {
   printf "%s\n" "${ghcr_read_token}" | docker_cmd login ghcr.io -u "${ghcr_username}" --password-stdin
 }
 
+local_image_exists() {
+  local image_ref="$1"
+  docker_cmd image inspect "${image_ref}" >/dev/null 2>&1
+}
+
+is_registry_image() {
+  local image_ref="$1"
+
+  if [[ "${image_ref}" == *"/"* ]]; then
+    return 0
+  fi
+
+  return 1
+}
+
 launch_stack() {
   local backend_image frontend_image
   backend_image="$(env_value "BACKEND_IMAGE")"
@@ -253,9 +268,27 @@ launch_stack() {
 
   if [[ -n "${backend_image}" && -n "${frontend_image}" ]]; then
     log "Using prebuilt images from .env.gcp."
-    docker_cmd pull "${backend_image}"
-    docker_cmd pull "${frontend_image}"
-    docker_cmd compose -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" up -d --remove-orphans backend frontend
+
+    if local_image_exists "${backend_image}" && local_image_exists "${frontend_image}"; then
+      log "Found both prebuilt images locally on the VM. Starting containers without rebuilding."
+      docker_cmd compose -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" up -d --remove-orphans --no-build backend frontend
+      return
+    fi
+
+    if is_registry_image "${backend_image}" && is_registry_image "${frontend_image}"; then
+      log "Prebuilt images are not present locally. Pulling them from the configured registry."
+      docker_cmd pull "${backend_image}"
+      docker_cmd pull "${frontend_image}"
+      docker_cmd compose -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" up -d --remove-orphans --no-build backend frontend
+      return
+    fi
+
+    echo "Configured prebuilt images were not found locally:"
+    echo "  BACKEND_IMAGE=${backend_image}"
+    echo "  FRONTEND_IMAGE=${frontend_image}"
+    echo "These tags are not registry-backed image names, so they must already be loaded on the VM."
+    echo "If you are using the GitHub Actions VM deploy workflow, rerun it so the images are streamed onto the VM."
+    echo "Otherwise unset BACKEND_IMAGE/FRONTEND_IMAGE in ${ENV_FILE} to fall back to a local VM build."
     return
   fi
 

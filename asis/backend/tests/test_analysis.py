@@ -30,6 +30,7 @@ async def test_analysis_lifecycle_and_report_generation(client):
     assert detail.status_code == 200
     analysis = detail.json()["analysis"]
     assert analysis["status"] == "completed"
+    assert analysis["pipeline_version"] == "4.0.0"
     assert analysis["overall_confidence"] != 85
     assert analysis["strategic_brief"]["overall_confidence"] == analysis["overall_confidence"]
     assert analysis["strategic_brief"]["verification"]["overall_verification_score"] == analysis["overall_confidence"]
@@ -62,6 +63,9 @@ async def test_sse_replays_pipeline_history(client):
         text = "".join([chunk async for chunk in response.aiter_text()])
     assert "event: agent_start" in text
     assert "event: agent_complete" in text
+    assert "event: agent_collaboration" in text
+    assert "event: framework_complete" in text
+    assert "event: decision_reached" in text
     assert "event: analysis_complete" in text
 
 
