@@ -28,9 +28,9 @@ services:
     healthcheck:
       test: ["CMD-SHELL", "curl --fail http://127.0.0.1:8000/v1/health || exit 1"]
       interval: 30s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
+      timeout: 10s
+      retries: 8
+      start_period: 40s
 
   frontend:
     image: ${FRONTEND_IMAGE:-asis-frontend:gcp-free}
@@ -56,9 +56,9 @@ services:
           "CMD",
           "node",
           "-e",
-          "require('http').get('http://127.0.0.1:3000', (res) => process.exit(res.statusCode >= 200 && res.statusCode < 400 ? 0 : 1)).on('error', () => process.exit(1))",
+          "require('http').get('http://127.0.0.1:3000/api/health', (res) => process.exit(res.statusCode >= 200 && res.statusCode < 400 ? 0 : 1)).on('error', () => process.exit(1))",
         ]
       interval: 30s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
+      timeout: 10s
+      retries: 8
+      start_period: 60s

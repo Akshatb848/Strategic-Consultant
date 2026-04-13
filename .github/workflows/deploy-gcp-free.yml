@@ -214,16 +214,29 @@ jobs:
             echo "[remote-preflight] Docker usage before cleanup:"
             docker_cmd system df || true
 
+            while IFS= read -r match; do
+              [[ -z "${match}" ]] && continue
+
+              container_id="$(awk '{print $1}' <<<"${match}")"
+              container_name="$(awk '{print $2}' <<<"${match}")"
+              compose_project="$(awk '{print $3}' <<<"${match}")"
+
+              if [[ "${compose_project}" == "strategic-decision-maker" || "${container_name}" == strategic-decision-maker-* ]]; then
+                echo "[remote-preflight] Removing legacy strategic-decision-maker container ${container_name}"
+                docker_cmd rm -f "${container_id}" >/dev/null 2>&1 || true
+              fi
+            done < <(docker_cmd ps -a --format '{{.ID}} {{.Names}} {{.Label "com.docker.compose.project"}}')
+
             while IFS= read -r image_ref; do
               [[ -z "${image_ref}" ]] && continue
               if [[ "${image_ref}" == "${BACKEND_IMAGE}" || "${image_ref}" == "${FRONTEND_IMAGE}" ]]; then
                 continue
               fi
-              echo "[remote-preflight] Removing stale ASIS image ${image_ref}"
+              echo "[remote-preflight] Removing stale deployment image ${image_ref}"
               docker_cmd image rm -f "${image_ref}" >/dev/null 2>&1 || true
-            done < <(docker_cmd image ls --format '{{.Repository}}:{{.Tag}}' | grep -E '^asis-(backend|frontend):' || true)
+            done < <(docker_cmd image ls --format '{{.Repository}}:{{.Tag}}' | grep -E '^(asis-(backend|frontend):|ghcr\.io/akshatb848/strategic-decision-maker/(backend|frontend):)' || true)
 
-            docker_cmd image prune -f >/dev/null 2>&1 || true
+            docker_cmd image prune -af >/dev/null 2>&1 || true
             docker_cmd container prune -f >/dev/null 2>&1 || true
             echo "[remote-preflight] Docker usage after cleanup:"
             docker_cmd system df || true

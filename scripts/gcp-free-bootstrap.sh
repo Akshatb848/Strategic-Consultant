@@ -261,6 +261,29 @@ clear_stale_pull_processes() {
   fi
 }
 
+remove_legacy_stack() {
+  local match container_id container_name compose_project image_ref
+
+  while IFS= read -r match; do
+    [[ -z "${match}" ]] && continue
+
+    container_id="$(awk '{print $1}' <<<"${match}")"
+    container_name="$(awk '{print $2}' <<<"${match}")"
+    compose_project="$(awk '{print $3}' <<<"${match}")"
+
+    if [[ "${compose_project}" == "strategic-decision-maker" || "${container_name}" == strategic-decision-maker-* ]]; then
+      log "Removing legacy strategic-decision-maker container ${container_name} to free VM resources."
+      docker_cmd rm -f "${container_id}" >/dev/null 2>&1 || true
+    fi
+  done < <(docker_cmd ps -a --format '{{.ID}} {{.Names}} {{.Label "com.docker.compose.project"}}')
+
+  while IFS= read -r image_ref; do
+    [[ -z "${image_ref}" ]] && continue
+    log "Removing legacy strategic-decision-maker image ${image_ref}."
+    docker_cmd image rm -f "${image_ref}" >/dev/null 2>&1 || true
+  done < <(docker_cmd image ls --format '{{.Repository}}:{{.Tag}}' | grep -E '^ghcr\.io/akshatb848/strategic-decision-maker/(backend|frontend):' || true)
+}
+
 docker_login_if_configured() {
   local backend_image frontend_image ghcr_username ghcr_read_token
   backend_image="$(env_value "BACKEND_IMAGE")"
@@ -291,11 +314,11 @@ prune_stale_asis_images() {
       continue
     fi
 
-    log "Removing stale ASIS image ${image_ref} to keep the VM disk healthy."
+    log "Removing stale deployment image ${image_ref} to keep the VM disk healthy."
     docker_cmd image rm -f "${image_ref}" >/dev/null 2>&1 || true
-  done < <(docker_cmd image ls --format '{{.Repository}}:{{.Tag}}' | grep -E '^asis-(backend|frontend):' || true)
+  done < <(docker_cmd image ls --format '{{.Repository}}:{{.Tag}}' | grep -E '^(asis-(backend|frontend):|ghcr\.io/akshatb848/strategic-decision-maker/(backend|frontend):)' || true)
 
-  docker_cmd image prune -f >/dev/null 2>&1 || true
+  docker_cmd image prune -af >/dev/null 2>&1 || true
 }
 
 local_image_exists() {
@@ -398,15 +421,15 @@ restart_stack_containers() {
 }
 
 verify_stack_health() {
-  if wait_for_container_health "${COMPOSE_PROJECT_NAME}-backend-1" 240 \
-    && wait_for_container_health "${COMPOSE_PROJECT_NAME}-frontend-1" 360; then
+  if wait_for_container_health "${COMPOSE_PROJECT_NAME}-backend-1" 300 \
+    && wait_for_container_health "${COMPOSE_PROJECT_NAME}-frontend-1" 480; then
     return 0
   fi
 
   log "Initial health verification failed. Retrying after a controlled container restart."
   restart_stack_containers
-  wait_for_container_health "${COMPOSE_PROJECT_NAME}-backend-1" 240
-  wait_for_container_health "${COMPOSE_PROJECT_NAME}-frontend-1" 360
+  wait_for_container_health "${COMPOSE_PROJECT_NAME}-backend-1" 300
+  wait_for_container_health "${COMPOSE_PROJECT_NAME}-frontend-1" 480
 }
 
 print_summary() {
@@ -434,6 +457,7 @@ ensure_swap
 prepare_env_file
 validate_env_file
 docker_login_if_configured
+remove_legacy_stack
 ensure_required_ports
 clear_stale_pull_processes
 prune_stale_asis_images
