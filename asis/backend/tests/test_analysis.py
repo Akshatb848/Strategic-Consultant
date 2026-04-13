@@ -101,14 +101,58 @@ async def test_confidence_scores_vary_across_queries(client):
     ]
 
     scores = []
+    grades = []
     for payload in payloads:
         created = await client.post("/api/v1/analysis", headers=headers, json=payload)
         analysis_id = created.json()["analysis"]["id"]
         detail = await client.get(f"/api/v1/analysis/{analysis_id}", headers=headers)
-        scores.append(detail.json()["analysis"]["overall_confidence"])
+        analysis = detail.json()["analysis"]
+        scores.append(analysis["overall_confidence"])
+        grades.append(analysis["strategic_brief"]["quality_report"]["overall_grade"])
 
     assert len(set(scores)) == len(scores)
     assert 85 not in scores
+    assert len(set(grades)) >= 2
+
+
+@pytest.mark.anyio
+async def test_decision_language_tracks_query_type(client):
+    headers = await register_user(client, email="decision-language@example.com")
+    cases = [
+        (
+            {
+                "query": "Should Alpha Bank enter the Indian fintech market in 2026?",
+                "company_context": {"company_name": "Alpha Bank", "sector": "Fintech", "geography": "India"},
+            },
+            ("enter", "market-entry"),
+        ),
+        (
+            {
+                "query": "Should Beta Advisory restructure its UK consulting business to improve margin resilience?",
+                "company_context": {"company_name": "Beta Advisory", "sector": "Professional Services", "geography": "UK"},
+            },
+            ("restructure", "restructuring"),
+        ),
+        (
+            {
+                "query": "Should Gamma SaaS acquire a regional AI startup in Europe?",
+                "company_context": {"company_name": "Gamma SaaS", "sector": "Technology", "geography": "Europe"},
+            },
+            ("acquisition", "acquire"),
+        ),
+    ]
+
+    statements = []
+    for payload, expected_terms in cases:
+        created = await client.post("/api/v1/analysis", headers=headers, json=payload)
+        analysis_id = created.json()["analysis"]["id"]
+        detail = await client.get(f"/api/v1/analysis/{analysis_id}", headers=headers)
+        brief = detail.json()["analysis"]["strategic_brief"]
+        statement = brief["decision_statement"].lower()
+        statements.append(statement)
+        assert any(term in statement for term in expected_terms), statement
+
+    assert len(set(statements)) == len(statements)
 
 
 @pytest.mark.anyio

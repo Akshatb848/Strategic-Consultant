@@ -5,11 +5,16 @@ import re
 
 DECISION_KEYWORDS = {
     "enter": "enter",
+    "launch": "enter",
+    "expand": "enter",
     "exit": "exit",
     "divest": "divest",
     "invest": "invest",
+    "fund": "invest",
     "restructure": "restructure",
+    "turnaround": "restructure",
     "acquire": "acquire",
+    "buy": "acquire",
     "merge": "merge",
 }
 

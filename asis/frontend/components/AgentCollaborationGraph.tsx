@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import dagre from "dagre";
 import html2canvas from "html2canvas";
 import { Download, Play, RotateCcw, ToggleLeft, ToggleRight } from "lucide-react";
@@ -17,7 +17,7 @@ import "reactflow/dist/style.css";
 
 import type { AgentCollaborationEvent, AgentLog, FrameworkOutput } from "@/lib/api";
 import { AgentDetailPanel } from "@/components/AgentDetailPanel";
-import { latestAgentLog, latestAgentStatus } from "@/lib/analysis";
+import { dedupeCollaborationEvents, latestAgentLog, latestAgentStatus } from "@/lib/analysis";
 
 interface AgentCollaborationGraphProps {
   collaborationEvents: AgentCollaborationEvent[];
@@ -60,8 +60,11 @@ export function AgentCollaborationGraph({
   const [showLabels, setShowLabels] = useState(true);
   const [activeEdgeIds, setActiveEdgeIds] = useState<string[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
+  const replayRunRef = useRef(0);
+  const [isReplaying, setIsReplaying] = useState(false);
 
   const activeEdgeLookup = useMemo(() => new Set(activeEdgeIds), [activeEdgeIds]);
+  const stableEvents = useMemo(() => dedupeCollaborationEvents(collaborationEvents), [collaborationEvents]);
 
   const logsByAgent = useMemo(
     () =>
@@ -105,20 +108,25 @@ export function AgentCollaborationGraph({
             },
           };
         }),
-        collaborationEvents.map((event, index) => ({
+        stableEvents.map((event, index) => ({
           id: `layout-${index}`,
           source: event.source_agent,
           target: event.target_agent,
         }))
       ),
-    [agentLogs, collaborationEvents, logsByAgent]
+    [agentLogs, logsByAgent, stableEvents]
   );
 
   const edges = useMemo<Edge[]>(
     () =>
-      collaborationEvents.map((event, index) => {
+      stableEvents.map((event, index) => {
         const sourceColor = AGENT_META[event.source_agent]?.color || "#94a3b8";
-        const edgeId = `${event.source_agent}-${event.target_agent}-${index}`;
+        const edgeId = [
+          event.source_agent,
+          event.target_agent,
+          event.data_field || "handoff",
+          index,
+        ].join("-");
         const summary = event.contribution_summary || "";
         return {
           id: edgeId,
@@ -137,7 +145,7 @@ export function AgentCollaborationGraph({
           labelStyle: { fill: "#cbd5e1", fontSize: 11 },
         };
       }),
-    [activeEdgeLookup, collaborationEvents, showLabels]
+    [activeEdgeLookup, showLabels, stableEvents]
   );
 
   const validEdgeIds = useMemo(() => new Set(edges.map((edge) => edge.id)), [edges]);
@@ -149,6 +157,12 @@ export function AgentCollaborationGraph({
     });
   }, [validEdgeIds]);
 
+  useEffect(() => {
+    return () => {
+      replayRunRef.current += 1;
+    };
+  }, []);
+
   const selectedAgentName = selectedAgentId ? AGENT_META[selectedAgentId]?.label || selectedAgentId : "";
 
   const onNodeClick: NodeMouseHandler = (_, node) => {
@@ -156,14 +170,30 @@ export function AgentCollaborationGraph({
   };
 
   const replay = async () => {
+    const replayRun = replayRunRef.current + 1;
+    replayRunRef.current = replayRun;
+    setIsReplaying(true);
     setActiveEdgeIds([]);
-    for (const edge of edges) {
-      setActiveEdgeIds((current) => (current.includes(edge.id) ? current : [...current, edge.id]));
-      await new Promise((resolve) => window.setTimeout(resolve, 220));
+    try {
+      for (const edge of edges) {
+        if (replayRunRef.current !== replayRun) {
+          return;
+        }
+        setActiveEdgeIds((current) => (current.includes(edge.id) ? current : [...current, edge.id]));
+        await new Promise((resolve) => window.setTimeout(resolve, 300));
+      }
+    } finally {
+      if (replayRunRef.current === replayRun) {
+        setIsReplaying(false);
+      }
     }
   };
 
-  const reset = () => setActiveEdgeIds([]);
+  const reset = () => {
+    replayRunRef.current += 1;
+    setIsReplaying(false);
+    setActiveEdgeIds([]);
+  };
 
   const downloadPng = async () => {
     const element = document.getElementById("agent-collaboration-graph");
@@ -190,10 +220,11 @@ export function AgentCollaborationGraph({
             <button
               type="button"
               onClick={replay}
-              className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-slate-200 transition hover:bg-white/10"
+              disabled={isReplaying || edges.length === 0}
+              className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Play size={14} />
-              Replay
+              {isReplaying ? "Replaying" : "Replay"}
             </button>
             <button
               type="button"
@@ -240,7 +271,7 @@ export function AgentCollaborationGraph({
         agentName={selectedAgentName}
         agentLog={selectedAgentId ? logsByAgent[selectedAgentId] : undefined}
         frameworkOutputs={frameworkOutputs}
-        collaborationEvents={collaborationEvents}
+        collaborationEvents={stableEvents}
       />
     </>
   );

@@ -112,6 +112,26 @@ export function latestAgentStatus(logs: AgentLog[] | undefined, agentId: string)
   return "running";
 }
 
+export function dedupeCollaborationEvents(events: AgentCollaborationEvent[]): AgentCollaborationEvent[] {
+  const seen = new Set<string>();
+  return [...events]
+    .filter((event) => event.source_agent && event.target_agent)
+    .sort((left, right) => (left.timestamp_ms || 0) - (right.timestamp_ms || 0))
+    .filter((event) => {
+      const key = [
+        event.source_agent,
+        event.target_agent,
+        event.data_field || "",
+        event.contribution_summary || "",
+      ].join("|");
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
+}
+
 export function uniqueSupportingFrameworks(events: AgentCollaborationEvent[], frameworkOutputs: Record<string, FrameworkOutput>): string[] {
   const explicit = Object.entries(frameworkOutputs || {})
     .sort((left, right) => (right[1].confidence_score || 0) - (left[1].confidence_score || 0))

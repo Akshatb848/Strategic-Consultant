@@ -34,7 +34,15 @@ const TABS = [
 ];
 
 function TabCheck({ done }: { done: boolean }) {
-  return <span className={`ml-2 inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold ${done ? "bg-emerald-500 text-white" : "bg-white/10 text-slate-500"}`}>{done ? "✓" : "•"}</span>;
+  return (
+    <span
+      className={`ml-2 inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold ${
+        done ? "bg-emerald-500 text-white" : "bg-white/10 text-slate-500"
+      }`}
+    >
+      {done ? "✓" : "•"}
+    </span>
+  );
 }
 
 export function FrameworkVisualisationPanel({

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import { ChevronDown, ChevronUp, Printer, Share2 } from "lucide-react";
 
@@ -25,6 +25,7 @@ import {
 } from "@/lib/api";
 import {
   decisionLabel,
+  dedupeCollaborationEvents,
   frameworkDisplayName,
   isStrategicBriefV4,
   latestAgentLog,
@@ -48,7 +49,7 @@ const V4_AGENTS = [
 
 function truncate(text: string, maxLength: number) {
   if (text.length <= maxLength) return text;
-  return `${text.slice(0, maxLength - 1)}…`;
+  return `${text.slice(0, maxLength - 1)}...`;
 }
 
 export default function AnalysisDetailPage() {
@@ -74,6 +75,7 @@ function AnalysisDetailContent() {
   const [decisionVisible, setDecisionVisible] = useState(false);
   const [sectionActionTitles, setSectionActionTitles] = useState<Record<string, string>>({});
   const [qualityReport, setQualityReport] = useState<QualityReport | null>(null);
+  const hasScrolledToDecisionRef = useRef(false);
 
   const load = useCallback(async () => {
     try {
@@ -91,6 +93,10 @@ function AnalysisDetailContent() {
     void load();
   }, [load]);
 
+  useEffect(() => {
+    hasScrolledToDecisionRef.current = false;
+  }, [analysisId]);
+
   const brief = useMemo<StrategicBriefV4 | null>(() => {
     if (!isStrategicBriefV4(analysis?.strategic_brief)) return null;
     return analysis.strategic_brief;
@@ -106,12 +112,15 @@ function AnalysisDetailContent() {
       setHydratedFrameworks({});
       return;
     }
-    setCollaborationEvents(brief.agent_collaboration_trace || []);
+    setCollaborationEvents(dedupeCollaborationEvents(brief.agent_collaboration_trace || []));
     setCompletedFrameworks(Object.keys(brief.framework_outputs || {}));
     setDecisionVisible(Boolean(brief.decision_statement));
     setSectionActionTitles(brief.section_action_titles || {});
     setQualityReport(brief.quality_report || null);
-  }, [brief]);
+    if (analysis?.status === "completed" && brief.decision_statement) {
+      hasScrolledToDecisionRef.current = true;
+    }
+  }, [analysis?.status, brief]);
 
   useEffect(() => {
     if (!brief || analysis?.status !== "completed") return;
@@ -124,7 +133,7 @@ function AnalysisDetailContent() {
         ]);
         if (!active) return;
         setHydratedFrameworks(frameworksResponse.data.framework_outputs || {});
-        setCollaborationEvents(collaborationResponse.data.agent_collaboration_trace || []);
+        setCollaborationEvents(dedupeCollaborationEvents(collaborationResponse.data.agent_collaboration_trace || []));
       } catch {
         // Fall back to the embedded brief payload if the report endpoints are not ready yet.
       }
@@ -135,10 +144,10 @@ function AnalysisDetailContent() {
   }, [analysis?.status, analysisId, brief]);
 
   useEffect(() => {
-    if (!analysis || analysis.status === "failed") return;
+    if (!analysis || analysis.status === "failed" || analysis.status === "completed") return;
     return subscribeToAnalysisEvents(analysisId, {
       onEvent: (event) => {
-        if (event.event === "agent_complete" || event.event === "analysis_complete") {
+        if (event.event === "analysis_complete" || event.event === "analysis_failed") {
           void load();
         }
 
@@ -147,16 +156,18 @@ function AnalysisDetailContent() {
         }
 
         if (event.event === "agent_collaboration") {
-          setCollaborationEvents((current) => [
-            ...current,
-            {
-              source_agent: String(event.data.source || ""),
-              target_agent: String(event.data.target || ""),
-              data_field: String(event.data.field || ""),
-              timestamp_ms: Number(event.data.timestamp_ms || Date.now()),
-              contribution_summary: String(event.data.summary || ""),
-            },
-          ]);
+          setCollaborationEvents((current) =>
+            dedupeCollaborationEvents([
+              ...current,
+              {
+                source_agent: String(event.data.source || ""),
+                target_agent: String(event.data.target || ""),
+                data_field: String(event.data.field || ""),
+                timestamp_ms: Number(event.data.timestamp_ms || Date.now()),
+                contribution_summary: String(event.data.summary || ""),
+              },
+            ])
+          );
         }
 
         if (event.event === "framework_complete") {
@@ -168,9 +179,12 @@ function AnalysisDetailContent() {
 
         if (event.event === "decision_reached") {
           setDecisionVisible(true);
-          window.setTimeout(() => {
-            document.getElementById("decision-banner")?.scrollIntoView({ behavior: "smooth", block: "start" });
-          }, 60);
+          if (!hasScrolledToDecisionRef.current) {
+            hasScrolledToDecisionRef.current = true;
+            window.setTimeout(() => {
+              document.getElementById("decision-banner")?.scrollIntoView({ behavior: "smooth", block: "start" });
+            }, 60);
+          }
         }
 
         if (event.event === "quality_complete") {

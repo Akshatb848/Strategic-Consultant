@@ -57,6 +57,42 @@ function table(rows: Array<[string, string]>) {
   `;
 }
 
+function decisionTone(decisionStatement: string) {
+  if (decisionStatement.startsWith("DO NOT PROCEED")) {
+    return { bg: "#7f1d1d" };
+  }
+  if (decisionStatement.startsWith("CONDITIONAL PROCEED")) {
+    return { bg: "#92400e" };
+  }
+  return { bg: COLORS.primary };
+}
+
+function calloutBox(title: string, body: string, tone: "amber" | "blue" | "slate" = "slate") {
+  const palette = {
+    amber: { border: "#f59e0b", bg: "#fff7ed" },
+    blue: { border: COLORS.accent, bg: "#eff6ff" },
+    slate: { border: "#94a3b8", bg: "#f8fafc" },
+  }[tone];
+  return `
+    <div class="callout" style="border-color:${palette.border};background:${palette.bg};">
+      <div class="callout-title">${title}</div>
+      <div>${body}</div>
+    </div>
+  `;
+}
+
+function soWhatBox(callout?: Record<string, any>) {
+  if (!callout) return "";
+  return `
+    <div class="so-what-box">
+      <div class="callout-title">So What</div>
+      <p><strong>Implication:</strong> ${String(callout.implication || "-")}</p>
+      <p><strong>Recommended Action:</strong> ${String(callout.recommended_action || "-")}</p>
+      <p><strong>Risk of Inaction:</strong> ${String(callout.risk_of_inaction || "-")}</p>
+    </div>
+  `;
+}
+
 export function buildPdfHtml({
   brief,
   appendix,
@@ -90,6 +126,7 @@ export function buildPdfHtml({
     })
     .filter((option) => option.feasibility > 0 || option.rationale);
   const geoRiskEntries = Object.entries((brief.risk_analysis?.cage_distance_analysis || {}) as Record<string, string>);
+  const decisionPalette = decisionTone(brief.decision_statement);
   const collaborationRows = (brief.agent_collaboration_trace || [])
     .map(
       (item) =>
@@ -131,6 +168,14 @@ export function buildPdfHtml({
         .section-card { border: 1px solid ${COLORS.divider}; border-radius: 14px; padding: 16px; margin-top: 12px; }
         .chart { margin: 14px 0; border: 1px solid ${COLORS.divider}; border-radius: 14px; padding: 10px; background: white; }
         .citations { padding-left: 18px; }
+        .callout-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 14px; }
+        .callout { border-left: 4px solid ${COLORS.accent}; border-radius: 12px; padding: 12px 14px; }
+        .callout-title { font-size: 9pt; text-transform: uppercase; letter-spacing: 0.08em; color: ${COLORS.muted}; font-weight: 700; margin-bottom: 6px; }
+        .decision-metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 16px 0 12px; }
+        .metric-card { border: 1px solid ${COLORS.divider}; border-radius: 12px; padding: 12px; background: #f8fafc; }
+        .metric-card strong { display: block; font-size: 16px; color: ${COLORS.primary}; margin-top: 4px; }
+        .so-what-box { border: 1px solid ${COLORS.divider}; border-radius: 14px; padding: 14px 16px; background: #f8fafc; margin: 14px 0; }
+        .so-what-box p { margin: 6px 0; }
         .errc-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
         .errc-grid > div { border: 1px solid ${COLORS.divider}; border-radius: 12px; padding: 10px; }
         .footer-note { font-size: 8pt; color: ${COLORS.muted}; margin-top: 24px; }
@@ -173,13 +218,12 @@ export function buildPdfHtml({
       <section class="page-break">
         <h2>1.0 Executive Summary</h2>
         <h3>1.1 Strategic Decision</h3>
-        <div class="decision-box">${brief.decision_statement}</div>
-        <h3>1.2 Confidence Assessment</h3>
-        ${table([
-          ["Decision Confidence", `${Math.round(brief.decision_confidence * 100)}%`],
-          ["Recommendation", brief.recommendation],
-          ["Frameworks Applied", (brief.frameworks_applied || []).join(", ")],
-        ])}
+        <div class="decision-box" style="background:${decisionPalette.bg};">${brief.decision_statement}</div>
+        <div class="decision-metrics">
+          <div class="metric-card"><span>Decision Confidence</span><strong>${Math.round(brief.decision_confidence * 100)}%</strong></div>
+          <div class="metric-card"><span>Quality Grade</span><strong>${brief.quality_report?.overall_grade || "B"}</strong></div>
+          <div class="metric-card"><span>Recommendation</span><strong>${brief.recommendation}</strong></div>
+        </div>
         <h3>1.3 Summary Narrative</h3>
         ${[
           brief.executive_summary.headline,
@@ -190,6 +234,10 @@ export function buildPdfHtml({
           .filter(Boolean)
           .map((paragraph) => `<p>${paragraph}</p>`)
           .join("")}
+        <div class="callout-grid">
+          ${calloutBox("Critical Risk", brief.executive_summary.critical_risk, "amber")}
+          ${calloutBox("Recommended Next Step", brief.executive_summary.next_step, "blue")}
+        </div>
       </section>
 
       <section class="page-break">
@@ -227,7 +275,7 @@ export function buildPdfHtml({
       </section>
 
       <section class="page-break">
-        <h2>4.0 Environmental Analysis (PESTLE)</h2>
+        <h2>${brief.section_action_titles?.pestle || "4.0 Environmental Analysis (PESTLE)"}</h2>
         <div class="chart">${renderPestleRadarSvg(brief)}</div>
         <h3>4.2 Dimension-by-dimension analysis</h3>
         ${table([
@@ -240,12 +288,13 @@ export function buildPdfHtml({
         ])}
         <h3>4.3 PESTLE Narrative</h3>
         <p>${brief.framework_outputs.pestle?.narrative || ""}</p>
+        ${soWhatBox(brief.so_what_callouts?.pestle)}
         <h3>4.4 Citations</h3>
         ${citationList(brief.framework_outputs.pestle?.citations || [])}
       </section>
 
       <section class="page-break">
-        <h2>5.0 Competitive Landscape</h2>
+        <h2>${brief.section_action_titles?.porters_five_forces || "5.0 Competitive Landscape"}</h2>
         <h3>5.1 Porter's Five Forces Diagram</h3>
         <div class="chart">${renderPorterSvg(brief)}</div>
         <h3>5.2 Competitor Profiles</h3>
@@ -271,10 +320,11 @@ export function buildPdfHtml({
             )
             .join("")}
         </div>
+        ${soWhatBox(brief.so_what_callouts?.porters_five_forces)}
       </section>
 
       <section class="page-break">
-        <h2>6.0 Strategic Options Analysis</h2>
+        <h2>${brief.section_action_titles?.ansoff || "6.0 Strategic Options Analysis"}</h2>
         <h3>6.1 Ansoff Matrix</h3>
         ${renderAnsoffHtml(brief)}
         <h3>6.2 Option Evaluation</h3>
@@ -292,10 +342,11 @@ export function buildPdfHtml({
         <h3>6.3 McKinsey 7S Alignment</h3>
         <div class="chart">${renderMckinseySvg(brief)}</div>
         <p>${brief.framework_outputs.mckinsey_7s?.narrative || ""}</p>
+        ${soWhatBox(brief.so_what_callouts?.ansoff)}
       </section>
 
       <section class="page-break">
-        <h2>7.0 Market & Financial Analysis</h2>
+        <h2>${brief.section_action_titles?.financial_analysis || "7.0 Market & Financial Analysis"}</h2>
         <h3>7.1 Market Intelligence Summary</h3>
         ${table([
           ["Market Headline", String(brief.market_analysis?.market_sizing?.tam || "-")],
@@ -316,10 +367,11 @@ export function buildPdfHtml({
               .join("")}
           </tbody>
         </table>
+        ${soWhatBox(brief.so_what_callouts?.bcg_matrix)}
       </section>
 
       <section class="page-break">
-        <h2>8.0 Risk Register</h2>
+        <h2>${brief.section_action_titles?.risk_assessment || "8.0 Risk Register"}</h2>
         <h3>8.1 Risk Matrix</h3>
         ${renderRiskHeatmapHtml(brief)}
         <h3>8.2 Risk Register Table</h3>
@@ -338,11 +390,12 @@ export function buildPdfHtml({
         ${table((geoRiskEntries.length > 0 ? geoRiskEntries : [["status", "Geopolitical assessment unavailable"]]) as Array<[string, string]>)}
         <h3>8.4 SWOT Analysis</h3>
         ${renderSwotHtml(brief)}
+        ${soWhatBox(brief.so_what_callouts?.swot)}
       </section>
 
       <section class="page-break">
-        <h2>9.0 Strategic Recommendation & Roadmap</h2>
-        <div class="decision-box">${brief.decision_statement}</div>
+        <h2>${brief.section_action_titles?.decision || "9.0 Strategic Recommendation & Roadmap"}</h2>
+        <div class="decision-box" style="background:${decisionPalette.bg};">${brief.decision_statement}</div>
         <h3>9.2 Decision Rationale</h3>
         <p>${brief.decision_rationale}</p>
         <h3>9.3 Balanced Scorecard</h3>
