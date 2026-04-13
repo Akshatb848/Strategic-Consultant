@@ -386,15 +386,15 @@ launch_stack() {
   return 1
 }
 
-wait_for_container_health() {
+wait_for_container_running() {
   local container_name="$1"
   local timeout_seconds="$2"
   local elapsed_seconds=0
   local status
 
   while (( elapsed_seconds < timeout_seconds )); do
-    status="$(docker_cmd inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "${container_name}" 2>/dev/null || true)"
-    if [[ "${status}" == "healthy" || "${status}" == "running" ]]; then
+    status="$(docker_cmd inspect --format '{{.State.Status}}' "${container_name}" 2>/dev/null || true)"
+    if [[ "${status}" == "running" ]]; then
       return 0
     fi
     if [[ "${status}" == "exited" || "${status}" == "dead" ]]; then
@@ -407,8 +407,26 @@ wait_for_container_health() {
     elapsed_seconds=$((elapsed_seconds + 5))
   done
 
-  echo "Container ${container_name} did not become healthy within ${timeout_seconds}s." >&2
+  echo "Container ${container_name} did not reach running state within ${timeout_seconds}s." >&2
   docker_cmd logs "${container_name}" --tail 200 || true
+  return 1
+}
+
+wait_for_http_endpoint() {
+  local url="$1"
+  local timeout_seconds="$2"
+  local elapsed_seconds=0
+
+  while (( elapsed_seconds < timeout_seconds )); do
+    if curl -fsS "${url}" >/dev/null 2>&1; then
+      return 0
+    fi
+
+    sleep 5
+    elapsed_seconds=$((elapsed_seconds + 5))
+  done
+
+  echo "Endpoint ${url} did not become ready within ${timeout_seconds}s." >&2
   return 1
 }
 
@@ -421,15 +439,23 @@ restart_stack_containers() {
 }
 
 verify_stack_health() {
-  if wait_for_container_health "${COMPOSE_PROJECT_NAME}-backend-1" 300 \
-    && wait_for_container_health "${COMPOSE_PROJECT_NAME}-frontend-1" 480; then
+  local backend_port frontend_port
+  backend_port="$(env_value "BACKEND_PORT")"
+  frontend_port="$(env_value "FRONTEND_PORT")"
+
+  if wait_for_container_running "${COMPOSE_PROJECT_NAME}-backend-1" 180 \
+    && wait_for_container_running "${COMPOSE_PROJECT_NAME}-frontend-1" 240 \
+    && wait_for_http_endpoint "http://127.0.0.1:${backend_port:-8000}/v1/health" 180 \
+    && wait_for_http_endpoint "http://127.0.0.1:${frontend_port:-3001}/api/health" 300; then
     return 0
   fi
 
   log "Initial health verification failed. Retrying after a controlled container restart."
   restart_stack_containers
-  wait_for_container_health "${COMPOSE_PROJECT_NAME}-backend-1" 300
-  wait_for_container_health "${COMPOSE_PROJECT_NAME}-frontend-1" 480
+  wait_for_container_running "${COMPOSE_PROJECT_NAME}-backend-1" 180
+  wait_for_container_running "${COMPOSE_PROJECT_NAME}-frontend-1" 240
+  wait_for_http_endpoint "http://127.0.0.1:${backend_port:-8000}/v1/health" 180
+  wait_for_http_endpoint "http://127.0.0.1:${frontend_port:-3001}/api/health" 300
 }
 
 print_summary() {
@@ -437,7 +463,7 @@ print_summary() {
   frontend_url="$(env_value "FRONTEND_URL")"
   backend_url="$(env_value "NEXT_PUBLIC_API_URL")"
 
-  docker_cmd compose -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" ps
+  docker_cmd compose -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" ps || true
 
   log "Deployment complete."
   echo "Frontend: ${frontend_url}"
