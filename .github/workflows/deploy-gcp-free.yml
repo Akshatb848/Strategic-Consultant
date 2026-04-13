@@ -245,8 +245,31 @@ jobs:
 
           # Transfer runner-built images directly to the VM so deploys do not depend on GHCR pull access.
           echo "Streaming prebuilt Docker images to ${VM_USER}@${VM_HOST}."
-          docker save "${BACKEND_IMAGE}" | gzip | ssh "${ssh_opts[@]}" "${VM_USER}@${VM_HOST}" 'gunzip | docker load'
-          docker save "${FRONTEND_IMAGE}" | gzip | ssh "${ssh_opts[@]}" "${VM_USER}@${VM_HOST}" 'gunzip | docker load'
+          docker save "${BACKEND_IMAGE}" | gzip | ssh "${ssh_opts[@]}" "${VM_USER}@${VM_HOST}" 'if sudo -n true >/dev/null 2>&1; then gunzip | sudo docker load; else gunzip | docker load; fi'
+          docker save "${FRONTEND_IMAGE}" | gzip | ssh "${ssh_opts[@]}" "${VM_USER}@${VM_HOST}" 'if sudo -n true >/dev/null 2>&1; then gunzip | sudo docker load; else gunzip | docker load; fi'
+
+          run_remote <<'SCRIPT'
+          set -euo pipefail
+          trap 'echo "[remote-load] Failed at line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
+
+          if sudo -n true >/dev/null 2>&1; then
+            SUDO="sudo"
+          else
+            SUDO=""
+          fi
+
+          docker_cmd() {
+            if [[ -n "${SUDO}" ]]; then
+              sudo docker "$@"
+            else
+              docker "$@"
+            fi
+          }
+
+          docker_cmd image inspect "${BACKEND_IMAGE}" >/dev/null
+          docker_cmd image inspect "${FRONTEND_IMAGE}" >/dev/null
+          echo "[remote-load] Verified streamed images in the active Docker context."
+          SCRIPT
 
           if ! run_remote <<'SCRIPT'
           set -euo pipefail
