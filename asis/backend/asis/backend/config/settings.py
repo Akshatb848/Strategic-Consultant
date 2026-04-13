@@ -96,7 +96,7 @@ class Settings(BaseModel):
 
     @property
     def agent_model_profiles(self) -> dict[str, AgentModelProfile]:
-        return {
+        profiles = {
             "orchestrator": AgentModelProfile(
                 primary=_env("AGENT_MODEL_ORCHESTRATOR", self.litellm_model_fast) or self.litellm_model_fast,
                 fallbacks=[
@@ -179,6 +179,52 @@ class Settings(BaseModel):
                 rationale="Board-ready narrative quality matters most at synthesis time.",
             ),
         }
+        profiles["risk_assessment"] = AgentModelProfile(
+            primary=_env("AGENT_MODEL_RISK_ASSESSMENT", profiles["risk"].primary) or profiles["risk"].primary,
+            fallbacks=[
+                _env("AGENT_MODEL_RISK_ASSESSMENT_FALLBACK", profiles["risk"].fallbacks[0]) or profiles["risk"].fallbacks[0],
+                profiles["risk"].fallbacks[1],
+            ],
+            open_source=_env("AGENT_MODEL_RISK_ASSESSMENT_OPEN", profiles["risk"].open_source),
+            rationale="Enterprise downside and governance reasoning for ISO-style risk framing.",
+        )
+        profiles["competitor_analysis"] = AgentModelProfile(
+            primary=_env("AGENT_MODEL_COMPETITOR_ANALYSIS", profiles["market_intel"].primary) or profiles["market_intel"].primary,
+            fallbacks=[
+                _env("AGENT_MODEL_COMPETITOR_ANALYSIS_FALLBACK", profiles["market_intel"].fallbacks[0]) or profiles["market_intel"].fallbacks[0],
+                profiles["market_intel"].fallbacks[1],
+            ],
+            open_source=_env("AGENT_MODEL_COMPETITOR_ANALYSIS_OPEN", profiles["market_intel"].open_source),
+            rationale="Competitive scanning favors the same high-throughput research profile as market intelligence.",
+        )
+        profiles["geo_intel"] = AgentModelProfile(
+            primary=_env("AGENT_MODEL_GEO_INTEL", profiles["risk_assessment"].primary) or profiles["risk_assessment"].primary,
+            fallbacks=[
+                _env("AGENT_MODEL_GEO_INTEL_FALLBACK", profiles["market_intel"].fallbacks[0]) or profiles["market_intel"].fallbacks[0],
+                profiles["risk_assessment"].fallbacks[1],
+            ],
+            open_source=_env("AGENT_MODEL_GEO_INTEL_OPEN", profiles["risk_assessment"].open_source),
+            rationale="Geopolitical scanning needs risk-sensitive reasoning with strong research fallback.",
+        )
+        profiles["financial_reasoning"] = AgentModelProfile(
+            primary=_env("AGENT_MODEL_FINANCIAL_REASONING", profiles["quant"].primary) or profiles["quant"].primary,
+            fallbacks=[
+                _env("AGENT_MODEL_FINANCIAL_REASONING_FALLBACK", profiles["quant"].fallbacks[0]) or profiles["quant"].fallbacks[0],
+                profiles["quant"].fallbacks[1],
+            ],
+            open_source=_env("AGENT_MODEL_FINANCIAL_REASONING_OPEN", profiles["quant"].open_source),
+            rationale="Financial reasoning preserves the quant profile for scenario and capital modeling.",
+        )
+        profiles["strategic_options"] = AgentModelProfile(
+            primary=_env("AGENT_MODEL_STRATEGIC_OPTIONS", profiles["strategist"].primary) or profiles["strategist"].primary,
+            fallbacks=[
+                _env("AGENT_MODEL_STRATEGIC_OPTIONS_FALLBACK", profiles["strategist"].fallbacks[0]) or profiles["strategist"].fallbacks[0],
+                profiles["strategist"].fallbacks[1],
+            ],
+            open_source=_env("AGENT_MODEL_STRATEGIC_OPTIONS_OPEN", profiles["strategist"].open_source),
+            rationale="Strategic options reuse the long-context strategist profile for option design and scoring.",
+        )
+        return profiles
 
 
 @lru_cache(maxsize=1)

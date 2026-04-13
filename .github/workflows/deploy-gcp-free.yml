@@ -63,6 +63,12 @@ jobs:
           JWT_SECRET: ${{ secrets.GCP_FREE_JWT_SECRET }}
           REPOSITORY: ${{ github.repository }}
           SSH_PRIVATE_KEY: ${{ secrets.GCP_FREE_VM_SSH_KEY }}
+          GOOGLE_CLIENT_ID: ${{ vars.GOOGLE_CLIENT_ID || secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          GOOGLE_CALLBACK_URL: ${{ vars.GOOGLE_CALLBACK_URL || secrets.GOOGLE_CALLBACK_URL }}
+          GITHUB_CLIENT_ID: ${{ vars.GITHUB_CLIENT_ID || secrets.GITHUB_CLIENT_ID }}
+          GITHUB_CLIENT_SECRET: ${{ secrets.GITHUB_CLIENT_SECRET }}
+          GITHUB_CALLBACK_URL: ${{ vars.GITHUB_CALLBACK_URL || secrets.GITHUB_CALLBACK_URL }}
         run: |
           set -euo pipefail
           trap 'echo "::error::Deploy runner failed at line ${LINENO}: ${BASH_COMMAND}"' ERR
@@ -119,6 +125,12 @@ jobs:
             "VM_DATA_DIR=${VM_DATA_DIR}"
             "JWT_SECRET=${JWT_SECRET}"
             "REPOSITORY=${REPOSITORY}"
+            "GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}"
+            "GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}"
+            "GOOGLE_CALLBACK_URL=${GOOGLE_CALLBACK_URL:-}"
+            "GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:-}"
+            "GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET:-}"
+            "GITHUB_CALLBACK_URL=${GITHUB_CALLBACK_URL:-}"
           )
 
           run_remote() {
@@ -322,6 +334,7 @@ jobs:
           cat > .env.gcp <<EOF
           JWT_SECRET=${JWT_SECRET}
           FRONTEND_URL=http://${VM_HOST}:3001
+          FRONTEND_INTERNAL_URL=http://frontend:3000
           ALLOWED_ORIGINS=http://${VM_HOST}:3001
           NEXT_PUBLIC_API_URL=http://${VM_HOST}:8000
           DATABASE_URL=sqlite:////data/asis_v4.db
@@ -336,6 +349,12 @@ jobs:
           FRONTEND_PORT=3001
           BACKEND_IMAGE=${BACKEND_IMAGE}
           FRONTEND_IMAGE=${FRONTEND_IMAGE}
+          GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
+          GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
+          GOOGLE_CALLBACK_URL=${GOOGLE_CALLBACK_URL:-http://${VM_HOST}:8000/api/v1/auth/google/callback}
+          GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:-}
+          GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET:-}
+          GITHUB_CALLBACK_URL=${GITHUB_CALLBACK_URL:-http://${VM_HOST}:8000/api/v1/auth/github/callback}
           EOF
 
           for required_key in JWT_SECRET FRONTEND_URL ALLOWED_ORIGINS NEXT_PUBLIC_API_URL BACKEND_IMAGE FRONTEND_IMAGE; do

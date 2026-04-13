@@ -49,3 +49,8 @@ class AuthResponse(BaseModel):
 class RefreshResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
+
+
+class AuthProvidersResponse(BaseModel):
+    google: bool
+    github: bool

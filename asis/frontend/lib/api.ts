@@ -89,6 +89,11 @@ export interface User {
   created_at: string;
 }
 
+export interface AuthProviders {
+  google: boolean;
+  github: boolean;
+}
+
 export interface AgentLog {
   id: string;
   agent_id: string;
@@ -317,6 +322,7 @@ export const authAPI = {
   register: (payload: { email: string; password: string; first_name: string; last_name: string; organisation_name?: string; title?: string }) =>
     api.post("/api/v1/auth/register", payload),
   login: (email: string, password: string) => api.post("/api/v1/auth/login", { email, password }),
+  providers: () => api.get<AuthProviders>("/api/v1/auth/providers"),
   me: () => api.get("/api/v1/auth/me"),
   refresh: () => refreshAccessToken(),
   logout: () => api.post("/api/v1/auth/logout"),

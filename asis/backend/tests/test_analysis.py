@@ -145,3 +145,78 @@ async def test_analysis_completes_when_memory_persistence_fails(client, monkeypa
     reports = await client.get("/api/v1/reports", headers=headers)
     assert reports.status_code == 200, reports.text
     assert len(reports.json()["reports"]) == 1
+
+
+@pytest.mark.anyio
+async def test_v4_report_endpoints_and_pdf_generation(client, monkeypatch):
+    from asis.backend.api.routes import reports as reports_routes
+
+    headers = await register_user(client, email="reports@example.com")
+    created = await client.post(
+        "/api/v1/analysis",
+        headers=headers,
+        json={
+            "query": "Should Fabrikam Health launch a digital diagnostics platform in Singapore over the next 18 months?",
+            "company_context": {
+                "company_name": "Fabrikam Health",
+                "sector": "Healthcare Technology",
+                "geography": "Singapore",
+            },
+        },
+    )
+    assert created.status_code == 201, created.text
+    analysis_id = created.json()["analysis"]["id"]
+
+    frameworks = await client.get(f"/api/v1/reports/{analysis_id}/frameworks", headers=headers)
+    assert frameworks.status_code == 200, frameworks.text
+    framework_outputs = frameworks.json()["framework_outputs"]
+    assert set(framework_outputs.keys()) == {
+        "ansoff",
+        "balanced_scorecard",
+        "bcg_matrix",
+        "blue_ocean",
+        "mckinsey_7s",
+        "pestle",
+        "porters_five_forces",
+        "swot",
+    }
+
+    collaboration = await client.get(f"/api/v1/reports/{analysis_id}/collaboration", headers=headers)
+    assert collaboration.status_code == 200, collaboration.text
+    assert len(collaboration.json()["agent_collaboration_trace"]) >= 5
+
+    decision = await client.get(f"/api/v1/reports/{analysis_id}/decision", headers=headers)
+    assert decision.status_code == 200, decision.text
+    assert decision.json()["decision_statement"].startswith(("PROCEED", "CONDITIONAL PROCEED", "DO NOT PROCEED"))
+
+    current_settings = reports_routes.get_settings()
+    monkeypatch.setattr(current_settings, "frontend_internal_url", "http://frontend:3000", raising=False)
+    captured_request: dict[str, object] = {}
+
+    class MockPdfResponse:
+        status_code = 200
+        content = b"%PDF-1.4\n% ASIS test PDF\n"
+        headers = {"Content-Disposition": 'attachment; filename="ASIS_Fabrikam_20260413.pdf"'}
+        text = "%PDF-1.4"
+
+    def fake_post(url: str, *args, **kwargs):
+        captured_request["url"] = url
+        captured_request["json"] = kwargs.get("json")
+        return MockPdfResponse()
+
+    monkeypatch.setattr(reports_routes.httpx, "post", fake_post)
+
+    pdf_response = await client.post(f"/api/v1/reports/{analysis_id}/pdf", headers=headers)
+    assert pdf_response.status_code == 200, pdf_response.text
+    assert pdf_response.content.startswith(b"%PDF-1.4")
+    assert "ASIS_Fabrikam_20260413.pdf" in pdf_response.headers.get("content-disposition", "")
+    assert captured_request["url"] == f"http://frontend:3000/api/pdf/{analysis_id}"
+
+    payload = captured_request["json"]
+    assert isinstance(payload, dict)
+    assert payload["analysis_id"] == analysis_id
+    assert payload["brief"]["decision_statement"].startswith(("PROCEED", "CONDITIONAL PROCEED", "DO NOT PROCEED"))
+
+    pdf_status = await client.get(f"/api/v1/reports/{analysis_id}/pdf/status", headers=headers)
+    assert pdf_status.status_code == 200, pdf_status.text
+    assert pdf_status.json() == {"status": "ready", "progress": 100, "error": None}
