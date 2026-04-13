@@ -318,7 +318,10 @@ prune_stale_asis_images() {
     docker_cmd image rm -f "${image_ref}" >/dev/null 2>&1 || true
   done < <(docker_cmd image ls --format '{{.Repository}}:{{.Tag}}' | grep -E '^(asis-(backend|frontend):|ghcr\.io/akshatb848/strategic-decision-maker/(backend|frontend):)' || true)
 
-  docker_cmd image prune -af >/dev/null 2>&1 || true
+  # Do not use `image prune -a` here: it removes any image that is not currently
+  # attached to a running container, which includes freshly streamed release
+  # images before `docker compose up` has recreated the ASIS services.
+  docker_cmd image prune -f >/dev/null 2>&1 || true
 }
 
 local_image_exists() {
