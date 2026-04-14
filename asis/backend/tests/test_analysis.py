@@ -51,6 +51,13 @@ async def test_analysis_lifecycle_and_report_generation(client):
     assert analysis["overall_confidence"] != 85
     assert analysis["strategic_brief"]["overall_confidence"] == analysis["overall_confidence"]
     assert analysis["strategic_brief"]["verification"]["overall_verification_score"] == analysis["overall_confidence"]
+    assert len(analysis["strategic_brief"]["financial_analysis"]["bottom_up_revenue_model"]["sector_build"]) >= 3
+    assert len(analysis["strategic_brief"]["financial_analysis"]["scenario_analysis"]["scenarios"]) == 3
+    assert len(analysis["strategic_brief"]["market_analysis"]["capability_fit_matrix"]["rows"]) >= 5
+    assert len(analysis["strategic_brief"]["market_analysis"]["strategic_pathways"]["options"]) >= 3
+    assert len(analysis["strategic_brief"]["risk_analysis"]["execution_realism"]["items"]) >= 4
+    assert analysis["strategic_brief"]["quality_report"]["financial_grounding_score"] > 0
+    assert analysis["strategic_brief"]["quality_report"]["execution_specificity_score"] > 0
 
     reports = await client.get("/api/v1/reports", headers=headers)
     assert reports.status_code == 200

@@ -14,6 +14,7 @@ import { ImplementationRoadmap } from "@/components/ImplementationRoadmap";
 import { LegacyAnalysisView } from "@/components/LegacyAnalysisView";
 import { QualityBadge } from "@/components/QualityBadge";
 import { ReportDownloadButton } from "@/components/ReportDownloadButton";
+import { StrategicRigourPanel } from "@/components/StrategicRigourPanel";
 import {
   analysesAPI,
   reportsAPI,
@@ -195,6 +196,9 @@ function AnalysisDetailContent() {
             mece_score: event.data.mece_score || 0,
             citation_density_score: event.data.citation_density_score || 0,
             internal_consistency_score: event.data.internal_consistency_score || 0,
+            context_specificity_score: event.data.context_specificity_score || 0,
+            financial_grounding_score: event.data.financial_grounding_score || 0,
+            execution_specificity_score: event.data.execution_specificity_score || 0,
             retry_count: event.data.retry_count || 0,
           });
         }
@@ -373,6 +377,8 @@ function AnalysisDetailContent() {
             completedFrameworks={completedFrameworks}
             soWhatCallouts={brief.so_what_callouts || {}}
           />
+
+          <StrategicRigourPanel brief={brief} quality={displayQuality} />
 
           <ImplementationRoadmap roadmap={brief.implementation_roadmap || []} />
 

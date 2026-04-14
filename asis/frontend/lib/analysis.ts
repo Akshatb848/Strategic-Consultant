@@ -64,7 +64,7 @@ export function decisionLabel(decisionStatement?: string | null): string {
   for (const label of ["DO NOT PROCEED", "CONDITIONAL PROCEED", "PROCEED"]) {
     if (normalized.startsWith(label)) return label;
   }
-  const match = normalized.match(/^(.*?)(?:\s[-–—]\s|$)/);
+  const match = normalized.match(/^(.*?)(?:\s(?:-|–|—)\s|$)/);
   return match?.[1] || normalized;
 }
 

@@ -347,7 +347,12 @@ class V4EnterpriseWorkflow:
                 "quality_flags": quality_report_payload.get("quality_flags", []) if quality_report_payload else [],
                 "checks": quality_report_payload.get("checks", []) if quality_report_payload else [],
                 "mece_score": synthesis_output.get("mece_score", 0.0),
+                "citation_density_score": quality_report_payload.get("citation_density_score", 0.0) if quality_report_payload else 0.0,
                 "internal_consistency_score": synthesis_output.get("internal_consistency_score", 0.0),
+                "context_specificity_score": quality_report_payload.get("context_specificity_score", 0.0) if quality_report_payload else 0.0,
+                "financial_grounding_score": quality_report_payload.get("financial_grounding_score", 0.0) if quality_report_payload else 0.0,
+                "execution_specificity_score": quality_report_payload.get("execution_specificity_score", 0.0) if quality_report_payload else 0.0,
+                "retry_count": quality_report_payload.get("retry_count", 0) if quality_report_payload else 0,
                 "timestamp_ms": now_ms(),
             },
         )

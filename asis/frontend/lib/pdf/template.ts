@@ -57,6 +57,35 @@ function table(rows: Array<[string, string]>) {
   `;
 }
 
+function asNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const cleaned = value.replace(/[$,%]/g, "").replace(/,/g, "").trim();
+    const parsed = Number(cleaned);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+function formatUsdMn(value: unknown): string {
+  const numeric = asNumber(value);
+  if (numeric == null) return "-";
+  return `$${numeric.toFixed(1)}M`;
+}
+
+function formatPercent(value: unknown, digits = 0): string {
+  const numeric = asNumber(value);
+  if (numeric == null) return "-";
+  const display = numeric <= 1 ? numeric * 100 : numeric;
+  return `${display.toFixed(digits)}%`;
+}
+
+function formatMonths(value: unknown): string {
+  const numeric = asNumber(value);
+  if (numeric == null) return "-";
+  return `${Math.round(numeric)} months`;
+}
+
 function decisionTone(decisionStatement: string) {
   if (decisionStatement.startsWith("DO NOT PROCEED")) {
     return { bg: "#7f1d1d" };
@@ -107,6 +136,16 @@ export function buildPdfHtml({
   const riskRegister = brief.risk_analysis?.risk_register || [];
   const competitorProfiles = brief.market_analysis?.competitor_profiles || [];
   const projections = brief.financial_analysis?.financial_projections || {};
+  const bottomUp = brief.financial_analysis?.bottom_up_revenue_model || {};
+  const sectorBuild = Array.isArray(bottomUp.sector_build) ? bottomUp.sector_build : [];
+  const scenarioAnalysis = brief.financial_analysis?.scenario_analysis || {};
+  const scenarios = Array.isArray(scenarioAnalysis.scenarios) ? scenarioAnalysis.scenarios : [];
+  const pathwayAnalysis = brief.market_analysis?.strategic_pathways || {};
+  const pathwayOptions = Array.isArray(pathwayAnalysis.options) ? pathwayAnalysis.options : [];
+  const capabilityFit = brief.market_analysis?.capability_fit_matrix || {};
+  const capabilityRows = Array.isArray(capabilityFit.rows) ? capabilityFit.rows : [];
+  const executionRealism = brief.risk_analysis?.execution_realism || {};
+  const executionItems = Array.isArray(executionRealism.items) ? executionRealism.items : [];
   const ansoff = brief.framework_outputs?.ansoff?.structured_data || {};
   const optionRows = [
     ["market_penetration", "Market Penetration"],
@@ -342,6 +381,30 @@ export function buildPdfHtml({
         <h3>6.3 McKinsey 7S Alignment</h3>
         <div class="chart">${renderMckinseySvg(brief)}</div>
         <p>${brief.framework_outputs.mckinsey_7s?.narrative || ""}</p>
+        <h3>6.4 Strategic Pathway Comparison</h3>
+        <table class="data-table">
+          <thead><tr><th>Pathway</th><th>Strategic Logic</th><th>Fit Score</th><th>Capital Intensity</th><th>Flexibility</th><th>Execution Risk</th></tr></thead>
+          <tbody>
+            ${pathwayOptions
+              .map(
+                (option: Record<string, any>) =>
+                  `<tr${option.recommended ? ` style="background:${COLORS.primary};color:white;"` : ""}><td>${String(option.name || "-")}</td><td>${String(option.strategic_logic || "-")}</td><td>${formatPercent(option.fit_score)}</td><td>${String(option.capital_intensity || "-")}</td><td>${String(option.flexibility || "-")}</td><td>${String(option.execution_risk || "-")}</td></tr>`
+              )
+              .join("")}
+          </tbody>
+        </table>
+        <h3>6.5 Capability Fit Matrix</h3>
+        <table class="data-table">
+          <thead><tr><th>Capability</th><th>Gap</th><th>Build Fit</th><th>External Fit</th><th>Integration Risk</th><th>Recommended Action</th></tr></thead>
+          <tbody>
+            ${capabilityRows
+              .map(
+                (row: Record<string, any>) =>
+                  `<tr><td>${String(row.capability || "-")}</td><td>${String(row.gap || "-")}</td><td>${String(row.build_fit || "-")}</td><td>${String(row.acquisition_fit || "-")}</td><td>${String(row.integration_risk || "-")}</td><td>${String(row.recommended_action || "-")}</td></tr>`
+              )
+              .join("")}
+          </tbody>
+        </table>
         ${soWhatBox(brief.so_what_callouts?.ansoff)}
       </section>
 
@@ -363,6 +426,32 @@ export function buildPdfHtml({
               .map(
                 ([period, values]) =>
                   `<tr><td>${period}</td><td>${(values as Record<string, any>).revenue}</td><td>${(values as Record<string, any>).ebitda}</td><td>${(values as Record<string, any>).roi}</td><td>${(values as Record<string, any>).irr}</td></tr>`
+              )
+              .join("")}
+          </tbody>
+        </table>
+        <h3>7.4 Bottom-Up Revenue Build</h3>
+        <p>${String(bottomUp.summary || "Bottom-up economics were not available.")}</p>
+        <table class="data-table">
+          <thead><tr><th>Sector</th><th>Target Clients</th><th>ACV</th><th>Win Rate</th><th>Sales Cycle</th><th>Year 3 Revenue</th></tr></thead>
+          <tbody>
+            ${sectorBuild
+              .map(
+                (entry: Record<string, any>) =>
+                  `<tr><td>${String(entry.sector || "-")}</td><td>${String(entry.target_clients || "-")}</td><td>${formatUsdMn(entry.average_contract_value_usd_mn)}</td><td>${formatPercent(entry.win_rate)}</td><td>${formatMonths(entry.sales_cycle_months)}</td><td>${formatUsdMn(entry.year_3_revenue_usd_mn)}</td></tr>`
+              )
+              .join("")}
+          </tbody>
+        </table>
+        <h3>7.5 Scenario Analysis</h3>
+        <p>${String(scenarioAnalysis.decision_rule || "Base-case commitment should be protected by milestone-based capital release.")}</p>
+        <table class="data-table">
+          <thead><tr><th>Scenario</th><th>Year 3 Revenue</th><th>EBITDA Margin</th><th>ROI</th><th>IRR</th><th>Payback</th></tr></thead>
+          <tbody>
+            ${scenarios
+              .map(
+                (scenario: Record<string, any>) =>
+                  `<tr${String(scenario.name || "").toLowerCase() === String(scenarioAnalysis.recommended_case || "Base").toLowerCase() ? ` style="background:${COLORS.primary};color:white;"` : ""}><td>${String(scenario.name || "-")}</td><td>${formatUsdMn(scenario.revenue_year_3_usd_mn)}</td><td>${formatPercent(scenario.ebitda_margin_pct, 1)}</td><td>${asNumber(scenario.roi_multiple)?.toFixed(2) || "-"}x</td><td>${formatPercent(scenario.irr_pct, 1)}</td><td>${formatMonths(scenario.payback_months)}</td></tr>`
               )
               .join("")}
           </tbody>
@@ -390,6 +479,23 @@ export function buildPdfHtml({
         ${table((geoRiskEntries.length > 0 ? geoRiskEntries : [["status", "Geopolitical assessment unavailable"]]) as Array<[string, string]>)}
         <h3>8.4 SWOT Analysis</h3>
         ${renderSwotHtml(brief)}
+        <h3>8.5 Execution Realism</h3>
+        ${table([
+          ["Execution Pressure", String(executionRealism.execution_pressure || "-")],
+          ["Commercial Model", String(executionRealism.commercial_model || "-")],
+          ["Pricing Model", String(executionRealism.pricing_model || "-")],
+        ])}
+        <table class="data-table">
+          <thead><tr><th>Factor</th><th>Baseline</th><th>Risk</th><th>Mitigation</th></tr></thead>
+          <tbody>
+            ${executionItems
+              .map(
+                (item: Record<string, any>) =>
+                  `<tr><td>${String(item.factor || "-")}</td><td>${String(item.baseline || "-")}</td><td>${String(item.risk || "-")}</td><td>${String(item.mitigation || "-")}</td></tr>`
+              )
+              .join("")}
+          </tbody>
+        </table>
         ${soWhatBox(brief.so_what_callouts?.swot)}
       </section>
 

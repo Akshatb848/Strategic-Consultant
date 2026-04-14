@@ -30,6 +30,8 @@ class QualityGate:
             self._check_framework_completeness(brief),
             self._check_collaboration_trace(brief),
             self._check_context_specificity(brief),
+            self._check_bottom_up_economics(brief),
+            self._check_execution_specificity(brief),
             self._check_mece_score(brief),
             self._check_internal_consistency(brief),
         ]
@@ -38,7 +40,17 @@ class QualityGate:
         mece_score = brief.mece_score
         internal_consistency_score = brief.internal_consistency_score
         context_specificity_score = self._context_specificity_score(brief)
-        overall_grade = self._grade(checks, mece_score, citation_density_score, internal_consistency_score, context_specificity_score)
+        financial_grounding_score = self._financial_grounding_score(brief)
+        execution_specificity_score = self._execution_specificity_score(brief)
+        overall_grade = self._grade(
+            checks,
+            mece_score,
+            citation_density_score,
+            internal_consistency_score,
+            context_specificity_score,
+            financial_grounding_score,
+            execution_specificity_score,
+        )
         return QualityReport(
             overall_grade=overall_grade,
             checks=checks,
@@ -46,6 +58,9 @@ class QualityGate:
             mece_score=mece_score,
             citation_density_score=citation_density_score,
             internal_consistency_score=internal_consistency_score,
+            context_specificity_score=context_specificity_score,
+            financial_grounding_score=financial_grounding_score,
+            execution_specificity_score=execution_specificity_score,
             retry_count=retry_count,
         )
 
@@ -105,6 +120,28 @@ class QualityGate:
             notes=None if passed else "The strategic question is underspecified, which reduces board-readiness and recommendation precision.",
         )
 
+    def _check_bottom_up_economics(self, brief: StrategicBriefV4) -> QualityCheckResult:
+        score = self._financial_grounding_score(brief)
+        passed = score >= 0.65
+        return QualityCheckResult(
+            id="bottom_up_economics",
+            description="The brief should include a bottom-up revenue build, scenario coverage, and explicit commercial assumptions",
+            level="WARN",
+            passed=passed,
+            notes=None if passed else "Commercial logic is still too top-down; add sector-level revenue build, scenario ranges, and explicit assumptions.",
+        )
+
+    def _check_execution_specificity(self, brief: StrategicBriefV4) -> QualityCheckResult:
+        score = self._execution_specificity_score(brief)
+        passed = score >= 0.65
+        return QualityCheckResult(
+            id="execution_specificity",
+            description="The brief should contain capability-gap, execution, and implementation specificity beyond high-level phases",
+            level="WARN",
+            passed=passed,
+            notes=None if passed else "Execution realism is underspecified; capability gaps, GTM assumptions, and integration constraints need sharper treatment.",
+        )
+
     def _check_mece_score(self, brief: StrategicBriefV4) -> QualityCheckResult:
         passed = brief.mece_score >= 0.6
         return QualityCheckResult(
@@ -149,6 +186,52 @@ class QualityGate:
             score += 0.02
         return round(min(1.0, score), 3)
 
+    def _financial_grounding_score(self, brief: StrategicBriefV4) -> float:
+        financial_analysis = brief.financial_analysis or {}
+        bottom_up = financial_analysis.get("bottom_up_revenue_model") or {}
+        scenario_analysis = financial_analysis.get("scenario_analysis") or {}
+
+        sector_build = bottom_up.get("sector_build") or []
+        scenarios = scenario_analysis.get("scenarios") or []
+        assumptions = bottom_up.get("key_assumptions") or []
+
+        sector_score = min(1.0, len(sector_build) / 3) if sector_build else 0.0
+        field_score = (
+            mean(
+                [
+                    1.0
+                    if entry.get("target_clients") and entry.get("average_contract_value_usd_mn") and entry.get("win_rate") is not None
+                    else 0.0
+                    for entry in sector_build
+                ]
+            )
+            if sector_build
+            else 0.0
+        )
+        scenario_score = min(1.0, len(scenarios) / 3) if scenarios else 0.0
+        assumption_score = min(1.0, len(assumptions) / 4) if assumptions else 0.0
+
+        return round(mean([sector_score, field_score, scenario_score, assumption_score]), 3)
+
+    def _execution_specificity_score(self, brief: StrategicBriefV4) -> float:
+        risk_analysis = brief.risk_analysis or {}
+        market_analysis = brief.market_analysis or {}
+
+        execution_realism = risk_analysis.get("execution_realism") or {}
+        capability_fit = market_analysis.get("capability_fit_matrix") or {}
+        strategic_pathways = market_analysis.get("strategic_pathways") or {}
+
+        realism_items = execution_realism.get("items") or []
+        capability_rows = capability_fit.get("rows") or []
+        pathway_options = strategic_pathways.get("options") or []
+
+        realism_score = min(1.0, len(realism_items) / 4) if realism_items else 0.0
+        capability_score = min(1.0, len(capability_rows) / 5) if capability_rows else 0.0
+        pathway_score = min(1.0, len(pathway_options) / 3) if pathway_options else 0.0
+        roadmap_score = min(1.0, len(brief.implementation_roadmap or []) / 4)
+
+        return round(mean([realism_score, capability_score, pathway_score, roadmap_score]), 3)
+
     def _grade(
         self,
         checks: list[QualityCheckResult],
@@ -156,13 +239,25 @@ class QualityGate:
         citation_density_score: float,
         internal_consistency_score: float,
         context_specificity_score: float,
+        financial_grounding_score: float,
+        execution_specificity_score: float,
     ) -> str:
         if any(check.level == "BLOCK" and not check.passed for check in checks):
             return "FAIL"
 
-        mean_score = mean([mece_score, citation_density_score, internal_consistency_score, context_specificity_score])
-        if mean_score >= 0.84 and all(check.passed for check in checks):
+        warn_failures = sum(1 for check in checks if check.level == "WARN" and not check.passed)
+        mean_score = mean(
+            [
+                mece_score,
+                citation_density_score,
+                internal_consistency_score,
+                context_specificity_score,
+                financial_grounding_score,
+                execution_specificity_score,
+            ]
+        )
+        if mean_score >= 0.86 and warn_failures == 0:
             return "A"
-        if mean_score >= 0.72:
+        if mean_score >= 0.73 and context_specificity_score >= 0.55 and warn_failures <= 2:
             return "B"
         return "C"

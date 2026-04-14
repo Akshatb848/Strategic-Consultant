@@ -192,6 +192,9 @@ export interface QualityReport {
   mece_score: number;
   citation_density_score: number;
   internal_consistency_score: number;
+  context_specificity_score: number;
+  financial_grounding_score: number;
+  execution_specificity_score: number;
   retry_count: number;
 }
 

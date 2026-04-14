@@ -1,7 +1,7 @@
 "use client";
 
 import type { QualityReport } from "@/lib/api";
-import { qualityGradeColor } from "@/lib/analysis";
+import { normalizedPercent, qualityGradeColor } from "@/lib/analysis";
 
 export function QualityBadge({ quality }: { quality: QualityReport }) {
   const color = qualityGradeColor(quality);
@@ -30,6 +30,18 @@ export function QualityBadge({ quality }: { quality: QualityReport }) {
           ))}
         </div>
       ) : null}
+      <div className="mt-4 grid gap-2 sm:grid-cols-3">
+        {[
+          ["Context", quality.context_specificity_score],
+          ["Financial", quality.financial_grounding_score],
+          ["Execution", quality.execution_specificity_score],
+        ].map(([label, score]) => (
+          <div key={label} className="rounded-xl border border-white/10 bg-black/20 px-3 py-3">
+            <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500">{label}</div>
+            <div className="mt-2 text-sm font-semibold text-slate-100">{normalizedPercent(Number(score || 0))}%</div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

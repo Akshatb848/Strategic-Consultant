@@ -71,9 +71,20 @@ class QualityReport(BaseModel):
     mece_score: float = Field(default=0.0, ge=0, le=1)
     citation_density_score: float = Field(default=0.0, ge=0, le=1)
     internal_consistency_score: float = Field(default=0.0, ge=0, le=1)
+    context_specificity_score: float = Field(default=0.0, ge=0, le=1)
+    financial_grounding_score: float = Field(default=0.0, ge=0, le=1)
+    execution_specificity_score: float = Field(default=0.0, ge=0, le=1)
     retry_count: int = 0
 
-    @field_validator("mece_score", "citation_density_score", "internal_consistency_score", mode="before")
+    @field_validator(
+        "mece_score",
+        "citation_density_score",
+        "internal_consistency_score",
+        "context_specificity_score",
+        "financial_grounding_score",
+        "execution_specificity_score",
+        mode="before",
+    )
     @classmethod
     def normalize_scores(cls, value: float | int | None) -> float:
         return _normalize_unit_interval(value)
