@@ -248,7 +248,7 @@ jobs:
               docker_cmd image rm -f "${image_ref}" >/dev/null 2>&1 || true
             done < <(docker_cmd image ls --format '{{.Repository}}:{{.Tag}}' | grep -E '^(asis-(backend|frontend):|ghcr\.io/akshatb848/strategic-decision-maker/(backend|frontend):)' || true)
 
-            docker_cmd image prune -af >/dev/null 2>&1 || true
+            docker_cmd image prune -f >/dev/null 2>&1 || true
             docker_cmd container prune -f >/dev/null 2>&1 || true
             echo "[remote-preflight] Docker usage after cleanup:"
             docker_cmd system df || true
@@ -299,14 +299,73 @@ jobs:
 
           APP_DIR="${DEPLOY_ROOT}/app"
 
+          apt_lock_holders() {
+            pgrep -af '(apt|apt-get|dpkg|unattended-upgr|unattended-upgrade)' 2>/dev/null || true
+          }
+
+          wait_for_package_manager() {
+            local timeout_seconds="${1:-600}"
+            local poll_interval="${2:-10}"
+            local elapsed_seconds=0
+            local holders
+
+            while true; do
+              holders="$(apt_lock_holders)"
+              if [[ -z "${holders}" ]]; then
+                return 0
+              fi
+
+              if (( elapsed_seconds >= timeout_seconds )); then
+                echo "[remote-deploy] Timed out waiting for apt/dpkg lock holders after ${timeout_seconds}s." >&2
+                echo "${holders}" >&2
+                return 1
+              fi
+
+              echo "[remote-deploy] Waiting for apt/dpkg lock holders (${elapsed_seconds}s/${timeout_seconds}s)." >&2
+              echo "${holders}" >&2
+              sleep "${poll_interval}"
+              elapsed_seconds=$((elapsed_seconds + poll_interval))
+            done
+          }
+
+          apt_get_with_retry() {
+            local max_attempts=12
+            local attempt=1
+            local sleep_seconds=10
+            local output_file
+            output_file="$(mktemp)"
+
+            while (( attempt <= max_attempts )); do
+              wait_for_package_manager 600 "${sleep_seconds}"
+
+              if sudo apt-get "$@" 2>&1 | tee "${output_file}"; then
+                rm -f "${output_file}"
+                return 0
+              fi
+
+              if grep -Eq 'Could not get lock|Unable to acquire the dpkg frontend lock|Could not open lock file' "${output_file}"; then
+                echo "[remote-deploy] apt-get $* was blocked by a package-manager lock (attempt ${attempt}/${max_attempts}). Retrying after ${sleep_seconds}s." >&2
+                sleep "${sleep_seconds}"
+                attempt=$((attempt + 1))
+                continue
+              fi
+
+              rm -f "${output_file}"
+              return 1
+            done
+
+            rm -f "${output_file}"
+            return 1
+          }
+
           if [[ -n "${SUDO}" ]]; then
             sudo install -d -m 0755 -o "${USER}" -g "${USER}" "${DEPLOY_ROOT}"
           fi
 
           if ! command -v git >/dev/null 2>&1; then
             if [[ -n "${SUDO}" ]]; then
-              sudo apt-get update
-              sudo apt-get install -y git
+              apt_get_with_retry update
+              DEBIAN_FRONTEND=noninteractive apt_get_with_retry install -y git
             else
               echo "git is required on the VM and passwordless sudo is not available to install it automatically."
               exit 1

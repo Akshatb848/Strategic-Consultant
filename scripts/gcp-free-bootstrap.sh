@@ -74,9 +74,31 @@ install_base_packages() {
     return
   fi
 
+  local packages=(
+    ca-certificates
+    curl
+    git
+    gnupg
+    lsb-release
+    openssl
+  )
+  local missing_packages=()
+  local package_name
+
+  for package_name in "${packages[@]}"; do
+    if ! dpkg -s "${package_name}" >/dev/null 2>&1; then
+      missing_packages+=("${package_name}")
+    fi
+  done
+
+  if (( ${#missing_packages[@]} == 0 )); then
+    log "Required OS packages are already installed."
+    return
+  fi
+
   log "Installing OS packages required for Docker and deployment."
-  run_root apt-get update
-  run_root apt-get install -y ca-certificates curl git gnupg lsb-release openssl
+  apt_get_with_retry update
+  DEBIAN_FRONTEND=noninteractive apt_get_with_retry install -y "${missing_packages[@]}"
 }
 
 install_docker() {
@@ -102,14 +124,78 @@ install_docker() {
   fi
   run_root chmod a+r /etc/apt/keyrings/docker.gpg
   printf "deb [arch=%s signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/%s %s stable\n" "${arch}" "${distro}" "${codename}" | run_root tee /etc/apt/sources.list.d/docker.list >/dev/null
-  run_root apt-get update
-  run_root apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+  apt_get_with_retry update
+  DEBIAN_FRONTEND=noninteractive apt_get_with_retry install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
   run_root systemctl enable --now docker
 
   if [[ -n "${SUDO}" ]] && ! id -nG "${USER}" | grep -qw docker; then
     run_root usermod -aG docker "${USER}"
     log "Added ${USER} to the docker group. New shells will pick this up automatically."
   fi
+}
+
+apt_lock_holders() {
+  pgrep -af '(apt|apt-get|dpkg|unattended-upgr|unattended-upgrade)' 2>/dev/null || true
+}
+
+wait_for_package_manager() {
+  local timeout_seconds="${1:-600}"
+  local poll_interval="${2:-10}"
+  local elapsed_seconds=0
+  local holders
+
+  while true; do
+    holders="$(apt_lock_holders)"
+    if [[ -z "${holders}" ]]; then
+      return 0
+    fi
+
+    if (( elapsed_seconds >= timeout_seconds )); then
+      echo "Timed out waiting for apt/dpkg lock holders to exit after ${timeout_seconds}s." >&2
+      echo "${holders}" >&2
+      return 1
+    fi
+
+    log "Waiting for apt/dpkg lock holders to finish before continuing package operations (${elapsed_seconds}s/${timeout_seconds}s)."
+    echo "${holders}"
+    sleep "${poll_interval}"
+    elapsed_seconds=$((elapsed_seconds + poll_interval))
+  done
+}
+
+apt_get_with_retry() {
+  if [[ -z "${SUDO}" ]]; then
+    run_root apt-get "$@"
+    return
+  fi
+
+  local max_attempts=12
+  local attempt=1
+  local sleep_seconds=10
+  local output_file
+  output_file="$(mktemp)"
+
+  while (( attempt <= max_attempts )); do
+    wait_for_package_manager 600 "${sleep_seconds}"
+
+    if run_root apt-get "$@" 2>&1 | tee "${output_file}"; then
+      rm -f "${output_file}"
+      return 0
+    fi
+
+    if grep -Eq 'Could not get lock|Unable to acquire the dpkg frontend lock|Could not open lock file' "${output_file}"; then
+      log "apt-get $* was blocked by a package-manager lock (attempt ${attempt}/${max_attempts}). Retrying after ${sleep_seconds}s."
+      sleep "${sleep_seconds}"
+      attempt=$((attempt + 1))
+      continue
+    fi
+
+    rm -f "${output_file}"
+    return 1
+  done
+
+  rm -f "${output_file}"
+  return 1
 }
 
 ensure_swap() {
