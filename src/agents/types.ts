@@ -1,5 +1,4 @@
-// ── Agent Pipeline Types ─────────────────────────────────────────────────────
-// Typed interfaces for every agent in the ASIS v4.0 pipeline.
+// Agent pipeline types shared across the root TypeScript + Prisma ASIS app.
 
 export type AgentId =
   | 'strategist'
@@ -10,6 +9,65 @@ export type AgentId =
   | 'ethicist'
   | 'synthesis'
   | 'cove';
+
+export type DecisionRecommendation = 'PROCEED' | 'HOLD' | 'ESCALATE' | 'REJECT';
+export type ValidationSeverity = 'BLOCKING' | 'MAJOR' | 'MINOR';
+export type ValidationWarningType =
+  | 'TIMELINE_AMBITION_MISMATCH'
+  | 'UNDEFINED_ROI_HORIZON'
+  | 'CONFLATED_OBJECTIVES'
+  | 'UNSPECIFIED_BASELINE'
+  | 'OVERSPECIFIED_TARGET'
+  | 'ACQUISITION_VALUATION_SANITY';
+
+export interface ValidationWarning {
+  type: ValidationWarningType;
+  severity: ValidationSeverity;
+  message: string;
+  suggestion: string;
+  displayToUser: boolean;
+}
+
+export interface EnrichedContext {
+  organisation: string;
+  industry: string;
+  geography: string;
+  decision_type: string;
+  time_horizon_months: number | null;
+  roi_target_numeric: number | null;
+  roi_horizon_months: number | null;
+  market_share_target_pct: number | null;
+  named_competitors: string[];
+  acquisition_valuation_min: number | null;
+  acquisition_valuation_max: number | null;
+}
+
+export interface ValidationResult {
+  isValid: boolean;
+  warnings: ValidationWarning[];
+  enrichedContext: EnrichedContext;
+}
+
+export interface ConfidenceBreakdownLine {
+  agent: AgentId;
+  label: string;
+  score: number;
+  weight: number;
+  contribution: number;
+}
+
+export interface ConfidenceBreakdown {
+  strategist?: number;
+  market_intel?: number;
+  risk?: number;
+  red_team?: number;
+  quant?: number;
+  ethicist?: number;
+  lines: ConfidenceBreakdownLine[];
+  weighted_base: number;
+  adjustments: string[];
+  final: number;
+}
 
 export interface AgentInput {
   analysisId: string;
@@ -47,19 +105,31 @@ export interface PipelineState {
   synthesisData: SynthesisOutput | null;
   coveData: CoVeOutput | null;
   agentConfidences: Partial<Record<AgentId, number>>;
+  agentFallbacks: Partial<Record<AgentId, boolean>>;
+  validationWarnings: ValidationWarning[];
   selfCorrectionCount: number;
   logicConsistencyPassed: boolean | null;
   overallConfidence: number | null;
+  confidenceBreakdown: ConfidenceBreakdown | null;
   startedAt: Date;
   completedAt: Date | null;
 }
 
-// ── Strategist Output ────────────────────────────────────────────────────────
+// Strategist
 
 export interface MECEBranch {
   label: string;
   sub_questions: string[];
   assigned_agent: AgentId;
+}
+
+export interface AcquisitionPrerequisites {
+  build_vs_buy_required: boolean;
+  key_person_risk: string;
+  ip_portability: string;
+  client_relationship_transfer: string;
+  integration_complexity: 'HIGH' | 'MEDIUM' | 'LOW';
+  board_questions_to_answer: string[];
 }
 
 export interface StrategistOutput {
@@ -75,9 +145,10 @@ export interface StrategistOutput {
   strategic_priority: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
   time_horizon: string;
   context: { org: string; industry: string; geography: string };
+  acquisition_prerequisites?: AcquisitionPrerequisites;
 }
 
-// ── Quant Output ─────────────────────────────────────────────────────────────
+// Quant
 
 export interface InvestmentScenario {
   scenario: string;
@@ -85,12 +156,19 @@ export interface InvestmentScenario {
   description: string;
   capex: string;
   opex_annual: string;
-  risk_reduction: string;
+  risk_reduction?: string;
   npv_3yr: string;
-  irr: string;
+  irr?: string;
   roi_3yr: string;
   payback_months: number;
-  probability_of_success: number;
+  probability_of_success?: number;
+  stated_acquisition_price?: string;
+  total_deployed_capital?: string;
+  roi_on_stated_price?: string;
+  roi_on_total_cost?: string;
+  time_to_first_revenue?: string;
+  key_risks?: string[];
+  acquisition_premium_justified_if?: string[];
 }
 
 export interface MonteCarloSummary {
@@ -101,6 +179,19 @@ export interface MonteCarloSummary {
   worst_case: string;
   best_case: string;
   recommended_action: string;
+}
+
+export interface RevenueAttributionMethodology {
+  challenge: string;
+  proposed_methodology: string;
+  attribution_risk: string;
+  precedent: string;
+}
+
+export interface AcquisitionPremiumAnalysis {
+  acquisition_premium: string;
+  premium_justification_required: string;
+  note: string;
 }
 
 export interface QuantOutput {
@@ -117,9 +208,11 @@ export interface QuantOutput {
   sensitivity_factors: string[];
   confidence_score: number;
   cfo_recommendation: string;
+  revenue_attribution_methodology?: RevenueAttributionMethodology;
+  acquisition_premium_analysis?: AcquisitionPremiumAnalysis;
 }
 
-// ── Market Intelligence Output ───────────────────────────────────────────────
+// Market intelligence
 
 export interface PESTLEAnalysis {
   political: string[];
@@ -162,12 +255,19 @@ export interface MarketIntelOutput {
   strategic_implication: string;
 }
 
-// ── Risk Output ──────────────────────────────────────────────────────────────
+// Risk
 
 export interface RiskItem {
   id: string;
   risk: string;
-  category: 'Regulatory' | 'Cyber' | 'Talent' | 'Financial' | 'Operational' | 'Reputational' | 'Strategic';
+  category:
+    | 'Regulatory'
+    | 'Cyber'
+    | 'Talent'
+    | 'Financial'
+    | 'Operational'
+    | 'Reputational'
+    | 'Strategic';
   likelihood: 'High' | 'Medium' | 'Low';
   impact: 'Critical' | 'High' | 'Medium' | 'Low';
   velocity: 'Immediate' | 'Near-term' | 'Long-term';
@@ -200,7 +300,7 @@ export interface RiskOutput {
   escalation_rationale: string;
 }
 
-// ── Red Team Output ──────────────────────────────────────────────────────────
+// Red team
 
 export interface PreMortemScenario {
   scenario: string;
@@ -230,7 +330,7 @@ export interface RedTeamOutput {
   red_team_verdict: string;
 }
 
-// ── Ethicist Output ──────────────────────────────────────────────────────────
+// Ethicist
 
 export interface StakeholderImpact {
   stakeholder: string;
@@ -251,7 +351,7 @@ export interface EthicistOutput {
   confidence_score: number;
 }
 
-// ── CoVe Output ──────────────────────────────────────────────────────────────
+// CoVe
 
 export interface VerificationCheck {
   claim: string;
@@ -285,9 +385,10 @@ export interface CoVeOutput {
   recommendation: 'PASS' | 'CONDITIONAL_PASS' | 'FAIL_ROUTE_BACK';
   route_back_to?: AgentId;
   final_confidence_adjustment: number;
+  confidence_breakdown?: ConfidenceBreakdown;
 }
 
-// ── Synthesis Output ─────────────────────────────────────────────────────────
+// Synthesis
 
 export interface RoadmapPhase {
   phase: string;
@@ -315,6 +416,29 @@ export interface BenchmarkItem {
   named_leader: string;
 }
 
+export interface RedTeamResponse {
+  fatal_count: number;
+  major_count: number;
+  minor_count: number;
+  recommendation_changed: boolean;
+  original_recommendation: DecisionRecommendation;
+  final_recommendation: DecisionRecommendation;
+  downgrade_reason: string;
+}
+
+export interface StrategicOption {
+  option: 'A' | 'B' | 'C';
+  label: string;
+  description: string;
+  total_cost: string;
+  timeline_to_value: string;
+  npv_3yr_base: string;
+  npv_3yr_risk_adjusted: string;
+  probability_of_achieving_roi_target: string;
+  key_condition: string;
+  recommended: boolean;
+}
+
 export interface SynthesisOutput {
   [k: string]: unknown;
   executive_summary: string;
@@ -324,9 +448,12 @@ export interface SynthesisOutput {
   balanced_scorecard: BalancedScorecard;
   competitive_benchmarks: BenchmarkItem[];
   success_metrics: string[];
-  decision_recommendation: 'PROCEED' | 'HOLD' | 'ESCALATE' | 'REJECT';
+  decision_recommendation: DecisionRecommendation;
   risk_adjusted_recommendation: string;
   overall_confidence: number;
   frameworks_applied: string[];
   dissertation_contribution?: string;
+  red_team_response?: RedTeamResponse;
+  three_options?: StrategicOption[];
+  build_vs_buy_verdict?: string;
 }

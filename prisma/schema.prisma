@@ -112,6 +112,11 @@ model Analysis {
   topStrategicRisk       String?
   recommendedInvestment  String?
 
+  // Pre-flight validation
+  validationWarnings        String?
+  hasBlockingWarnings       Boolean @default(false)
+  userAcknowledgedWarnings  Boolean @default(false)
+
   // Agent outputs (stored as JSON strings for SQLite, Json for PostgreSQL)
   strategistData       String?
   quantData            String?
@@ -125,7 +130,17 @@ model Analysis {
   // Verification
   logicConsistencyPassed Boolean?
   redTeamChallengeCount  Int     @default(0)
+  fatalInvalidationCount Int     @default(0)
+  majorInvalidationCount Int     @default(0)
+  recommendationDowngraded Boolean @default(false)
+  originalRecommendation String?
   selfCorrectionCount    Int     @default(0)
+  confidenceBreakdown    String?
+
+  // Build-vs-buy / strategic options
+  threeOptionsData   String?
+  buildVsBuyVerdict  String?
+  recommendedOption  String?
 
   // Export
   pdfUrl        String?

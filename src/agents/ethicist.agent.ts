@@ -1,6 +1,7 @@
 import { callLLMWithRetry } from '../lib/llmClient.js';
 import { MASTER_CONSULTANT_PERSONA, CONFIDENCE_FORMULA_INSTRUCTION } from './masterPrompt.js';
 import type { AgentInput, AgentOutput, EthicistOutput } from './types.js';
+import { defaultConfidence } from './confidence.js';
 
 const ETHICIST_SYSTEM_PROMPT = `
 ${MASTER_CONSULTANT_PERSONA}
@@ -55,7 +56,7 @@ function getEthicistFallback(input: AgentInput): EthicistOutput {
       'Complete FCPA/Bribery Act due diligence on all technology vendor relationships within 90 days',
       'Launch employee communication programme explaining transformation rationale and career development opportunities before formal announcement',
     ],
-    confidence_score: 71,
+    confidence_score: defaultConfidence('ethicist', input.problemStatement),
   };
 }
 

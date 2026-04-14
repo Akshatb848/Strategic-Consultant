@@ -4,6 +4,8 @@ import { prisma } from '../db/client.js';
 import { requireAuth } from '../middleware/auth.js';
 import { validate } from '../middleware/validate.js';
 import { runPipeline } from '../agents/pipeline.js';
+import { extractProblemContext } from '../lib/contextExtractor.js';
+import { validateProblemStatement } from '../lib/problemValidator.js';
 import { logger } from '../utils/logger.js';
 
 const router = Router();
@@ -14,6 +16,7 @@ const createAnalysisSchema = z.object({
     .string()
     .min(20, 'Problem statement must be at least 20 characters')
     .max(5000, 'Problem statement too long'),
+  acknowledgedWarnings: z.boolean().optional(),
 });
 
 const listQuerySchema = z.object({
@@ -25,18 +28,69 @@ const listQuerySchema = z.object({
 
 // ── POST /api/analyses — Create + queue pipeline ─────────────────────────────
 router.post(
+  '/validate',
+  requireAuth,
+  validate(
+    z.object({
+      problemStatement: z
+        .string()
+        .min(20, 'Problem statement must be at least 20 characters')
+        .max(5000, 'Problem statement too long'),
+    })
+  ),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { problemStatement } = req.body;
+      const validation = await validateProblemStatement(problemStatement);
+      res.json({ validation });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+router.post(
   '/',
   requireAuth,
   validate(createAnalysisSchema),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const { problemStatement } = req.body;
+      const { problemStatement, acknowledgedWarnings = false } = req.body;
+      const validation = await validateProblemStatement(problemStatement);
+      const blockingWarnings = validation.warnings.filter((warning) => warning.severity === 'BLOCKING');
+
+      if (blockingWarnings.length > 0 && !acknowledgedWarnings) {
+        res.status(422).json({
+          code: 'VALIDATION_WARNINGS',
+          warnings: validation.warnings,
+          message: 'Problem statement has issues that may affect analysis quality.',
+          requiresAcknowledgement: true,
+        });
+        return;
+      }
+
+      const extracted = await extractProblemContext(problemStatement);
+      const organisationContext =
+        validation.enrichedContext.organisation || extracted.organisationContext || '';
+      const industryContext =
+        validation.enrichedContext.industry || extracted.industryContext || '';
+      const geographyContext =
+        validation.enrichedContext.geography || extracted.geographyContext || '';
+      const decisionType =
+        validation.enrichedContext.decision_type || extracted.decisionType || '';
 
       const analysis = await prisma.analysis.create({
         data: {
           userId: req.user!.userId,
           organisationId: req.user!.organisationId || null,
           problemStatement,
+          organisationContext,
+          industryContext,
+          geographyContext,
+          decisionType,
+          validationWarnings: JSON.stringify(validation.warnings),
+          hasBlockingWarnings: blockingWarnings.length > 0,
+          userAcknowledgedWarnings: acknowledgedWarnings,
           status: 'queued',
           agentsTotal: 8,
         },
@@ -55,7 +109,13 @@ router.post(
         logger.error({ analysisId: analysis.id, error: err.message }, 'Pipeline failed');
       });
 
-      res.status(201).json({ analysis });
+      res.status(201).json({
+        analysis: {
+          ...analysis,
+          validationWarnings: validation.warnings,
+        },
+        validationWarnings: validation.warnings,
+      });
     } catch (error) {
       next(error);
     }
@@ -99,6 +159,13 @@ router.get(
             decisionType: true,
             boardNarrative: true,
             executiveSummary: true,
+            fatalInvalidationCount: true,
+            majorInvalidationCount: true,
+            recommendationDowngraded: true,
+            originalRecommendation: true,
+            recommendedOption: true,
+            buildVsBuyVerdict: true,
+            hasBlockingWarnings: true,
           },
         }),
         prisma.analysis.count({ where }),
@@ -138,6 +205,9 @@ router.get(
         ethicistData: safeJsonParse(analysis.ethicistData),
         synthesisData: safeJsonParse(analysis.synthesisData),
         coveVerificationData: safeJsonParse(analysis.coveVerificationData),
+        validationWarnings: safeJsonParse(analysis.validationWarnings),
+        threeOptionsData: safeJsonParse(analysis.threeOptionsData),
+        confidenceBreakdown: safeJsonParse(analysis.confidenceBreakdown),
         agentLogs: analysis.agentLogs.map((log) => ({
           ...log,
           parsedOutput: safeJsonParse(log.parsedOutput),
@@ -175,8 +245,9 @@ router.delete(
 );
 
 // ── Helper ───────────────────────────────────────────────────────────────────
-function safeJsonParse(value: string | null | undefined): any {
+function safeJsonParse(value: unknown): any {
   if (!value) return null;
+  if (typeof value !== 'string') return value;
   try {
     return JSON.parse(value);
   } catch {

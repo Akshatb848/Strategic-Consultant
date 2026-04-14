@@ -1,6 +1,7 @@
 import { callLLMWithRetry } from '../lib/llmClient.js';
 import { MASTER_CONSULTANT_PERSONA, CONFIDENCE_FORMULA_INSTRUCTION } from './masterPrompt.js';
 import type { AgentInput, AgentOutput, StrategistOutput } from './types.js';
+import { defaultConfidence } from './confidence.js';
 
 const STRATEGIST_SYSTEM_PROMPT = `
 ${MASTER_CONSULTANT_PERSONA}
@@ -28,6 +29,26 @@ DECISION TYPE TAXONOMY (identify which applies):
   - ACQUIRE: "Should we acquire / merge with X?"
   - TRANSFORM: "How do we reinvent our business model for X?"
 
+DECISION TYPE DETECTION - ACQUIRE TRIGGER:
+When the problem statement contains any of these signals, set decision_type = "ACQUIRE":
+  - "acquire", "acquisition", "buy", "purchase", "takeover", "M&A", "merger"
+  - "invest in [company]", "take a stake in", "absorb", "integrate [company]"
+
+When decision_type === "ACQUIRE", add this mandatory field:
+"acquisition_prerequisites": {
+  "build_vs_buy_required": true,
+  "key_person_risk": "Identify by name or role the 3-5 individuals whose departure would destroy the acquisition's value proposition",
+  "ip_portability": "Is the competitive advantage in the technology or the people?",
+  "client_relationship_transfer": "What percentage of revenue is relationship-dependent versus product-dependent?",
+  "integration_complexity": "HIGH | MEDIUM | LOW",
+  "board_questions_to_answer": [
+    "Why can we not hire the capability for 7-15x less than acquisition cost?",
+    "What is our key person agreement strategy pre-close?",
+    "What is our integration model - absorb into practice or operate independently?",
+    "What is our exit plan if key talent departs within 18 months?"
+  ]
+}
+
 ${CONFIDENCE_FORMULA_INSTRUCTION}
 
 Return ONLY this exact JSON structure (no other text):
@@ -51,11 +72,23 @@ Return ONLY this exact JSON structure (no other text):
   "confidence_score": 0,
   "strategic_priority": "CRITICAL|HIGH|MEDIUM|LOW",
   "time_horizon": "X-Y years",
-  "context": { "org": "", "industry": "", "geography": "" }
+  "context": { "org": "", "industry": "", "geography": "" },
+  "acquisition_prerequisites": {
+    "build_vs_buy_required": true,
+    "key_person_risk": "",
+    "ip_portability": "",
+    "client_relationship_transfer": "",
+    "integration_complexity": "HIGH|MEDIUM|LOW",
+    "board_questions_to_answer": []
+  }
 }
 `;
 
 function getStrategistFallback(input: AgentInput): StrategistOutput {
+  const inferredAcquire =
+    input.decisionType === 'ACQUIRE' ||
+    /(acquire|acquisition|buy|purchase|takeover|merger|stake)/i.test(input.problemStatement);
+
   return {
     problem_decomposition: [
       `Market opportunity assessment for ${input.organisationContext || 'the organisation'}`,
@@ -87,8 +120,8 @@ function getStrategistFallback(input: AgentInput): StrategistOutput {
       'Maintain risk severity below "HIGH" threshold across all categories',
       'Secure regulatory compliance across all applicable jurisdictions within 12 months',
     ],
-    decision_type: input.decisionType || 'INVEST',
-    confidence_score: 68,
+    decision_type: inferredAcquire ? 'ACQUIRE' : input.decisionType || 'INVEST',
+    confidence_score: defaultConfidence('strategist', input.problemStatement),
     strategic_priority: 'HIGH',
     time_horizon: '3-5 years',
     context: {
@@ -96,6 +129,24 @@ function getStrategistFallback(input: AgentInput): StrategistOutput {
       industry: input.industryContext || 'Unspecified',
       geography: input.geographyContext || 'Global',
     },
+    acquisition_prerequisites: inferredAcquire
+      ? {
+          build_vs_buy_required: true,
+          key_person_risk:
+            'Key-person concentration must identify the 3-5 leaders whose departure would erase client transfer, product continuity, or domain credibility.',
+          ip_portability:
+            'Test whether value resides in portable workflow IP and contracted software assets or in a small founder-led expert group that may leave after close.',
+          client_relationship_transfer:
+            'Model how much revenue is relationship-led versus platform-led before paying an acquisition premium.',
+          integration_complexity: 'HIGH',
+          board_questions_to_answer: [
+            'Why can the capability not be hired or licensed for materially less than the acquisition premium?',
+            'What pre-close retention instruments secure the top revenue and product leaders?',
+            'Will the target remain ring-fenced, or be absorbed into the existing practice model?',
+            'What is the downside plan if the top team leaves inside 18 months?',
+          ],
+        }
+      : undefined,
   };
 }
 

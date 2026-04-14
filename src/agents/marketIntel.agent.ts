@@ -1,6 +1,7 @@
 import { callLLMWithRetry } from '../lib/llmClient.js';
 import { MASTER_CONSULTANT_PERSONA, CONFIDENCE_FORMULA_INSTRUCTION } from './masterPrompt.js';
 import type { AgentInput, AgentOutput, MarketIntelOutput } from './types.js';
+import { defaultConfidence } from './confidence.js';
 
 const MARKET_INTEL_SYSTEM_PROMPT = `
 ${MASTER_CONSULTANT_PERSONA}
@@ -105,7 +106,7 @@ function getMarketIntelFallback(input: AgentInput): MarketIntelOutput {
       'Gartner Market Analysis 2024', 'McKinsey Global Institute Reports',
       'Government Gazette — DPDP Act 2023', 'EUR-Lex GDPR provisions',
     ],
-    confidence_score: 74,
+    confidence_score: defaultConfidence('market_intel', input.problemStatement),
     strategic_implication: 'Market dynamics strongly favour proactive investment in technology-enabled advisory capabilities — regulatory tailwinds and competitive pressure create both urgency and funding rationale.',
   };
 }

@@ -44,6 +44,12 @@ router.get(
             selfCorrectionCount: true,
             logicConsistencyPassed: true,
             redTeamChallengeCount: true,
+            fatalInvalidationCount: true,
+            majorInvalidationCount: true,
+            recommendationDowngraded: true,
+            originalRecommendation: true,
+            recommendedOption: true,
+            buildVsBuyVerdict: true,
             pipelineVersion: true,
             createdAt: true,
             completedAt: true,
@@ -92,6 +98,9 @@ router.get(
         ethicistData: safeJsonParse(report.ethicistData),
         synthesisData: safeJsonParse(report.synthesisData),
         coveVerificationData: safeJsonParse(report.coveVerificationData),
+        validationWarnings: safeJsonParse(report.validationWarnings),
+        threeOptionsData: safeJsonParse(report.threeOptionsData),
+        confidenceBreakdown: safeJsonParse(report.confidenceBreakdown),
         agentLogs: report.agentLogs.map((log) => ({
           ...log,
           parsedOutput: safeJsonParse(log.parsedOutput),
@@ -105,8 +114,9 @@ router.get(
   }
 );
 
-function safeJsonParse(value: string | null | undefined): any {
+function safeJsonParse(value: unknown): any {
   if (!value) return null;
+  if (typeof value !== 'string') return value;
   try {
     return JSON.parse(value);
   } catch {

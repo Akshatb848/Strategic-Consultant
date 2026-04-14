@@ -11,6 +11,7 @@ import { runEthicistAgent } from './ethicist.agent.js';
 import { runCoVeAgent } from './cove.agent.js';
 import { runSynthesisAgent } from './synthesis.agent.js';
 import type { AgentInput, AgentId, PipelineState, AgentOutput } from './types.js';
+import { buildConfidenceBreakdown, buildConfidenceContext } from './confidence.js';
 
 const MAX_SELF_CORRECTIONS = 2;
 
@@ -26,6 +27,10 @@ export async function runPipeline(analysisId: string): Promise<void> {
     const analysis = await prisma.analysis.findUniqueOrThrow({
       where: { id: analysisId },
     });
+
+    const validationWarnings = analysis.validationWarnings
+      ? JSON.parse(analysis.validationWarnings)
+      : [];
 
     // Extract context if not already set
     let { organisationContext, industryContext, geographyContext, decisionType } = analysis;
@@ -65,9 +70,12 @@ export async function runPipeline(analysisId: string): Promise<void> {
       synthesisData: null,
       coveData: null,
       agentConfidences: {},
+      agentFallbacks: {},
+      validationWarnings,
       selfCorrectionCount: 0,
       logicConsistencyPassed: null,
       overallConfidence: null,
+      confidenceBreakdown: null,
       startedAt: new Date(),
       completedAt: null,
     };
@@ -141,9 +149,36 @@ export async function runPipeline(analysisId: string): Promise<void> {
         const result = await runCoVeAgent(
           buildInput(['strategistData', 'quantData', 'marketIntelData', 'riskData', 'redTeamData', 'ethicistData'])
         );
+        const confidenceContext = buildConfidenceContext({
+          invalidatedClaims: state.redTeamData?.invalidated_claims,
+          organisationContext: state.organisationContext,
+          industryContext: state.industryContext,
+          geographyContext: state.geographyContext,
+          anyAgentUsedFallback: Object.values(state.agentFallbacks).some(Boolean),
+        });
+        const breakdown = buildConfidenceBreakdown(
+          {
+            strategist_confidence: state.agentConfidences.strategist,
+            quant_confidence: state.agentConfidences.quant,
+            market_intel_confidence: state.agentConfidences.market_intel,
+            risk_confidence: state.agentConfidences.risk,
+            red_team_confidence: state.agentConfidences.red_team,
+            ethicist_confidence: state.agentConfidences.ethicist,
+          },
+          confidenceContext,
+          `${analysisId}:${state.problemStatement}`
+        );
+
+        result.data.confidence_breakdown = breakdown;
+        result.data.overall_verification_score = breakdown.final;
+        result.data.final_confidence_adjustment = Number(
+          (breakdown.final - breakdown.weighted_base).toFixed(2)
+        );
+
         state.coveData = result.data;
         state.logicConsistencyPassed = result.data.logic_consistent;
-        state.overallConfidence = Math.max(52, Math.min(94, result.data.overall_verification_score + result.data.final_confidence_adjustment));
+        state.confidenceBreakdown = breakdown;
+        state.overallConfidence = breakdown.final;
         return result;
       });
 
@@ -182,11 +217,20 @@ export async function runPipeline(analysisId: string): Promise<void> {
 
     // ── Complete ────────────────────────────────────────────────────────────
     const durationSeconds = (Date.now() - startTime) / 1000;
+    const fatalCount =
+      state.redTeamData?.invalidated_claims?.filter((claim) => claim.severity === 'Fatal').length || 0;
+    const majorCount =
+      state.redTeamData?.invalidated_claims?.filter((claim) => claim.severity === 'Major').length || 0;
+    const recommendationChanged = Boolean(state.synthesisData?.red_team_response?.recommendation_changed);
+    const originalRecommendation = state.synthesisData?.red_team_response?.original_recommendation || null;
+    const recommendedOption =
+      state.synthesisData?.three_options?.find((option) => option.recommended)?.option || null;
 
     await prisma.analysis.update({
       where: { id: analysisId },
       data: {
         status: 'completed',
+        currentAgent: null,
         completedAt: new Date(),
         durationSeconds,
         overallConfidence: state.overallConfidence,
@@ -196,6 +240,18 @@ export async function runPipeline(analysisId: string): Promise<void> {
         selfCorrectionCount: state.selfCorrectionCount,
         logicConsistencyPassed: state.logicConsistencyPassed,
         redTeamChallengeCount: state.redTeamData?.invalidated_claims?.length || 0,
+        fatalInvalidationCount: fatalCount,
+        majorInvalidationCount: majorCount,
+        recommendationDowngraded: recommendationChanged,
+        originalRecommendation,
+        threeOptionsData: state.synthesisData?.three_options
+          ? JSON.stringify(state.synthesisData.three_options)
+          : null,
+        buildVsBuyVerdict: state.synthesisData?.build_vs_buy_verdict || null,
+        recommendedOption,
+        confidenceBreakdown: state.confidenceBreakdown
+          ? JSON.stringify(state.confidenceBreakdown)
+          : null,
       },
     });
 
@@ -245,6 +301,7 @@ async function runAgentStep(
   const stepStart = Date.now();
   const result = await runner();
   const durationMs = Date.now() - stepStart;
+  state.agentFallbacks[agentId] = result.usedFallback;
 
   // Save agent data to analysis
   const fieldMap: Record<string, string> = {

@@ -1,6 +1,7 @@
 import { callLLMWithRetry } from '../lib/llmClient.js';
 import { MASTER_CONSULTANT_PERSONA, CONFIDENCE_FORMULA_INSTRUCTION } from './masterPrompt.js';
 import type { AgentInput, AgentOutput, RiskOutput } from './types.js';
+import { defaultConfidence } from './confidence.js';
 
 const RISK_SYSTEM_PROMPT = `
 ${MASTER_CONSULTANT_PERSONA}
@@ -95,7 +96,7 @@ function getRiskFallback(input: AgentInput): RiskOutput {
       { risk_id: 'R004', label: 'Strategic', x: 2, y: 3, severity: 33 },
       { risk_id: 'R005', label: 'Operational', x: 2, y: 2, severity: 22 },
     ],
-    confidence_score: 76,
+    confidence_score: defaultConfidence('risk', input.problemStatement),
     board_escalation_required: true,
     escalation_rationale: 'Two risks (R001 Regulatory, R003 Talent) exceed severity threshold of 65 — board decision required within 30 days on mitigation budget allocation',
   };

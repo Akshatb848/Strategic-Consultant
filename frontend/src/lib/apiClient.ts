@@ -81,6 +81,20 @@ export interface SignupPayload {
   organisation?: string;
 }
 
+export interface ValidationWarning {
+  type:
+    | 'TIMELINE_AMBITION_MISMATCH'
+    | 'UNDEFINED_ROI_HORIZON'
+    | 'CONFLATED_OBJECTIVES'
+    | 'UNSPECIFIED_BASELINE'
+    | 'OVERSPECIFIED_TARGET'
+    | 'ACQUISITION_VALUATION_SANITY';
+  severity: 'BLOCKING' | 'MAJOR' | 'MINOR';
+  message: string;
+  suggestion: string;
+  displayToUser: boolean;
+}
+
 export const authAPI = {
   signup: (data: SignupPayload) => api.post('/api/auth/signup', data),
   login: (email: string, password: string) => api.post('/api/auth/login', { email, password }),
@@ -90,7 +104,9 @@ export const authAPI = {
 };
 
 export const analysesAPI = {
-  create: (problemStatement: string) => api.post('/api/analyses', { problemStatement }),
+  validate: (problemStatement: string) => api.post('/api/analyses/validate', { problemStatement }),
+  create: (problemStatement: string, acknowledgedWarnings = false) =>
+    api.post('/api/analyses', { problemStatement, acknowledgedWarnings }),
   list: (params?: { status?: string; search?: string; limit?: number; offset?: number }) =>
     api.get('/api/analyses', { params }),
   get: (id: string) => api.get(`/api/analyses/${id}`),

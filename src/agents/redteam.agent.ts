@@ -1,6 +1,7 @@
 import { callLLMWithRetry } from '../lib/llmClient.js';
 import { MASTER_CONSULTANT_PERSONA, CONFIDENCE_FORMULA_INSTRUCTION } from './masterPrompt.js';
-import type { AgentInput, AgentOutput, RedTeamOutput } from './types.js';
+import type { AgentId, AgentInput, AgentOutput, InvalidatedClaim, RedTeamOutput } from './types.js';
+import { defaultConfidence } from './confidence.js';
 
 const RED_TEAM_SYSTEM_PROMPT = `
 ${MASTER_CONSULTANT_PERSONA}
@@ -22,6 +23,22 @@ CLAIM INVALIDATION SEVERITY:
   MAJOR: Claim is likely overstated by >30%; should be adjusted
   MINOR: Claim has nuance missing; should be noted
 
+OUTPUT CONTRACT - INVALIDATION SEVERITY DEFINITIONS:
+FATAL: The claim is provably incorrect or would produce a materially wrong recommendation if accepted.
+EFFECT: Synthesis must downgrade PROCEED to HOLD or ESCALATE.
+
+MAJOR: The claim is directionally relevant but overstated enough that the board should see a risk-adjusted range.
+EFFECT: Synthesis must add the caveat and risk-adjusted range into the recommendation.
+
+MINOR: The claim survives with nuance or wording correction.
+EFFECT: Synthesis footnotes the caveat but does not change the recommendation.
+
+THE BUILD-VS-BUY INVALIDATION (mandatory for ACQUIRE decision type):
+If Strategist classified the decision as ACQUIRE, include an invalidated_claim entry that challenges the untested assumption that acquisition is superior to internal build or staged investment.
+
+TALENT EXODUS INVALIDATION (mandatory for all ACQUIRE analyses):
+Explicitly test whether the acquisition buys transferable capability or simply a small expert team that may leave post-close.
+
 ${CONFIDENCE_FORMULA_INSTRUCTION}
 
 Return ONLY valid JSON matching the RedTeamOutput schema with fields:
@@ -30,6 +47,50 @@ competitor_response_scenarios, confidence_score, overall_threat_level, red_team_
 `;
 
 function getRedTeamFallback(input: AgentInput): RedTeamOutput {
+  const isAcquire =
+    input.decisionType === 'ACQUIRE' ||
+    /(acquire|acquisition|buy|purchase|takeover|merger|stake)/i.test(input.problemStatement);
+
+  const invalidatedClaims: InvalidatedClaim[] = [
+    {
+      original_claim: 'Implementation will achieve 148% ROI within 3 years',
+      source_agent: 'quant' as AgentId,
+      invalidation_reason: 'ROI projection assumes 100% benefit realisation from month 1 - historical benchmarks suggest 60-70% realisation in year 1, rising to 85% by year 3',
+      evidence: 'Industry transformation programmes typically achieve 55-65% of projected benefits in first 18 months (McKinsey Implementation Benchmark 2024)',
+      severity: 'Major' as const,
+    },
+    {
+      original_claim: 'First-mover advantage in AI-augmented advisory',
+      source_agent: 'market_intel' as AgentId,
+      invalidation_reason: 'Multiple competitors already have AI advisory capabilities in market - EY, Deloitte, and Accenture launched AI-enabled platforms in 2023-2024',
+      evidence: 'Deloitte AI Institute established 2023; EY.ai platform launched Q2 2024; Accenture $3B AI investment announced',
+      severity: 'Minor' as const,
+    },
+  ];
+
+  if (isAcquire) {
+    invalidatedClaims.push(
+      {
+        original_claim: 'Acquisition of a $40-60M startup is the optimal path to AI governance capability',
+        source_agent: 'strategist' as AgentId,
+        invalidation_reason:
+          'The internal build alternative has not been evaluated. Hiring 15-20 specialists and funding a focused platform build is materially cheaper than paying a full acquisition premium.',
+        evidence:
+          'Professional-services capability acquisitions frequently underperform when the premium is not justified by proprietary IP, speed, or transferable client relationships.',
+        severity: 'Major',
+      },
+      {
+        original_claim: 'Acquisition secures AI governance capability',
+        source_agent: 'quant' as AgentId,
+        invalidation_reason:
+          'The acquisition may secure a client list and brand narrative but not the actual capability if the key engineers, product leaders, or domain specialists leave after close.',
+        evidence:
+          'Professional-services acquisitions routinely lose key talent inside 12-24 months unless retention packages and operating autonomy are negotiated pre-close.',
+        severity: 'Major',
+      }
+    );
+  }
+
   return {
     pre_mortem_scenarios: [
       {
@@ -51,22 +112,7 @@ function getRedTeamFallback(input: AgentInput): RedTeamOutput {
         mitigation: 'Modular compliance architecture; quarterly regulatory horizon scanning; 15% contingency budget for regulatory change',
       },
     ],
-    invalidated_claims: [
-      {
-        original_claim: 'Implementation will achieve 148% ROI within 3 years',
-        source_agent: 'quant',
-        invalidation_reason: 'ROI projection assumes 100% benefit realisation from month 1 — historical benchmarks suggest 60-70% realisation in year 1, rising to 85% by year 3',
-        evidence: 'Industry transformation programmes typically achieve 55-65% of projected benefits in first 18 months (McKinsey Implementation Benchmark 2024)',
-        severity: 'Major',
-      },
-      {
-        original_claim: 'First-mover advantage in AI-augmented advisory',
-        source_agent: 'market_intel',
-        invalidation_reason: 'Multiple competitors already have AI advisory capabilities in market — EY, Deloitte, and Accenture launched AI-enabled platforms in 2023-2024',
-        evidence: 'Deloitte AI Institute established 2023; EY.ai platform launched Q2 2024; Accenture $3B AI investment announced',
-        severity: 'Minor',
-      },
-    ],
+    invalidated_claims: invalidatedClaims,
     surviving_claims: [
       'Regulatory compliance creates genuine urgency — DPDP Act 2023 enforcement timeline is real and penalty exposure is material ($30m+)',
       'Talent retention programme is correctly prioritised — industry attrition rates confirm 28-35% voluntary exits in advisory functions',
@@ -78,9 +124,11 @@ function getRedTeamFallback(input: AgentInput): RedTeamOutput {
       'PwC India: expected to launch competitive talent retention programme within 90 days, matching compensation adjustments and adding equity-based incentives',
       'Accenture Strategy: may pursue aggressive pricing to win 2-3 key accounts during our transition period, accepting short-term margin compression',
     ],
-    confidence_score: 78,
-    overall_threat_level: 'MEDIUM',
-    red_team_verdict: 'The strategy survives Red Team scrutiny with adjustments — ROI projections should be discounted by 25-30% to reflect realistic benefit realisation timelines, and talent retention programme must launch before (not after) the main transformation announcement.',
+    confidence_score: defaultConfidence('red_team', input.problemStatement),
+    overall_threat_level: isAcquire ? 'HIGH' : 'MEDIUM',
+    red_team_verdict: isAcquire
+      ? 'The acquisition thesis remains plausible only after it is reframed as an option-value problem rather than a foregone conclusion. Build-versus-buy economics and key-person retention risk materially weaken the case for an immediate full takeout.'
+      : 'The strategy survives Red Team scrutiny with adjustments - ROI projections should be discounted by 25-30% to reflect realistic benefit realisation timelines, and talent retention programme must launch before (not after) the main transformation announcement.',
   };
 }
 
