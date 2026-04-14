@@ -55,7 +55,7 @@ export default function WelcomePage() {
 
   return (
     <div className="welcome-page">
-      {/* ── HERO ────────────────────────────────────── */}
+      {/* â”€â”€ HERO â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
       <section className="hero-section">
         <div className="hero-bg">
           <div className="gradient-orb orb-1" />
@@ -69,7 +69,7 @@ export default function WelcomePage() {
             <Zap size={22} color="#6366f1" />
             <span className="nav-brand">ASIS</span>
             <span className="nav-version">v4.0</span>
-            <span className="nav-tagline">Silicon Consultancy</span>
+            <span className="nav-tagline">Strategic Intelligence Platform</span>
           </div>
           <div className="nav-right">
             <Link to="/login" className="btn btn-ghost">Sign in</Link>
@@ -79,7 +79,7 @@ export default function WelcomePage() {
 
         <motion.div className="hero-content" variants={stagger} initial="hidden" animate="visible">
           <motion.div className="hero-tag" variants={fadeUp}>
-            POWERED BY MULTI-AGENT AI · TRUSTED BY GLOBAL STRATEGY FIRMS
+            POWERED BY MULTI-AGENT AI Â· TRUSTED BY GLOBAL STRATEGY FIRMS
           </motion.div>
 
           <motion.h1 className="hero-title" variants={fadeUp}>
@@ -92,8 +92,8 @@ export default function WelcomePage() {
           </motion.h2>
 
           <motion.p className="hero-description" variants={fadeUp}>
-            Eight specialist AI agents — Strategist, Quant, Market Intelligence, Risk, Red Team,
-            Ethicist, CoVe Verifier, and Synthesis — debate every strategic question through the
+            Eight specialist AI agents â€” Strategist, Quant, Market Intelligence, Risk, Red Team,
+            Ethicist, CoVe Verifier, and Synthesis â€” debate every strategic question through the
             Debate-to-Verify protocol, then deliver board-ready intelligence in under 60 seconds.
           </motion.p>
 
@@ -118,7 +118,7 @@ export default function WelcomePage() {
         </div>
       </section>
 
-      {/* ── PIPELINE VISUALIZATION ────────────────── */}
+      {/* â”€â”€ PIPELINE VISUALIZATION â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
       <section id="pipeline" className="pipeline-section">
         <div className="section-container">
           <motion.h2
@@ -129,7 +129,7 @@ export default function WelcomePage() {
           >
             8 Specialist Agents. One Unified Intelligence.
           </motion.h2>
-          <p className="section-subtitle">The ASIS Silicon Consultancy — a Debate-to-Verify protocol</p>
+          <p className="section-subtitle">The ASIS debate-to-verify protocol for board-level strategy intelligence</p>
 
           <div className="pipeline-grid">
             {AGENT_NODES.map((node, i) => (
@@ -153,7 +153,7 @@ export default function WelcomePage() {
         </div>
       </section>
 
-      {/* ── COMPARISON ────────────────────────────── */}
+      {/* â”€â”€ COMPARISON â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
       <section className="comparison-section">
         <div className="section-container">
           <motion.h2
@@ -168,33 +168,33 @@ export default function WelcomePage() {
           <div className="comparison-table">
             <div className="comparison-col">
               <div className="col-header col-generic">Generic LLM</div>
-              <div className="col-item">❌ Single agent, single perspective</div>
-              <div className="col-item">❌ Hardcoded confidence (always "85%")</div>
-              <div className="col-item">❌ Generic placeholders ("Company A")</div>
-              <div className="col-item">❌ No adversarial challenge</div>
-              <div className="col-item">❌ No audit trail</div>
+              <div className="col-item">âŒ Single agent, single perspective</div>
+              <div className="col-item">âŒ Hardcoded confidence (always "85%")</div>
+              <div className="col-item">âŒ Generic placeholders ("Company A")</div>
+              <div className="col-item">âŒ No adversarial challenge</div>
+              <div className="col-item">âŒ No audit trail</div>
             </div>
             <div className="comparison-col">
               <div className="col-header col-consulting">Consulting Firm</div>
-              <div className="col-item">✅ Multiple analysts, diverse expertise</div>
-              <div className="col-item">✅ Calibrated analysis</div>
-              <div className="col-item">✅ Named specifics</div>
-              <div className="col-item">✅ Partner review / challenge</div>
-              <div className="col-item">⏰ 4-6 weeks delivery</div>
+              <div className="col-item">âœ… Multiple analysts, diverse expertise</div>
+              <div className="col-item">âœ… Calibrated analysis</div>
+              <div className="col-item">âœ… Named specifics</div>
+              <div className="col-item">âœ… Partner review / challenge</div>
+              <div className="col-item">â° 4-6 weeks delivery</div>
             </div>
             <div className="comparison-col highlight">
               <div className="col-header col-asis">ASIS v4.0</div>
-              <div className="col-item">✅ 8 specialist agents, adversarial debate</div>
-              <div className="col-item">✅ Formula-driven, weighted confidence</div>
-              <div className="col-item">✅ Named competitors, regulations, KPIs</div>
-              <div className="col-item">✅ Red Team + CoVe verification</div>
-              <div className="col-item">⚡ Under 60 seconds</div>
+              <div className="col-item">âœ… 8 specialist agents, adversarial debate</div>
+              <div className="col-item">âœ… Formula-driven, weighted confidence</div>
+              <div className="col-item">âœ… Named competitors, regulations, KPIs</div>
+              <div className="col-item">âœ… Red Team + CoVe verification</div>
+              <div className="col-item">âš¡ Under 60 seconds</div>
             </div>
           </div>
         </div>
       </section>
 
-      {/* ── BOTTOM CTA ────────────────────────────── */}
+      {/* â”€â”€ BOTTOM CTA â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
       <section className="cta-section">
         <div className="section-container">
           <motion.h2
@@ -209,7 +209,7 @@ export default function WelcomePage() {
             Enter your strategic question and let 8 specialist AI agents build your board-ready recommendation.
           </p>
           <Link to="/signup" className="btn btn-primary btn-lg" style={{ marginTop: '24px' }}>
-            Get Started — It's Free <ArrowRight size={18} />
+            Get Started â€” It's Free <ArrowRight size={18} />
           </Link>
           <p className="cta-trust">Used by senior strategists at leading consulting firms</p>
         </div>
@@ -218,7 +218,7 @@ export default function WelcomePage() {
       <style>{`
         .welcome-page { overflow-x: hidden; }
 
-        /* ── Hero ────────────────────────── */
+        /* â”€â”€ Hero â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
         .hero-section {
           position: relative;
           min-height: 100vh;
@@ -341,7 +341,7 @@ export default function WelcomePage() {
           50% { transform: translateY(8px); }
         }
 
-        /* ── Pipeline ────────────────────── */
+        /* â”€â”€ Pipeline â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
         .pipeline-section, .comparison-section, .cta-section {
           padding: 100px 24px;
         }
@@ -385,7 +385,7 @@ export default function WelcomePage() {
         .node-name { font-weight: 700; font-size: 14px; margin-bottom: 4px; }
         .node-framework { font-size: 11px; color: var(--text-muted); }
 
-        /* ── Comparison ──────────────────── */
+        /* â”€â”€ Comparison â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
         .comparison-table {
           display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px;
           max-width: 900px; margin: 0 auto; text-align: left;
@@ -416,7 +416,7 @@ export default function WelcomePage() {
 
         .col-item:last-child { border-bottom: none; }
 
-        /* ── CTA ─────────────────────────── */
+        /* â”€â”€ CTA â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
         .cta-section {
           background: linear-gradient(180deg, transparent, rgba(99, 102, 241, 0.03), transparent);
         }

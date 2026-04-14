@@ -54,7 +54,7 @@ export default function LoginPage() {
         </div>
 
         <h2 className="auth-title">Welcome back</h2>
-        <p className="auth-subtitle">Sign in to your Silicon Consultancy account</p>
+        <p className="auth-subtitle">Sign in to your ASIS strategic workspace</p>
 
         {(error || oauthError) && (
           <div className="auth-error">

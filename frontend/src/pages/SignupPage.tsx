@@ -50,7 +50,7 @@ export default function SignupPage() {
         </div>
 
         <h2 className="auth-title">Create your account</h2>
-        <p className="auth-subtitle">Join the Silicon Consultancy — free to start</p>
+        <p className="auth-subtitle">Create your ASIS strategic workspace — free to start</p>
 
         {prefillQuestion && (
           <div style={{ padding: '12px 16px', background: 'rgba(99, 102, 241, 0.08)', border: '1px solid rgba(99, 102, 241, 0.2)', borderRadius: 'var(--radius-md)', marginBottom: 16, fontSize: 13, color: 'var(--accent-secondary)' }}>
