@@ -129,5 +129,5 @@ jobs:
         env:
           DATABASE_URL: sqlite:///./test_migration.db
         run: |
-          alembic -c asis/backend/alembic.ini heads 2>&1
-          alembic -c asis/backend/alembic.ini check 2>&1 || echo "Pending migrations detected — run alembic upgrade head"
+          alembic -c alembic.ini heads 2>&1
+          alembic -c alembic.ini check 2>&1 || echo "Pending migrations detected — run alembic upgrade head"
