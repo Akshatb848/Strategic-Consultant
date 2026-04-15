@@ -1,4 +1,7 @@
-FROM node:20-bookworm-slim AS builder
+# ── ASIS v4.0 Frontend ───────────────────────────────────────────────────────
+# Image digests pinned for reproducible builds.
+# To update: docker pull node:20-bookworm-slim && docker inspect --format='{{index .RepoDigests 0}}' node:20-bookworm-slim
+FROM node:20-bookworm-slim@sha256:026dd7e41b7ac91fc4c2e99474cc780e2bf03c30af9a80a4df89f48b87e76e1d AS builder
 
 WORKDIR /app
 
@@ -16,7 +19,7 @@ ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 RUN mkdir -p /app/public
 RUN npm run build
 
-FROM node:20-bookworm-slim AS runner
+FROM node:20-bookworm-slim@sha256:026dd7e41b7ac91fc4c2e99474cc780e2bf03c30af9a80a4df89f48b87e76e1d AS runner
 
 ENV NODE_ENV=production \
     PUPPETEER_SKIP_DOWNLOAD=true \
@@ -66,6 +69,13 @@ COPY --from=builder /app/.next/standalone /app
 COPY --from=builder /app/.next/static /app/.next/static
 COPY --from=builder /app/public /app/public
 
+# Non-root user for security
+RUN useradd -m -u 1001 nextjs && chown -R nextjs:nextjs /app
+USER nextjs
+
 EXPOSE 3000
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
+    CMD curl -sf http://localhost:${PORT:-3000}/api/health || exit 1
 
 CMD ["sh", "-c", "HOSTNAME=0.0.0.0 PORT=${PORT:-3000} node server.js"]

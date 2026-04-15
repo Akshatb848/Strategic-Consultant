@@ -89,6 +89,14 @@ class Settings(BaseModel):
     enable_auto_schema: bool = Field(default_factory=lambda: _env_bool("ENABLE_AUTO_SCHEMA", True))
     sse_ping_seconds: int = Field(default_factory=lambda: _env_int("SSE_PING_SECONDS", 10))
     local_worker_concurrency: int = Field(default_factory=lambda: _env_int("LOCAL_WORKER_CONCURRENCY", 4))
+    # Rate limiting
+    rate_limit_analyses_per_day: int = Field(default_factory=lambda: _env_int("RATE_LIMIT_ANALYSES_PER_DAY", 20))
+    rate_limit_analyses_per_minute: int = Field(default_factory=lambda: _env_int("RATE_LIMIT_ANALYSES_PER_MINUTE", 2))
+    # Security
+    jwt_min_secret_length: int = Field(default_factory=lambda: _env_int("JWT_MIN_SECRET_LENGTH", 32))
+    # Observability / cost
+    cost_tracking_enabled: bool = Field(default_factory=lambda: _env_bool("COST_TRACKING_ENABLED", True))
+    langfuse_enabled: bool = Field(default_factory=lambda: _env_bool("LANGFUSE_ENABLED", False))
 
     @property
     def is_sqlite(self) -> bool:

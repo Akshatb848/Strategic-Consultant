@@ -4,19 +4,23 @@ import queue
 from datetime import datetime
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from sqlalchemy.orm import Session
 
 from asis.backend.api.dependencies import get_current_user
+from asis.backend.config.settings import get_settings
 from asis.backend.db import models
 from asis.backend.db.database import get_db
 from asis.backend.graph.context import extract_problem_context
 from asis.backend.schemas.analysis import AnalysisCreateRequest, AnalysisDetail, AnalysisResponse, AnalysisSummary
-from asis.backend.tasks.dispatcher import dispatch_analysis
+from asis.backend.tasks.dispatcher import dispatch_analysis, cancel_analysis
 from asis.backend.tasks.event_bus import event_bus
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
+limiter = Limiter(key_func=get_remote_address)
 
 
 def _to_summary(analysis: models.Analysis) -> AnalysisSummary:
@@ -63,11 +67,30 @@ def _to_detail(analysis: models.Analysis) -> AnalysisDetail:
 
 
 @router.post("", response_model=AnalysisResponse, status_code=201)
+@limiter.limit(lambda: f"{get_settings().rate_limit_analyses_per_minute}/minute;{get_settings().rate_limit_analyses_per_day}/day")
 def create_analysis(
+    request: Request,
     payload: AnalysisCreateRequest,
     user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> AnalysisResponse:
+    # Per-user daily cap (in addition to IP rate limit)
+    settings = get_settings()
+    from datetime import date
+    today_start = datetime.combine(date.today(), datetime.min.time())
+    user_today_count = (
+        db.query(models.Analysis)
+        .filter(
+            models.Analysis.user_id == user.id,
+            models.Analysis.created_at >= today_start,
+        )
+        .count()
+    )
+    if user_today_count >= settings.rate_limit_analyses_per_day:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Daily analysis limit of {settings.rate_limit_analyses_per_day} reached. Resets at midnight UTC.",
+        )
     extracted = extract_problem_context(payload.query, payload.company_context.model_dump())
     analysis = models.Analysis(
         id=uuid4().hex,
@@ -223,3 +246,40 @@ def stream_analysis_events(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@router.patch("/{analysis_id}/cancel", status_code=200)
+def cancel_analysis_endpoint(
+    analysis_id: str,
+    user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Gracefully cancel a queued or running analysis.
+
+    Sets status to 'cancelled' immediately so no further pipeline work is
+    started. Running Celery tasks are sent a revoke signal; in-process
+    ThreadPoolExecutor runs check the DB status before each agent step.
+    """
+    analysis = (
+        db.query(models.Analysis)
+        .filter(models.Analysis.id == analysis_id, models.Analysis.user_id == user.id)
+        .one_or_none()
+    )
+    if not analysis:
+        raise HTTPException(status_code=404, detail="ANALYSIS_NOT_FOUND")
+    if analysis.status not in ("queued", "running"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot cancel analysis in status '{analysis.status}'.",
+        )
+    analysis.status = "cancelled"
+    analysis.completed_at = datetime.utcnow()
+    analysis.error_message = "Cancelled by user."
+    db.commit()
+    cancel_analysis(analysis_id)
+    event_bus.publish(
+        analysis_id,
+        "analysis_failed",
+        {"analysis_id": analysis_id, "message": "Analysis cancelled by user."},
+    )
+    return {"message": "Analysis cancelled.", "analysis_id": analysis_id}

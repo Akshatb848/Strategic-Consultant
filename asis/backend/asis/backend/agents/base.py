@@ -23,6 +23,7 @@ class BaseAgent(ABC):
         model_used = generated.pop("_model_used", None)
         tools_called = generated.pop("_tools_called", None) or []
         langfuse_trace_id = generated.pop("_langfuse_trace_id", None)
+        token_usage = generated.pop("_token_usage", None)
         return AgentOutput(
             agent_id=self.agent_id,
             agent_name=self.agent_name,
@@ -31,6 +32,7 @@ class BaseAgent(ABC):
             model_used=model_used or ("demo-local" if get_settings().demo_mode else (resolved_models[0] if resolved_models else None)),
             tools_called=tools_called,
             langfuse_trace_id=langfuse_trace_id,
+            token_usage=token_usage,
             citations=generated.get("citations") or build_citations(state.get("extracted_context") or state.get("company_context") or {}),
             data=generated,
         )
@@ -43,6 +45,8 @@ class BaseAgent(ABC):
                 system_prompt=self.system_prompt(),
                 user_prompt=self.user_prompt(state),
                 models=self.resolve_models(),
+                agent_id=self.agent_id,
+                analysis_id=state.get("analysis_id"),
             )
         if proxy_output:
             proxy_output.setdefault("citations", build_citations(state.get("extracted_context") or {}))

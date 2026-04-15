@@ -1,11 +1,32 @@
 from __future__ import annotations
 
+import html
+import re
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from asis.backend.schemas.common import Citation, OrmModel
+
+# Patterns that suggest prompt-injection or script-injection attempts
+_INJECTION_PATTERNS = re.compile(
+    r"(<script|</script|javascript:|on\w+\s*=|<iframe|<object|<embed|"
+    r"ignore previous|disregard.*instruction|you are now|act as|"
+    r"system:\s*you|###\s*instruction)",
+    re.IGNORECASE,
+)
+
+
+def _sanitise_text(value: str) -> str:
+    """Strip leading/trailing whitespace, decode HTML entities, reject injection."""
+    cleaned = html.unescape(value).strip()
+    if _INJECTION_PATTERNS.search(cleaned):
+        raise ValueError(
+            "Query contains disallowed patterns. "
+            "Please rephrase your strategic question without HTML or prompt-injection tokens."
+        )
+    return cleaned
 
 
 class CompanyContext(BaseModel):
@@ -18,11 +39,25 @@ class CompanyContext(BaseModel):
     employees: str | None = None
     strategic_constraints: list[str] = Field(default_factory=list)
 
+    @field_validator("company_name", "sector", "geography", "decision_type", "headquarters", "annual_revenue", "employees", mode="before")
+    @classmethod
+    def sanitise_string_fields(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _sanitise_text(str(value))
+
 
 class AnalysisCreateRequest(BaseModel):
     query: str = Field(min_length=12, max_length=5000)
     company_context: CompanyContext = Field(default_factory=CompanyContext)
     run_baseline: bool = False
+
+    @field_validator("query", mode="before")
+    @classmethod
+    def sanitise_query(cls, value: str) -> str:
+        if not isinstance(value, str):
+            raise ValueError("query must be a string")
+        return _sanitise_text(value)
 
 
 class AgentLogResponse(OrmModel):
