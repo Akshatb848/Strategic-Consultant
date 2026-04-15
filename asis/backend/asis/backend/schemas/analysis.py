@@ -75,6 +75,9 @@ class AgentLogResponse(OrmModel):
     correction_reason: str | None
     duration_ms: int | None
     token_usage: dict | None
+    tokens_in: int | None = None
+    tokens_out: int | None = None
+    cost_usd: float | None = None
     citations: list | None
     parsed_output: dict | None
     created_at: datetime
@@ -93,6 +96,7 @@ class AnalysisSummary(OrmModel):
     executive_summary: str | None
     error_message: str | None = None
     duration_seconds: float | None
+    total_cost_usd: float | None = None
     created_at: datetime
     completed_at: datetime | None
 

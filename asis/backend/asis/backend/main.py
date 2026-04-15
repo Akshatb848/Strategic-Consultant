@@ -5,11 +5,11 @@ import sys
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
-from slowapi.util import get_remote_address
 
+from asis.backend.api.rate_limit import limiter
 from asis.backend.api.routes.analysis import router as analysis_router
 from asis.backend.api.routes.auth import router as auth_router
 from asis.backend.api.routes.memory import router as memory_router
@@ -32,9 +32,6 @@ if len(settings.jwt_secret) < settings.jwt_min_secret_length:
     )
     if settings.environment == "production":
         sys.exit(1)
-
-# ── Rate limiter (backed by Redis when available) ─────────────────────────────
-limiter = Limiter(key_func=get_remote_address, storage_uri=settings.redis_url)
 
 app = FastAPI(title=settings.app_name, version=settings.app_version)
 

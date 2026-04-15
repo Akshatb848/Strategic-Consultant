@@ -6,11 +6,10 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from slowapi import Limiter
-from slowapi.util import get_remote_address
 from sqlalchemy.orm import Session
 
 from asis.backend.api.dependencies import get_current_user
+from asis.backend.api.rate_limit import limiter
 from asis.backend.config.settings import get_settings
 from asis.backend.db import models
 from asis.backend.db.database import get_db
@@ -20,7 +19,6 @@ from asis.backend.tasks.dispatcher import dispatch_analysis, cancel_analysis
 from asis.backend.tasks.event_bus import event_bus
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
-limiter = Limiter(key_func=get_remote_address)
 
 
 def _to_summary(analysis: models.Analysis) -> AnalysisSummary:
@@ -37,6 +35,7 @@ def _to_summary(analysis: models.Analysis) -> AnalysisSummary:
         executive_summary=analysis.executive_summary,
         error_message=analysis.error_message,
         duration_seconds=analysis.duration_seconds,
+        total_cost_usd=analysis.total_cost_usd,
         created_at=analysis.created_at,
         completed_at=analysis.completed_at,
     )
