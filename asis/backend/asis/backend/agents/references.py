@@ -18,6 +18,27 @@ GENERAL_REFERENCES = [
         published_at="2025-12-01",
         excerpt="Growth resilience, financing costs and geographic risk should be grounded in current market evidence.",
     ),
+    Citation(
+        title="Global Competitiveness Report",
+        source="World Economic Forum",
+        url="https://www.weforum.org/reports/the-global-competitiveness-report-2024",
+        published_at="2024-06-01",
+        excerpt="Competitive positioning and national innovation capacity benchmarks inform market-entry and expansion assumptions.",
+    ),
+    Citation(
+        title="OECD Economic Outlook",
+        source="OECD",
+        url="https://www.oecd.org/economic-outlook/",
+        published_at="2025-06-01",
+        excerpt="Structural trade, labour-market and productivity trends provide the macroeconomic backdrop for strategic planning.",
+    ),
+    Citation(
+        title="Global M&A and Strategy Monitor",
+        source="McKinsey Global Institute",
+        url="https://www.mckinsey.com/business-functions/strategy-and-corporate-finance/our-insights",
+        published_at="2025-09-01",
+        excerpt="Transaction multiples, strategic-fit criteria and integration success rates inform inorganic growth assumptions.",
+    ),
 ]
 
 SECTOR_REFERENCES = {
@@ -120,7 +141,7 @@ def infer_geography_key(context: dict) -> str | None:
     return None
 
 
-def build_citations(context: dict, limit: int = 4) -> list[dict]:
+def build_citations(context: dict, limit: int = 5) -> list[dict]:
     items = list(GENERAL_REFERENCES)
     sector_key = infer_sector_key(context)
     geography_key = infer_geography_key(context)
