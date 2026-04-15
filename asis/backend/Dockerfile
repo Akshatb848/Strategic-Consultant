@@ -1,7 +1,7 @@
 # ── ASIS v4.0 Backend ────────────────────────────────────────────────────────
 # Image digest pinned for reproducible builds.
 # To update: docker pull python:3.11-slim && docker inspect --format='{{index .RepoDigests 0}}' python:3.11-slim
-FROM python:3.11-slim@sha256:ad5dadd957a398226996bc4be1de3b58ef3d70e1c25c839b8cf8e4f1dc1c81f3
+FROM python:3.11-slim@sha256:ad65166ad2583036804a3f772ec8f1cad733cf77d631c6840ab1ea9231b6b350
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
