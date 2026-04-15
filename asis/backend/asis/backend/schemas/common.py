@@ -32,3 +32,4 @@ class HealthResponse(BaseModel):
     version: str
     environment: str
     timestamp: datetime = Field(default_factory=datetime.utcnow)
+    checks: dict[str, str] = Field(default_factory=dict)

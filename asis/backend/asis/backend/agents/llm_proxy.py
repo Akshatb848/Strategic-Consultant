@@ -101,6 +101,7 @@ class LiteLLMProxy:
                         },
                     ],
                     "temperature": 0.2,
+                    "timeout": 90,  # 90-second per-model timeout; prevents silent hangs
                 }
                 if langfuse_callbacks:
                     kwargs["callbacks"] = langfuse_callbacks
