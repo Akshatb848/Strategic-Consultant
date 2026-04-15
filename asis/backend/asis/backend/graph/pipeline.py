@@ -73,13 +73,17 @@ class V4EnterpriseWorkflow:
     def run(self, analysis_id: str) -> None:
         db = db_state.SessionLocal()
         started = perf_counter()
+        # Bind analysis_id to every log line emitted during this pipeline run
+        bound_logger = logger.bind(analysis_id=analysis_id)
         try:
             analysis = db.get(models.Analysis, analysis_id)
             if not analysis:
+                bound_logger.warning("analysis_not_found")
                 return
             analysis.status = "running"
             analysis.pipeline_version = "4.0.0"
             db.commit()
+            bound_logger.info("pipeline_started", user_id=analysis.user_id)
             initial_state: V4PipelineState = {
                 "analysis_id": analysis_id,
                 "user_id": analysis.user_id,
@@ -106,9 +110,10 @@ class V4EnterpriseWorkflow:
             analysis = db.get(models.Analysis, analysis_id)
             if analysis:
                 synthesis_output = StrategicBriefV4.model_validate(final_state.get("synthesis_output") or {}).model_dump(mode="json")
+                duration = round(perf_counter() - started, 3)
                 analysis.status = "completed"
                 analysis.current_agent = None
-                analysis.duration_seconds = round(perf_counter() - started, 3)
+                analysis.duration_seconds = duration
                 analysis.completed_at = datetime.utcnow()
                 analysis.strategic_brief = synthesis_output
                 analysis.executive_summary = self._executive_summary_text(synthesis_output)
@@ -118,15 +123,22 @@ class V4EnterpriseWorkflow:
                 analysis.logic_consistency_passed = (synthesis_output.get("internal_consistency_score") or 0) >= 0.7
                 db.commit()
                 self._persist_report(db, analysis)
+                bound_logger.info(
+                    "pipeline_completed",
+                    duration_seconds=duration,
+                    total_cost_usd=analysis.total_cost_usd,
+                    decision_recommendation=analysis.decision_recommendation,
+                    quality_grade=synthesis_output.get("quality_report", {}).get("overall_grade"),
+                )
                 publish_analysis_event(
                     analysis.id,
                     "analysis_complete",
                     {"analysis_id": analysis.id, "strategic_brief": synthesis_output},
                 )
         except Exception as exc:
-            logger.error("v4_analysis_workflow_failed", analysis_id=analysis_id, error=str(exc))
+            bound_logger.error("pipeline_failed", error=str(exc), exc_info=True)
             analysis = db.get(models.Analysis, analysis_id)
-            if analysis:
+            if analysis and analysis.status != "cancelled":
                 analysis.status = "failed"
                 analysis.error_message = str(exc)
                 db.commit()
@@ -392,6 +404,9 @@ class V4EnterpriseWorkflow:
         with db_state.SessionLocal() as db:
             analysis = db.get(models.Analysis, state["analysis_id"])
             if analysis:
+                # Respect cancellation signal — abort before starting agent
+                if analysis.status == "cancelled":
+                    raise RuntimeError("Analysis was cancelled by user before agent could run.")
                 analysis.current_agent = agent.agent_id
                 analysis.status = "running"
                 db.commit()
@@ -452,6 +467,11 @@ class V4EnterpriseWorkflow:
 
     def _save_agent_result(self, analysis_id: str, result: AgentOutput) -> None:
         with db_state.SessionLocal() as db:
+            token_meta = result.token_usage or {}
+            tokens_in = int(token_meta.get("tokens_in") or 0)
+            tokens_out = int(token_meta.get("tokens_out") or 0)
+            cost_usd = float(token_meta.get("cost_usd") or 0.0)
+
             log = models.AgentLog(
                 id=uuid4().hex,
                 analysis_id=analysis_id,
@@ -468,6 +488,9 @@ class V4EnterpriseWorkflow:
                 correction_reason=result.correction_reason,
                 duration_ms=result.duration_ms,
                 token_usage=result.token_usage,
+                tokens_in=tokens_in,
+                tokens_out=tokens_out,
+                cost_usd=cost_usd,
                 citations=result.citations,
                 parsed_output=result.data,
             )
@@ -475,6 +498,9 @@ class V4EnterpriseWorkflow:
             analysis = db.get(models.Analysis, analysis_id)
             if analysis:
                 analysis.current_agent = result.agent_id
+                # Accumulate per-agent cost into analysis total
+                if cost_usd > 0:
+                    analysis.total_cost_usd = round((analysis.total_cost_usd or 0.0) + cost_usd, 8)
                 if result.agent_id == "synthesis":
                     analysis.strategic_brief = result.data
                     analysis.executive_summary = self._executive_summary_text(result.data)

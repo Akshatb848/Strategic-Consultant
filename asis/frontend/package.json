@@ -7,7 +7,25 @@
     "build": "next build",
     "start": "next start --port 3001",
     "lint": "next lint",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "test": "jest --passWithNoTests",
+    "test:ci": "jest --passWithNoTests --ci --coverage"
+  },
+  "jest": {
+    "testEnvironment": "jsdom",
+    "setupFilesAfterFramework": ["<rootDir>/jest.setup.ts"],
+    "moduleNameMapper": {
+      "^@/(.*)$": "<rootDir>/$1",
+      "\\.(css|less|scss|sass)$": "identity-obj-proxy"
+    },
+    "transform": {
+      "^.+\\.(t|j)sx?$": ["@swc/jest", {}]
+    },
+    "testMatch": ["**/__tests__/**/*.(test|spec).(ts|tsx)"],
+    "collectCoverageFrom": [
+      "components/**/*.{ts,tsx}",
+      "!components/**/*.d.ts"
+    ]
   },
   "dependencies": {
     "@nivo/line": "^0.87.0",
@@ -38,13 +56,22 @@
     "tailwind-merge": "^2.6.0"
   },
   "devDependencies": {
+    "@swc/core": "^1.7.0",
+    "@swc/jest": "^0.2.36",
+    "@testing-library/jest-dom": "^6.4.0",
+    "@testing-library/react": "^16.0.0",
+    "@testing-library/user-event": "^14.5.2",
     "@types/dagre": "^0.7.53",
+    "@types/jest": "^29.5.13",
     "@types/node": "^22.10.5",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
     "autoprefixer": "^10.4.20",
     "eslint": "^8.57.1",
     "eslint-config-next": "14.2.18",
+    "identity-obj-proxy": "^3.0.0",
+    "jest": "^29.7.0",
+    "jest-environment-jsdom": "^29.7.0",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.7.3"

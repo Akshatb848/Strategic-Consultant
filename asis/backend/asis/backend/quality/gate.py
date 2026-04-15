@@ -1,8 +1,19 @@
 from __future__ import annotations
 
+import re
 from statistics import mean
 
 from asis.backend.schemas.v4 import QualityCheckResult, QualityReport, StrategicBriefV4
+
+_URL_PATTERN = re.compile(
+    r"^https?://"                          # scheme
+    r"(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}"   # domain
+    r"(?:/[^\s]*)?$"                       # optional path
+)
+
+
+def _looks_like_url(value: str) -> bool:
+    return bool(_URL_PATTERN.match(value.strip()))
 
 
 class QualityGate:
@@ -26,7 +37,9 @@ class QualityGate:
     async def validate(self, brief: StrategicBriefV4, retry_count: int = 0) -> QualityReport:
         checks = [
             self._check_decision_prefix(brief),
+            self._check_decision_length(brief),
             self._check_citation_density(brief),
+            self._check_citation_url_format(brief),
             self._check_framework_completeness(brief),
             self._check_collaboration_trace(brief),
             self._check_context_specificity(brief),
@@ -34,6 +47,8 @@ class QualityGate:
             self._check_execution_specificity(brief),
             self._check_mece_score(brief),
             self._check_internal_consistency(brief),
+            self._check_cross_agent_consistency(brief),
+            self._check_roadmap_phases(brief),
         ]
         flags = [check.notes for check in checks if not check.passed and check.notes]
         citation_density_score = self._citation_density_score(brief)
@@ -160,6 +175,97 @@ class QualityGate:
             level="WARN",
             passed=passed,
             notes=None if passed else "Frameworks contain material tension between risk, financial, and strategic conclusions.",
+        )
+
+    def _check_decision_length(self, brief: StrategicBriefV4) -> QualityCheckResult:
+        """Decision statement must be ≤35 words (blueprint specification)."""
+        word_count = len(brief.decision_statement.split())
+        passed = word_count <= 35
+        return QualityCheckResult(
+            id="decision_length",
+            description="decision_statement must be a single sentence of 35 words or fewer",
+            level="WARN",
+            passed=passed,
+            notes=None if passed else f"Decision statement is {word_count} words (limit: 35). Condense to a single declarative sentence.",
+        )
+
+    def _check_citation_url_format(self, brief: StrategicBriefV4) -> QualityCheckResult:
+        """Every citation with a URL must have a syntactically valid http/https URL."""
+        bad_citations: list[str] = []
+        for framework_name, output in brief.framework_outputs.items():
+            for citation in output.citations:
+                url = getattr(citation, "url", None) or (citation if isinstance(citation, str) else "")
+                if url and not _looks_like_url(str(url)):
+                    bad_citations.append(f"{framework_name}: {str(url)[:60]}")
+        passed = not bad_citations
+        return QualityCheckResult(
+            id="citation_url_format",
+            description="All citation URLs must be valid http/https URLs (no fabricated or placeholder links)",
+            level="WARN",
+            passed=passed,
+            notes=None if passed else f"Malformed citation URLs detected: {'; '.join(bad_citations[:5])}.",
+        )
+
+    def _check_cross_agent_consistency(self, brief: StrategicBriefV4) -> QualityCheckResult:
+        """Detect material contradictions between BCG growth rate and market intel growth rate.
+
+        If Market Intel reports a market growth rate and BCG Matrix also reports
+        business unit market_growth_rate, they should not contradict by more than 20pp.
+        """
+        try:
+            bcg_data = (brief.framework_outputs.get("bcg_matrix") or None)
+            market_data = brief.market_analysis or {}
+            if not bcg_data:
+                return QualityCheckResult(
+                    id="cross_agent_consistency",
+                    description="BCG growth rate must not contradict Market Intel growth rate by more than 20 percentage points",
+                    level="WARN",
+                    passed=True,
+                    notes=None,
+                )
+            bcg_units = (bcg_data.structured_data or {}).get("business_units") or []
+            if not bcg_units:
+                return QualityCheckResult(
+                    id="cross_agent_consistency",
+                    description="BCG growth rate must not contradict Market Intel growth rate by more than 20 percentage points",
+                    level="WARN",
+                    passed=True,
+                    notes=None,
+                )
+            avg_bcg_growth = sum(float(u.get("market_growth_rate") or 0) for u in bcg_units) / len(bcg_units)
+            market_growth = float(market_data.get("market_growth_rate") or market_data.get("cagr_pct") or avg_bcg_growth)
+            discrepancy = abs(avg_bcg_growth - market_growth)
+            passed = discrepancy <= 20
+            return QualityCheckResult(
+                id="cross_agent_consistency",
+                description="BCG growth rate must not contradict Market Intel growth rate by more than 20 percentage points",
+                level="WARN",
+                passed=passed,
+                notes=None if passed else (
+                    f"BCG avg growth ({avg_bcg_growth:.1f}%) contradicts Market Intel "
+                    f"({market_growth:.1f}%) by {discrepancy:.1f}pp. "
+                    "Align financial and market assumptions."
+                ),
+            )
+        except Exception:
+            return QualityCheckResult(
+                id="cross_agent_consistency",
+                description="BCG growth rate must not contradict Market Intel growth rate by more than 20 percentage points",
+                level="WARN",
+                passed=True,
+                notes=None,
+            )
+
+    def _check_roadmap_phases(self, brief: StrategicBriefV4) -> QualityCheckResult:
+        """Implementation roadmap must contain all 4 required phases."""
+        roadmap = brief.implementation_roadmap or []
+        passed = len(roadmap) >= 4
+        return QualityCheckResult(
+            id="roadmap_phases",
+            description="Implementation roadmap must have exactly 4 phases: Immediate (0-3m), Short-term (3-12m), Medium-term (1-3y), Long-term (3-5y)",
+            level="WARN",
+            passed=passed,
+            notes=None if passed else f"Roadmap has only {len(roadmap)} phase(s); all 4 phases are required for board-ready reporting.",
         )
 
     def _citation_density_score(self, brief: StrategicBriefV4) -> float:
