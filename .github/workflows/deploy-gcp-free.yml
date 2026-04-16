@@ -6,6 +6,13 @@ on:
       - main
   workflow_dispatch:
 
+# Only one deploy at a time. A newer push cancels any in-progress run so the
+# VM always ends up at the latest commit and concurrent runs can't race to
+# delete each other's Docker images on the VM.
+concurrency:
+  group: deploy-gcp-free-vm
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
