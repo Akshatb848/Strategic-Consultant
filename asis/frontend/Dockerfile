@@ -1,7 +1,7 @@
 # ── ASIS v4.0 Frontend ───────────────────────────────────────────────────────
-# Image digests pinned for reproducible builds.
-# To update: docker pull node:20-bookworm-slim && docker inspect --format='{{index .RepoDigests 0}}' node:20-bookworm-slim
-FROM node:20-bookworm-slim@sha256:026dd7e41b7ac91fc4c2e99474cc780e2bf03c30af9a80a4df89f48b87e76e1d AS builder
+# Use floating 20-bookworm-slim tag; the old pinned digest was removed from Docker Hub.
+# To re-pin: docker pull node:20-bookworm-slim && docker inspect --format='{{index .RepoDigests 0}}' node:20-bookworm-slim
+FROM node:20-bookworm-slim AS builder
 
 WORKDIR /app
 
@@ -19,7 +19,7 @@ ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 RUN mkdir -p /app/public
 RUN npm run build
 
-FROM node:20-bookworm-slim@sha256:026dd7e41b7ac91fc4c2e99474cc780e2bf03c30af9a80a4df89f48b87e76e1d AS runner
+FROM node:20-bookworm-slim AS runner
 
 ENV NODE_ENV=production \
     PUPPETEER_SKIP_DOWNLOAD=true \
