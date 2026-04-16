@@ -404,6 +404,8 @@ jobs:
           ENABLE_AUTO_SCHEMA=true
           SECURE_COOKIES=false
           LOCAL_WORKER_CONCURRENCY=1
+          LANGFUSE_ENABLED=false
+          COST_TRACKING_ENABLED=false
           BACKEND_PORT=8000
           FRONTEND_PORT=3001
           BACKEND_IMAGE=${BACKEND_IMAGE}
