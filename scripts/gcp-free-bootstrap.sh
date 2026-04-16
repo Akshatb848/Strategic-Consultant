@@ -18,6 +18,18 @@ on_error() {
   echo "[gcp-free-bootstrap] Command failed with exit ${exit_code} at line ${line_no}: ${failed_command}" >&2
   df -h || true
   docker_cmd system df || true
+
+  # Print the last 200 lines of each ASIS container log so CI shows exactly what crashed.
+  for svc in backend frontend; do
+    local cname="${COMPOSE_PROJECT_NAME}-${svc}-1"
+    if docker_cmd inspect "${cname}" >/dev/null 2>&1; then
+      echo ""
+      echo "[gcp-free-bootstrap] === ${cname} logs (last 200 lines) ==="
+      docker_cmd logs "${cname}" --tail 200 2>&1 || true
+      echo "[gcp-free-bootstrap] === end ${cname} logs ==="
+    fi
+  done
+
   exit "${exit_code}"
 }
 
@@ -267,6 +279,10 @@ prepare_env_file() {
   fi
 
   run_root mkdir -p "${data_dir}"
+  # Ensure the data directory is writable by the container user (uid 1001).
+  # The backend and frontend containers both run as a non-root uid=1001 user.
+  run_root chown -R 1001:1001 "${data_dir}" 2>/dev/null || run_root chmod -R 777 "${data_dir}" || true
+  log "Data directory ${data_dir} is ready (owner uid 1001 or world-writable)."
 }
 
 validate_env_file() {
