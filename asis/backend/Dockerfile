@@ -1,7 +1,7 @@
 # ── ASIS v4.0 Backend ────────────────────────────────────────────────────────
-# Use floating 3.11-slim tag; the old pinned digest was removed from Docker Hub.
-# To re-pin: docker pull python:3.11-slim && docker inspect --format='{{index .RepoDigests 0}}' python:3.11-slim
-FROM python:3.11-slim
+# Image digest pinned for reproducible builds.
+# To update: docker pull python:3.11-slim && docker inspect --format='{{index .RepoDigests 0}}' python:3.11-slim
+FROM python:3.11-slim@sha256:233de06753d30d120b1a3ce359d8d3be8bda78524cd8f520c99883bfe33964cf
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
