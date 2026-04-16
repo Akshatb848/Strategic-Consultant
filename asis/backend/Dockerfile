@@ -1,4 +1,4 @@
-# ── ASIS v4.0 Backend ────────────────────────────────────────────────────────
+# ── ASIS v4.0 Backend ──────────────────────────────────────────────
 # Image digest pinned for reproducible builds.
 # To update: docker pull python:3.11-slim && docker inspect --format='{{index .RepoDigests 0}}' python:3.11-slim
 FROM python:3.11-slim@sha256:233de06753d30d120b1a3ce359d8d3be8bda78524cd8f520c99883bfe33964cf
@@ -32,4 +32,7 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
     CMD curl -sf http://localhost:8000/v1/health || exit 1
 
-CMD ["uvicorn", "asis.backend.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
+# Single worker: the e2-micro (1 GB RAM) can't comfortably run two full Python
+# processes each loading the LangGraph pipeline. One worker handles all demo
+# traffic without OOM risk.
+CMD ["uvicorn", "asis.backend.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
