@@ -48,6 +48,25 @@ app.add_middleware(
 )
 
 
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    # FastAPI's ExceptionMiddleware re-raises unregistered exception types, causing them
+    # to propagate through BaseHTTPMiddleware past CORSMiddleware's send wrapper so that
+    # ServerErrorMiddleware returns 500 without CORS headers. This handler prevents that.
+    logger.error(
+        "unhandled_exception",
+        path=str(request.url.path),
+        method=request.method,
+        error=str(exc),
+        exc_type=type(exc).__name__,
+        exc_info=True,
+    )
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "An unexpected error occurred. Please try again."},
+    )
+
+
 @app.on_event("startup")
 def startup() -> None:
     logger.info(

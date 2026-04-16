@@ -21,6 +21,14 @@ from asis.backend.tasks.event_bus import event_bus
 router = APIRouter(prefix="/analysis", tags=["analysis"])
 
 
+def _analysis_minute_limit() -> str:
+    return f"{get_settings().rate_limit_analyses_per_minute}/minute"
+
+
+def _analysis_day_limit() -> str:
+    return f"{get_settings().rate_limit_analyses_per_day}/day"
+
+
 def _to_summary(analysis: models.Analysis) -> AnalysisSummary:
     return AnalysisSummary(
         id=analysis.id,
@@ -66,7 +74,8 @@ def _to_detail(analysis: models.Analysis) -> AnalysisDetail:
 
 
 @router.post("", response_model=AnalysisResponse, status_code=201)
-@limiter.limit(lambda: f"{get_settings().rate_limit_analyses_per_minute}/minute;{get_settings().rate_limit_analyses_per_day}/day")
+@limiter.limit(_analysis_day_limit)
+@limiter.limit(_analysis_minute_limit)
 def create_analysis(
     request: Request,
     payload: AnalysisCreateRequest,
