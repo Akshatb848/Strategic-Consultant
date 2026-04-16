@@ -20,6 +20,10 @@ async def client(tmp_path, monkeypatch):
     monkeypatch.setenv("ASIS_DEMO_MODE", "true")
     monkeypatch.setenv("ENABLE_AUTO_SCHEMA", "true")
     monkeypatch.setenv("JWT_SECRET", "test-secret-test-secret-test-secret")
+    monkeypatch.setenv("ENVIRONMENT", "test")
+    # Disable rate limits so tests can create multiple analyses without hitting caps
+    monkeypatch.setenv("RATE_LIMIT_ANALYSES_PER_MINUTE", "9999")
+    monkeypatch.setenv("RATE_LIMIT_ANALYSES_PER_DAY", "9999")
 
     from asis.backend.config.settings import get_settings
     from asis.backend.db.database import init_db, reset_engine

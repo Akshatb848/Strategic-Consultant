@@ -13,13 +13,21 @@
   },
   "jest": {
     "testEnvironment": "jsdom",
-    "setupFilesAfterFramework": ["<rootDir>/jest.setup.ts"],
+    "setupFilesAfterEnv": ["<rootDir>/jest.setup.ts"],
     "moduleNameMapper": {
       "^@/(.*)$": "<rootDir>/$1",
       "\\.(css|less|scss|sass)$": "identity-obj-proxy"
     },
     "transform": {
-      "^.+\\.(t|j)sx?$": ["@swc/jest", {}]
+      "^.+\\.(t|j)sx?$": ["@swc/jest", {
+        "jsc": {
+          "transform": {
+            "react": {
+              "runtime": "automatic"
+            }
+          }
+        }
+      }]
     },
     "testMatch": ["**/__tests__/**/*.(test|spec).(ts|tsx)"],
     "collectCoverageFrom": [

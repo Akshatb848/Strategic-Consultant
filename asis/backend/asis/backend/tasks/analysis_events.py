@@ -5,14 +5,15 @@ from uuid import uuid4
 
 from asis.backend.agents.types import now_ms
 from asis.backend.db import models
-from asis.backend.db.database import SessionLocal
+import asis.backend.db.database as _db_module
 from asis.backend.tasks.event_bus import event_bus
 
 
 def publish_analysis_event(analysis_id: str, event_name: str, payload: dict) -> None:
     timestamp = int(payload.get("timestamp_ms") or now_ms())
     persisted_payload = {**payload, "timestamp_ms": timestamp}
-    with SessionLocal() as db:
+    # Access SessionLocal via the module reference so reset_engine() changes are picked up
+    with _db_module.SessionLocal() as db:
         db.add(
             models.AnalysisEvent(
                 id=uuid4().hex,
