@@ -71,7 +71,8 @@ describe("DecisionBanner", () => {
         decision_statement="CONDITIONAL PROCEED — Enter only after regulatory approval."
       />
     );
-    expect(screen.getByText(/CONDITIONAL PROCEED/i)).toBeInTheDocument();
+    // Text appears in both the badge span and the h2 heading, so use getAllByText
+    expect(screen.getAllByText(/CONDITIONAL PROCEED/i)[0]).toBeInTheDocument();
   });
 
   it("renders DO NOT PROCEED variant without crash", () => {
@@ -82,6 +83,7 @@ describe("DecisionBanner", () => {
         decision_confidence={0.15}
       />
     );
-    expect(screen.getByText(/DO NOT PROCEED/i)).toBeInTheDocument();
+    // Text appears in both the badge span and the h2 heading, so use getAllByText
+    expect(screen.getAllByText(/DO NOT PROCEED/i)[0]).toBeInTheDocument();
   });
 });

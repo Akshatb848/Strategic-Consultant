@@ -11,9 +11,19 @@ import React from "react";
 
 import { BcgBubble } from "../components/charts/BcgBubble";
 
-// recharts uses ResizeObserver; mock it for jsdom
+// recharts uses ResizeObserver; mock it for jsdom with non-zero dimensions
+// so ResponsiveContainer reports a real size and renders the SVG chart
 global.ResizeObserver = class {
-  observe() {}
+  private callback: ResizeObserverCallback;
+  constructor(callback: ResizeObserverCallback) {
+    this.callback = callback;
+  }
+  observe(target: Element) {
+    this.callback(
+      [{ contentRect: { width: 800, height: 600, top: 0, left: 0, right: 800, bottom: 600, x: 0, y: 0 } as DOMRectReadOnly, target, borderBoxSize: [], contentBoxSize: [], devicePixelContentBoxSize: [] }],
+      this
+    );
+  }
   unobserve() {}
   disconnect() {}
 };
