@@ -12,7 +12,7 @@ function getClient(): OpenAI {
     }
     groqClient = new OpenAI({
       apiKey: env.GROQ_API_KEY || 'dummy-key-for-fallback',
-      baseURL: env.GROQ_BASE_URL,
+      baseURL: env.GROQ_BASE_URL || env.GROQ_API_BASE || 'https://api.groq.com/openai/v1',
     });
   }
   return groqClient;

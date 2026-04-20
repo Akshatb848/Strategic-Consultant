@@ -7,6 +7,8 @@ const envSchema = z.object({
   PORT: z.coerce.number().default(8000),
   FRONTEND_URL: z.string().default('http://localhost:5173'),
   BACKEND_URL: z.string().default('http://localhost:8000'),
+  // Comma-separated list of allowed CORS origins (used in production docker-compose)
+  ALLOWED_ORIGINS: z.string().optional(),
   APP_NAME: z.string().default('ASIS'),
   APP_VERSION: z.string().default('4.0.0'),
 
@@ -35,6 +37,8 @@ const envSchema = z.object({
   // LLM — Groq (Free Tier, OpenAI-compatible)
   GROQ_API_KEY: z.string().optional(),
   GROQ_BASE_URL: z.string().default('https://api.groq.com/openai/v1'),
+  // Alias used in docker-compose.gcp-free.yml
+  GROQ_API_BASE: z.string().optional(),
 
   // Per-agent model routing
   LLM_MODEL_STRATEGIST: z.string().default('qwen/qwen3-32b'),

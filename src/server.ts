@@ -43,9 +43,23 @@ app.use(
 );
 
 // ── CORS ─────────────────────────────────────────────────────────────────────
+// Support comma-separated ALLOWED_ORIGINS for multi-origin production setups
+// e.g. ALLOWED_ORIGINS=http://34.30.157.38:3001,https://asis.example.com
+const allowedOrigins: string[] = env.ALLOWED_ORIGINS
+  ? env.ALLOWED_ORIGINS.split(',').map((o) => o.trim()).filter(Boolean)
+  : [env.FRONTEND_URL];
+
 app.use(
   cors({
-    origin: env.FRONTEND_URL,
+    origin: (requestOrigin, callback) => {
+      // Allow requests with no origin (mobile apps, curl, Postman)
+      if (!requestOrigin) return callback(null, true);
+      if (allowedOrigins.includes(requestOrigin)) {
+        return callback(null, true);
+      }
+      logger.warn({ requestOrigin, allowedOrigins }, 'CORS blocked request');
+      return callback(new Error(`CORS: origin ${requestOrigin} not allowed`));
+    },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
