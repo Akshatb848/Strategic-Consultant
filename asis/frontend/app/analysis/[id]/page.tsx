@@ -12,6 +12,7 @@ import { BaselineComparisonPanel } from "@/components/BaselineComparisonPanel";
 import { DecisionBanner } from "@/components/DecisionBanner";
 import { DecisionProvenanceDrawer } from "@/components/DecisionProvenanceDrawer";
 import { DissertationPanel } from "@/components/DissertationPanel";
+import { FallbackBanner } from "@/components/FallbackBanner";
 import { FailureDiagnosticsPanel } from "@/components/FailureDiagnosticsPanel";
 import { FrameworkVisualisationPanel } from "@/components/FrameworkVisualisationPanel";
 import { ImplementationRoadmap } from "@/components/ImplementationRoadmap";
@@ -274,6 +275,8 @@ function AnalysisDetailContent() {
               {streamError}
             </div>
           ) : null}
+
+          {analysis.used_fallback ? <FallbackBanner /> : null}
 
           <section className="sticky top-4 z-30 rounded-3xl border border-white/10 bg-[#08101d]/95 px-5 py-4 backdrop-blur">
             <div className="flex flex-col gap-5 xl:flex-row xl:items-center xl:justify-between">

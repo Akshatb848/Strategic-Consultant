@@ -24,6 +24,7 @@ class BaseAgent(ABC):
         tools_called = generated.pop("_tools_called", None) or []
         langfuse_trace_id = generated.pop("_langfuse_trace_id", None)
         token_usage = generated.pop("_token_usage", None)
+        used_fallback = bool(generated.pop("_used_fallback", False))
         return AgentOutput(
             agent_id=self.agent_id,
             agent_name=self.agent_name,
@@ -34,6 +35,7 @@ class BaseAgent(ABC):
             langfuse_trace_id=langfuse_trace_id,
             token_usage=token_usage,
             citations=generated.get("citations") or build_citations(state.get("extracted_context") or state.get("company_context") or {}),
+            used_fallback=used_fallback,
             data=generated,
         )
 
@@ -51,8 +53,11 @@ class BaseAgent(ABC):
         if proxy_output:
             proxy_output.setdefault("citations", build_citations(state.get("extracted_context") or {}))
             proxy_output.setdefault("confidence_score", self.local_result(state)["confidence_score"])
+            proxy_output["_used_fallback"] = False
             return proxy_output
-        return self.local_result(state)
+        local_output = self.local_result(state)
+        local_output["_used_fallback"] = True
+        return local_output
 
     def resolve_models(self) -> list[str]:
         settings = get_settings()

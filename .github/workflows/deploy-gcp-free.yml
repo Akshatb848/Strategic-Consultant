@@ -76,6 +76,17 @@ jobs:
           GITHUB_CLIENT_ID: ${{ vars.GITHUB_CLIENT_ID || secrets.GITHUB_CLIENT_ID }}
           GITHUB_CLIENT_SECRET: ${{ secrets.GITHUB_CLIENT_SECRET }}
           GITHUB_CALLBACK_URL: ${{ vars.GITHUB_CALLBACK_URL || secrets.GITHUB_CALLBACK_URL }}
+          LITELLM_PROXY_URL: ${{ vars.LITELLM_PROXY_URL || secrets.LITELLM_PROXY_URL }}
+          LITELLM_MASTER_KEY: ${{ secrets.LITELLM_MASTER_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GROQ_API_BASE: ${{ vars.GROQ_API_BASE || secrets.GROQ_API_BASE }}
+          GROQ_MODEL_PRIMARY: ${{ vars.GROQ_MODEL_PRIMARY || secrets.GROQ_MODEL_PRIMARY }}
+          GROQ_MODEL_FAST: ${{ vars.GROQ_MODEL_FAST || secrets.GROQ_MODEL_FAST }}
+          GROQ_MODEL_REASONING: ${{ vars.GROQ_MODEL_REASONING || secrets.GROQ_MODEL_REASONING }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPEN_MODEL_API_BASE: ${{ vars.OPEN_MODEL_API_BASE || secrets.OPEN_MODEL_API_BASE }}
+          OPEN_MODEL_API_KEY: ${{ secrets.OPEN_MODEL_API_KEY }}
         run: |
           set -euo pipefail
           trap 'echo "::error::Deploy runner failed at line ${LINENO}: ${BASH_COMMAND}"' ERR
@@ -138,6 +149,17 @@ jobs:
             "GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:-}"
             "GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET:-}"
             "GITHUB_CALLBACK_URL=${GITHUB_CALLBACK_URL:-}"
+            "LITELLM_PROXY_URL=${LITELLM_PROXY_URL:-}"
+            "LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-}"
+            "GROQ_API_KEY=${GROQ_API_KEY:-}"
+            "GROQ_API_BASE=${GROQ_API_BASE:-}"
+            "GROQ_MODEL_PRIMARY=${GROQ_MODEL_PRIMARY:-}"
+            "GROQ_MODEL_FAST=${GROQ_MODEL_FAST:-}"
+            "GROQ_MODEL_REASONING=${GROQ_MODEL_REASONING:-}"
+            "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}"
+            "OPENAI_API_KEY=${OPENAI_API_KEY:-}"
+            "OPEN_MODEL_API_BASE=${OPEN_MODEL_API_BASE:-}"
+            "OPEN_MODEL_API_KEY=${OPEN_MODEL_API_KEY:-}"
           )
 
           run_remote() {
@@ -406,13 +428,24 @@ jobs:
           DATABASE_URL=sqlite:////data/asis_v4.db
           ASIS_DATA_DIR=${RESOLVED_VM_DATA_DIR}
           ENVIRONMENT=production
-          ASIS_DEMO_MODE=true
+          ASIS_DEMO_MODE=false
           RUN_ANALYSES_INLINE=false
           ENABLE_AUTO_SCHEMA=true
           SECURE_COOKIES=false
           LOCAL_WORKER_CONCURRENCY=1
           LANGFUSE_ENABLED=false
           COST_TRACKING_ENABLED=false
+          LITELLM_PROXY_URL=${LITELLM_PROXY_URL:-}
+          LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-}
+          GROQ_API_KEY=${GROQ_API_KEY:-}
+          GROQ_API_BASE=${GROQ_API_BASE:-https://api.groq.com/openai/v1}
+          GROQ_MODEL_PRIMARY=${GROQ_MODEL_PRIMARY:-llama-3.3-70b-versatile}
+          GROQ_MODEL_FAST=${GROQ_MODEL_FAST:-openai/gpt-oss-20b}
+          GROQ_MODEL_REASONING=${GROQ_MODEL_REASONING:-openai/gpt-oss-120b}
+          ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+          OPENAI_API_KEY=${OPENAI_API_KEY:-}
+          OPEN_MODEL_API_BASE=${OPEN_MODEL_API_BASE:-}
+          OPEN_MODEL_API_KEY=${OPEN_MODEL_API_KEY:-}
           BACKEND_PORT=8000
           FRONTEND_PORT=3001
           BACKEND_IMAGE=${BACKEND_IMAGE}

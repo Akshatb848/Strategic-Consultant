@@ -21,6 +21,9 @@ _MODEL_COST_PER_1M: dict[str, tuple[float, float]] = {
     "gemini-2.0-flash": (0.075, 0.3),
     "gpt-4o": (5.0, 15.0),
     "gpt-4o-mini": (0.15, 0.6),
+    "llama-3.3-70b-versatile": (0.59, 0.79),
+    "gpt-oss-20b": (0.075, 0.30),
+    "gpt-oss-120b": (0.15, 0.60),
 }
 
 _DEFAULT_COST_PER_1M = (1.0, 4.0)  # conservative fallback
@@ -34,6 +37,29 @@ def _estimate_cost(model: str, tokens_in: int, tokens_out: int) -> float:
 
 
 class LiteLLMProxy:
+    @staticmethod
+    def _groq_model_alias(settings, candidate: str, agent_id: str | None) -> str:
+        explicit = {
+            settings.litellm_model_fast: settings.groq_model_fast,
+            settings.litellm_model_primary: settings.groq_model_primary,
+            settings.litellm_model_gemini_flash: settings.groq_model_fast,
+            settings.litellm_model_gemini_pro: settings.groq_model_primary,
+            settings.litellm_model_phi_reasoning: settings.groq_model_reasoning,
+            settings.litellm_model_qwen_strategy: settings.groq_model_reasoning,
+            settings.litellm_model_arctic_research: settings.groq_model_primary,
+            settings.litellm_model_llama_governance: settings.groq_model_primary,
+        }
+        if candidate in explicit:
+            return explicit[candidate]
+        lowered = candidate.lower()
+        if lowered.startswith(("groq/", "openai/gpt-oss-", "llama-3.3-70b")):
+            return candidate
+        if "reason" in lowered or agent_id in {"financial_reasoning", "quant", "cove", "strategic_options"}:
+            return settings.groq_model_reasoning
+        if "flash" in lowered or "fast" in lowered or agent_id == "orchestrator":
+            return settings.groq_model_fast
+        return settings.groq_model_primary
+
     @staticmethod
     def _extract_json_payload(content: str) -> dict[str, Any]:
         cleaned = content.strip()
@@ -60,7 +86,9 @@ class LiteLLMProxy:
         analysis_id: str | None = None,
     ) -> dict[str, Any] | None:
         settings = get_settings()
-        if not (settings.litellm_proxy_url and settings.litellm_master_key):
+        use_proxy = bool(settings.litellm_proxy_url and settings.litellm_master_key)
+        use_direct_groq = bool(settings.groq_api_key)
+        if not use_proxy and not use_direct_groq:
             return None
 
         candidate_models = [value for value in (models or [model or settings.litellm_model_primary]) if value]
@@ -89,10 +117,20 @@ class LiteLLMProxy:
         for candidate in candidate_models:
             t0 = time.perf_counter()
             try:
+                runtime_model = candidate
+                api_base = settings.litellm_proxy_url
+                api_key = settings.litellm_master_key
+                provider_mode = "litellm_proxy"
+                if not use_proxy:
+                    runtime_model = self._groq_model_alias(settings, candidate, agent_id)
+                    api_base = settings.groq_api_base
+                    api_key = settings.groq_api_key
+                    provider_mode = "groq_direct"
+
                 kwargs: dict[str, Any] = {
-                    "model": candidate,
-                    "api_base": settings.litellm_proxy_url,
-                    "api_key": settings.litellm_master_key,
+                    "model": runtime_model,
+                    "api_base": api_base,
+                    "api_key": api_key,
                     "messages": [
                         {"role": "system", "content": system_prompt},
                         {
@@ -122,20 +160,23 @@ class LiteLLMProxy:
                     usage = usage.__dict__
                 tokens_in = int(usage.get("prompt_tokens") or 0)
                 tokens_out = int(usage.get("completion_tokens") or 0)
-                cost_usd = _estimate_cost(candidate, tokens_in, tokens_out)
+                cost_usd = _estimate_cost(runtime_model, tokens_in, tokens_out)
 
-                payload["_model_used"] = candidate
+                payload["_model_used"] = runtime_model
                 payload["_langfuse_trace_id"] = langfuse_trace_id
                 payload["_token_usage"] = {
                     "tokens_in": tokens_in,
                     "tokens_out": tokens_out,
                     "cost_usd": cost_usd,
                     "latency_ms": latency_ms,
+                    "provider_mode": provider_mode,
                 }
 
                 logger.info(
                     "llm_call_success",
-                    model=candidate,
+                    model=runtime_model,
+                    requested_model=candidate,
+                    provider_mode=provider_mode,
                     agent_id=agent_id,
                     analysis_id=analysis_id,
                     tokens_in=tokens_in,
@@ -149,7 +190,9 @@ class LiteLLMProxy:
             except Exception as exc:  # pragma: no cover - exercised in live environments
                 logger.warning(
                     "litellm_proxy_failed",
-                    model=candidate,
+                    model=runtime_model,
+                    requested_model=candidate,
+                    provider_mode=provider_mode,
                     agent_id=agent_id,
                     error=str(exc),
                 )

@@ -115,6 +115,7 @@ class V4EnterpriseWorkflow:
                 analysis.current_agent = None
                 analysis.duration_seconds = duration
                 analysis.completed_at = datetime.utcnow()
+                analysis.used_fallback = any(log.used_fallback for log in analysis.agent_logs)
                 analysis.strategic_brief = synthesis_output
                 analysis.executive_summary = self._executive_summary_text(synthesis_output)
                 analysis.board_narrative = synthesis_output.get("board_narrative")
@@ -493,11 +494,13 @@ class V4EnterpriseWorkflow:
                 cost_usd=cost_usd,
                 citations=result.citations,
                 parsed_output=result.data,
+                used_fallback=result.used_fallback,
             )
             db.add(log)
             analysis = db.get(models.Analysis, analysis_id)
             if analysis:
                 analysis.current_agent = result.agent_id
+                analysis.used_fallback = bool(analysis.used_fallback or result.used_fallback)
                 # Accumulate per-agent cost into analysis total
                 if cost_usd > 0:
                     analysis.total_cost_usd = round((analysis.total_cost_usd or 0.0) + cost_usd, 8)

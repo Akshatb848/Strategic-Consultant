@@ -79,6 +79,7 @@ class Analysis(Base):
     current_agent: Mapped[str | None] = mapped_column(String(64), nullable=True)
     pipeline_version: Mapped[str] = mapped_column(String(16), default="4.0.0")
     run_baseline: Mapped[bool] = mapped_column(Boolean, default=False)
+    used_fallback: Mapped[bool] = mapped_column(Boolean, default=False)
     overall_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     decision_recommendation: Mapped[str | None] = mapped_column(String(32), nullable=True)
     executive_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -123,6 +124,7 @@ class AgentLog(Base):
     tokens_out: Mapped[int | None] = mapped_column(Integer, nullable=True)
     cost_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
     citations: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    used_fallback: Mapped[bool] = mapped_column(Boolean, default=False)
     parsed_output: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
 

@@ -79,6 +79,7 @@ class AgentLogResponse(OrmModel):
     tokens_out: int | None = None
     cost_usd: float | None = None
     citations: list | None
+    used_fallback: bool = False
     parsed_output: dict | None
     created_at: datetime
 
@@ -91,6 +92,7 @@ class AnalysisSummary(OrmModel):
     status: str
     current_agent: str | None
     pipeline_version: str
+    used_fallback: bool = False
     overall_confidence: float | None
     decision_recommendation: str | None
     executive_summary: str | None

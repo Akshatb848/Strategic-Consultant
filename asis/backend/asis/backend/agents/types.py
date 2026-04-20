@@ -22,6 +22,7 @@ class AgentOutput(BaseModel):
     correction_reason: str | None = None
     token_usage: dict | None = None
     citations: list[dict] = Field(default_factory=list)
+    used_fallback: bool = False
     data: dict
 
 

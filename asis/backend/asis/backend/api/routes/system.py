@@ -15,7 +15,12 @@ settings = get_settings()
 
 @router.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
-    return HealthResponse(status="ok", version=settings.app_version, environment=settings.environment)
+    return HealthResponse(
+        status="ok",
+        version=settings.app_version,
+        environment=settings.environment,
+        demo_mode=settings.demo_mode,
+    )
 
 
 @router.get("/metrics")

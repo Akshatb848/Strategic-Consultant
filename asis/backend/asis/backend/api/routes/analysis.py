@@ -4,7 +4,7 @@ import queue
 from datetime import datetime
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
@@ -38,6 +38,7 @@ def _to_summary(analysis: models.Analysis) -> AnalysisSummary:
         status=analysis.status,
         current_agent=analysis.current_agent,
         pipeline_version=analysis.pipeline_version,
+        used_fallback=analysis.used_fallback,
         overall_confidence=analysis.overall_confidence,
         decision_recommendation=analysis.decision_recommendation,
         executive_summary=analysis.executive_summary,
@@ -58,6 +59,7 @@ def _to_detail(analysis: models.Analysis) -> AnalysisDetail:
         status=analysis.status,
         current_agent=analysis.current_agent,
         pipeline_version=analysis.pipeline_version,
+        used_fallback=analysis.used_fallback,
         overall_confidence=analysis.overall_confidence,
         decision_recommendation=analysis.decision_recommendation,
         executive_summary=analysis.executive_summary,
@@ -78,10 +80,11 @@ def _to_detail(analysis: models.Analysis) -> AnalysisDetail:
 @limiter.limit(_analysis_minute_limit)
 def create_analysis(
     request: Request,
-    payload: AnalysisCreateRequest,
+    payload_data: dict = Body(...),
     user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> AnalysisResponse:
+    payload = AnalysisCreateRequest.model_validate(payload_data)
     # Per-user daily cap (in addition to IP rate limit)
     settings = get_settings()
     from datetime import date

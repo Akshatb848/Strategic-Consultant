@@ -108,8 +108,9 @@ export interface AgentLog {
   self_corrected: boolean;
   correction_reason?: string | null;
   duration_ms?: number | null;
-  token_usage?: Record<string, number> | null;
+  token_usage?: Record<string, unknown> | null;
   citations?: Array<Record<string, unknown>> | null;
+  used_fallback?: boolean;
   parsed_output?: Record<string, unknown> | null;
   created_at: string;
 }
@@ -274,6 +275,7 @@ export interface Analysis {
   status: "queued" | "running" | "completed" | "failed";
   current_agent?: string | null;
   pipeline_version: string;
+  used_fallback?: boolean;
   overall_confidence?: number | null;
   decision_recommendation?: string | null;
   executive_summary?: string | null;

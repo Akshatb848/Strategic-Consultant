@@ -22,6 +22,15 @@ from asis.backend.db.database import init_db
 settings = get_settings()
 configure_logging()
 
+_WEAK_SECRET_MARKERS = (
+    "change-me",
+    "replace-with",
+    "dev-access-secret",
+    "dev-refresh-secret",
+    "in-production",
+    "jwt-secret",
+)
+
 # ── JWT entropy guard ─────────────────────────────────────────────────────────
 if len(settings.jwt_secret) < settings.jwt_min_secret_length:
     logger.error(
@@ -29,6 +38,14 @@ if len(settings.jwt_secret) < settings.jwt_min_secret_length:
         length=len(settings.jwt_secret),
         minimum=settings.jwt_min_secret_length,
         hint="Set JWT_SECRET to a cryptographically random string of at least 32 characters.",
+    )
+    if settings.environment == "production":
+        sys.exit(1)
+
+if any(marker in settings.jwt_secret.lower() for marker in _WEAK_SECRET_MARKERS):
+    logger.error(
+        "jwt_secret_placeholder_detected",
+        hint="Replace JWT_SECRET with a cryptographically random production secret instead of a placeholder value.",
     )
     if settings.environment == "production":
         sys.exit(1)

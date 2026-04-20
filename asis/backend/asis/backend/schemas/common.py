@@ -31,4 +31,5 @@ class HealthResponse(BaseModel):
     status: str
     version: str
     environment: str
+    demo_mode: bool | None = None
     timestamp: datetime = Field(default_factory=datetime.utcnow)
