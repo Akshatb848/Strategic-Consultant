@@ -15,7 +15,9 @@ import {
   TrendingUp,
 } from "lucide-react";
 
+import { motion } from "framer-motion";
 import { AuthGuard } from "@/components/auth-guard";
+import { SemanticMemoryPanel } from "@/components/SemanticMemoryPanel";
 import { useAuth } from "@/contexts/AuthContext";
 import { confidenceColor, contextSummary, decisionColor, normalizedPercent } from "@/lib/analysis";
 import { analysesAPI, memoryAPI, type Analysis, type MemoryEntry } from "@/lib/api";
@@ -162,6 +164,13 @@ function DashboardShell() {
             </div>
           </div>
 
+          {analyses.length > 0 && (
+            <SemanticMemoryPanel
+              currentQuery={analyses[0]?.query || ""}
+              allAnalyses={analyses}
+            />
+          )}
+
           <button
             type="button"
             onClick={() => void logout()}
@@ -213,8 +222,14 @@ function DashboardShell() {
                 </div>
               ) : null}
               <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-4">
-                {stats.map(({ label, value, detail, icon: Icon }) => (
-                  <article key={label} className="rounded-[26px] border border-white/8 bg-white/[0.04] p-5">
+                {stats.map(({ label, value, detail, icon: Icon }, idx) => (
+                  <motion.article
+                    key={label}
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.4, delay: idx * 0.08, ease: "easeOut" }}
+                    className="rounded-[26px] border border-white/8 bg-white/[0.04] p-5 transition-all hover:border-white/14 hover:shadow-[0_8px_32px_rgba(34,211,238,0.06)]"
+                  >
                     <div className="flex items-start justify-between gap-4">
                       <div>
                         <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">{label}</div>
@@ -225,7 +240,7 @@ function DashboardShell() {
                         <Icon size={18} />
                       </div>
                     </div>
-                  </article>
+                  </motion.article>
                 ))}
               </div>
 
@@ -276,11 +291,16 @@ function DashboardShell() {
                 </div>
               ) : (
                 <div className="grid gap-4">
-                  {filtered.map((analysis) => (
-                    <Link
+                  {filtered.map((analysis, idx) => (
+                    <motion.div
                       key={analysis.id}
+                      initial={{ opacity: 0, y: 16 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.35, delay: idx * 0.05, ease: "easeOut" }}
+                    >
+                    <Link
                       href={`/analysis/${analysis.id}`}
-                      className="group rounded-[26px] border border-white/8 bg-white/[0.03] p-5 transition hover:border-white/14 hover:bg-white/[0.05]"
+                      className="group block rounded-[26px] border border-white/8 bg-white/[0.03] p-5 transition hover:border-white/14 hover:bg-white/[0.05] hover:shadow-[0_8px_32px_rgba(0,0,0,0.3)]"
                     >
                       <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
                         <div className="min-w-0 flex-1">
@@ -327,6 +347,7 @@ function DashboardShell() {
                         </div>
                       </div>
                     </Link>
+                    </motion.div>
                   ))}
                 </div>
               )}

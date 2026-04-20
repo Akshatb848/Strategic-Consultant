@@ -83,7 +83,7 @@ const strategistFallback: StrategistOutput = {
 export async function runStrategistAgent(input: AgentInput): Promise<AgentOutput> {
   const start = Date.now();
   const userMessage = `
-Analyse this strategic problem:
+${input.semanticMemoryContext ? `${input.semanticMemoryContext}\n` : ''}Analyse this strategic problem:
 "${input.problemStatement}"
 
 Context detected:

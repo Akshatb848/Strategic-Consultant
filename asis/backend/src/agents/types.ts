@@ -1,3 +1,6 @@
+// Re-export SearchResult so agents can import it from types
+export type { SearchResult } from '../lib/webSearch';
+
 export interface AgentInput {
   analysisId: string;
   problemStatement: string;
@@ -6,6 +9,8 @@ export interface AgentInput {
   geographyContext: string;
   decisionType: string;
   upstreamResults: Partial<PipelineState>;
+  semanticMemoryContext?: string;  // Past analyses context
+  searchResults?: SearchResult[];  // Web search results pre-fetched
 }
 
 export interface AgentOutput {
@@ -235,6 +240,15 @@ export interface CoVeOutput {
   recommendation: 'PASS' | 'CONDITIONAL_PASS' | 'FAIL_ROUTE_BACK';
   route_back_to?: AgentId;
   final_confidence_adjustment: number;
+  llm_judge_score?: number;
+  quality_grade?: 'A' | 'B' | 'C' | 'FAIL';
+  judge_dimensions?: {
+    evidence_quality: number;
+    logical_consistency: number;
+    specificity: number;
+    financial_grounding: number;
+    actionability: number;
+  };
 }
 
 export interface VerificationCheck {

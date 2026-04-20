@@ -2,9 +2,11 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { ArrowRight, ChevronRight, ShieldCheck, Sparkles } from "lucide-react";
+import { motion } from "framer-motion";
+import { ArrowRight, ChevronRight, ShieldCheck, Sparkles, Brain, Target, FlaskConical, Scale } from "lucide-react";
 
 import { useAuth } from "@/contexts/AuthContext";
+import ParticleBackground from "@/components/ParticleBackground";
 
 const ROTATING_LINES = [
   "Board-ready strategic decisions in one workspace.",
@@ -60,8 +62,16 @@ export default function LandingPage() {
     return () => window.clearInterval(timer);
   }, []);
 
+  const NEW_CAPABILITIES = [
+    { icon: Brain, title: "Semantic Memory", body: "ASIS remembers past analyses and surfaces relevant precedents to inform new strategic decisions." },
+    { icon: Target, title: "Web-Grounded Analysis", body: "Live web search grounds every Market Intel and Risk agent output with current data, regulations, and competitive intelligence." },
+    { icon: FlaskConical, title: "Dissertation Framework", body: "Generate PhD-level research questions, experiments, and expert validation plans from any strategic analysis." },
+    { icon: Scale, title: "Patent Readiness", body: "Prior art search, utility proof, and patent claims drafting for novel mechanisms identified in ASIS outputs." },
+  ];
+
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top,rgba(32,77,255,0.22),transparent_34%),radial-gradient(circle_at_80%_0%,rgba(24,185,157,0.18),transparent_30%),linear-gradient(180deg,#030712_0%,#07111f_44%,#09182c_100%)] text-slate-50">
+    <main className="relative min-h-screen bg-[radial-gradient(circle_at_top,rgba(32,77,255,0.22),transparent_34%),radial-gradient(circle_at_80%_0%,rgba(24,185,157,0.18),transparent_30%),linear-gradient(180deg,#030712_0%,#07111f_44%,#09182c_100%)] text-slate-50">
+      <ParticleBackground />
       <header className="sticky top-0 z-40 border-b border-white/8 bg-[#040913]/75 backdrop-blur-xl">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-5">
           <div className="flex items-center gap-3">
@@ -98,19 +108,29 @@ export default function LandingPage() {
         </div>
       </header>
 
-      <section className="mx-auto grid max-w-7xl gap-14 px-6 pb-20 pt-16 lg:grid-cols-[1.1fr_0.9fr] lg:items-center lg:pt-24">
+      <section className="relative z-10 mx-auto grid max-w-7xl gap-14 px-6 pb-20 pt-16 lg:grid-cols-[1.1fr_0.9fr] lg:items-center lg:pt-24">
         <div>
-          <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-cyan-400/20 bg-cyan-400/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-cyan-100">
+          <motion.div
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5 }}
+            className="mb-6 inline-flex items-center gap-2 rounded-full border border-cyan-400/20 bg-cyan-400/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-cyan-100"
+          >
             <Sparkles size={14} />
-            Enterprise strategic intelligence
-          </div>
+            Enterprise strategic intelligence — v4.0 Gold
+          </motion.div>
 
-          <h1 className="max-w-5xl text-[46px] font-semibold leading-[0.95] tracking-[-0.06em] text-white sm:text-[64px] lg:text-[78px]">
+          <motion.h1
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6, delay: 0.1 }}
+            className="max-w-5xl text-[46px] font-semibold leading-[0.95] tracking-[-0.06em] text-white sm:text-[64px] lg:text-[78px]"
+          >
             The operating system for
             <span className="mt-4 block bg-[linear-gradient(90deg,#ffffff,#9ad7ff_45%,#84f1cf)] bg-clip-text text-transparent">
               board-level strategic decisions
             </span>
-          </h1>
+          </motion.h1>
 
           <p className="mt-8 max-w-3xl text-lg leading-8 text-slate-300">
             ASIS turns an executive question into a structured recommendation using an eight-agent pipeline, management
@@ -195,13 +215,49 @@ export default function LandingPage() {
         </div>
       </section>
 
-      <section className="mx-auto max-w-7xl px-6 pb-24">
+      <section className="relative z-10 mx-auto max-w-7xl px-6 pb-16">
         <div className="grid gap-4 md:grid-cols-3">
-          {VALUE_PANELS.map((panel) => (
-            <article key={panel.title} className="rounded-[26px] border border-white/8 bg-white/[0.04] p-6">
+          {VALUE_PANELS.map((panel, idx) => (
+            <motion.article
+              key={panel.title}
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.4, delay: 0.3 + idx * 0.1 }}
+              className="rounded-[26px] border border-white/8 bg-white/[0.04] p-6 transition hover:border-white/14 hover:shadow-[0_8px_40px_rgba(34,211,238,0.06)]"
+            >
               <div className="text-lg font-semibold tracking-[-0.03em] text-white">{panel.title}</div>
               <p className="mt-4 text-sm leading-7 text-slate-400">{panel.body}</p>
-            </article>
+            </motion.article>
+          ))}
+        </div>
+      </section>
+
+      {/* New Capabilities Section */}
+      <section className="relative z-10 mx-auto max-w-7xl px-6 pb-24">
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.5 }}
+          className="mb-8 text-center"
+        >
+          <div className="text-xs font-semibold uppercase tracking-[0.22em] text-cyan-400">New in v4.0 Gold</div>
+          <h2 className="mt-3 text-3xl font-semibold tracking-[-0.04em] text-white">Production-ready flagship capabilities</h2>
+        </motion.div>
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          {NEW_CAPABILITIES.map(({ icon: Icon, title, body }, idx) => (
+            <motion.div
+              key={title}
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.4, delay: 0.55 + idx * 0.08 }}
+              className="rounded-[26px] border border-cyan-400/10 bg-cyan-400/5 p-6 transition hover:border-cyan-400/20 hover:bg-cyan-400/10"
+            >
+              <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-2xl bg-cyan-400/15 text-cyan-300">
+                <Icon size={18} />
+              </div>
+              <div className="text-base font-semibold text-white">{title}</div>
+              <p className="mt-3 text-sm leading-6 text-slate-400">{body}</p>
+            </motion.div>
           ))}
         </div>
       </section>

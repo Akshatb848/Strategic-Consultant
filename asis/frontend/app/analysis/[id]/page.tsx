@@ -5,13 +5,18 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import { ChevronDown, ChevronUp, Printer, Share2 } from "lucide-react";
 
+import { motion } from "framer-motion";
 import { AgentCollaborationGraph } from "@/components/AgentCollaborationGraph";
 import { AuthGuard } from "@/components/auth-guard";
+import { BaselineComparisonPanel } from "@/components/BaselineComparisonPanel";
 import { DecisionBanner } from "@/components/DecisionBanner";
 import { DecisionProvenanceDrawer } from "@/components/DecisionProvenanceDrawer";
+import { DissertationPanel } from "@/components/DissertationPanel";
+import { FailureDiagnosticsPanel } from "@/components/FailureDiagnosticsPanel";
 import { FrameworkVisualisationPanel } from "@/components/FrameworkVisualisationPanel";
 import { ImplementationRoadmap } from "@/components/ImplementationRoadmap";
 import { LegacyAnalysisView } from "@/components/LegacyAnalysisView";
+import { PatentReadinessPanel } from "@/components/PatentReadinessPanel";
 import { QualityBadge } from "@/components/QualityBadge";
 import { ReportDownloadButton } from "@/components/ReportDownloadButton";
 import { StrategicRigourPanel } from "@/components/StrategicRigourPanel";
@@ -65,6 +70,7 @@ function AnalysisDetailContent() {
   const params = useParams<{ id: string }>();
   const analysisId = String(params.id);
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
+  const [allAnalyses, setAllAnalyses] = useState<Analysis[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [streamError, setStreamError] = useState<string | null>(null);
@@ -80,11 +86,19 @@ function AnalysisDetailContent() {
 
   const load = useCallback(async () => {
     try {
-      const response = await analysesAPI.get(analysisId);
-      setAnalysis(response.data.analysis as Analysis);
-      setError(null);
-    } catch (caughtError: any) {
-      setError(caughtError?.response?.data?.detail || "Failed to load analysis.");
+      const [analysisRes, listRes] = await Promise.allSettled([
+        analysesAPI.get(analysisId),
+        analysesAPI.list({ limit: 20, status: 'completed' }),
+      ]);
+      if (analysisRes.status === 'fulfilled') {
+        setAnalysis(analysisRes.value.data.analysis as Analysis);
+        setError(null);
+      } else {
+        setError((analysisRes.reason as any)?.response?.data?.detail || "Failed to load analysis.");
+      }
+      if (listRes.status === 'fulfilled') {
+        setAllAnalyses((listRes.value.data.analyses || []) as Analysis[]);
+      }
     } finally {
       setLoading(false);
     }
@@ -208,7 +222,21 @@ function AnalysisDetailContent() {
   }, [analysis, analysisId, load]);
 
   if (loading) {
-    return <div className="flex min-h-screen items-center justify-center bg-[#040914] text-slate-400">Loading analysis...</div>;
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center gap-6 bg-[linear-gradient(180deg,#040914_0%,#08111e_100%)]">
+        <div className="flex h-16 w-16 items-center justify-center rounded-3xl bg-[linear-gradient(135deg,#204df0,#17b8e6_60%,#84f1cf)] text-2xl font-black text-white shadow-[0_0_40px_rgba(23,184,230,0.3)]">
+          A
+        </div>
+        <div className="space-y-2 text-center">
+          <div className="text-sm font-semibold text-slate-200">Loading analysis...</div>
+          <div className="flex items-center gap-1">
+            {[0,1,2].map(i => (
+              <div key={i} className="h-1.5 w-1.5 animate-bounce rounded-full bg-cyan-400" style={{ animationDelay: `${i * 0.15}s` }} />
+            ))}
+          </div>
+        </div>
+      </div>
+    );
   }
 
   if (error || !analysis) {
@@ -378,9 +406,40 @@ function AnalysisDetailContent() {
             soWhatCallouts={brief.so_what_callouts || {}}
           />
 
-          <StrategicRigourPanel brief={brief} quality={displayQuality} />
+          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }}>
+            <StrategicRigourPanel brief={brief} quality={displayQuality} />
+          </motion.div>
 
-          <ImplementationRoadmap roadmap={brief.implementation_roadmap || []} />
+          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }}>
+            <ImplementationRoadmap roadmap={brief.implementation_roadmap || []} />
+          </motion.div>
+
+          {/* Baseline Comparison */}
+          {allAnalyses.length > 1 && (
+            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.5 }}>
+              <BaselineComparisonPanel currentAnalysis={analysis} allAnalyses={allAnalyses} />
+            </motion.div>
+          )}
+
+          {/* Failure Diagnostics — show when failed or very low confidence */}
+          {(analysis.status === 'failed' || (analysis.overall_confidence != null && analysis.overall_confidence < 55)) && (
+            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.5 }}>
+              <FailureDiagnosticsPanel analysis={analysis} agentLogs={analysis.agent_logs} onRetry={() => void load()} />
+            </motion.div>
+          )}
+
+          {/* Patent Readiness */}
+          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.6 }}>
+            <PatentReadinessPanel analysisId={analysis.id} />
+          </motion.div>
+
+          {/* Dissertation Research Framework */}
+          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.65 }}>
+            <DissertationPanel
+              analysisId={analysis.id}
+              dissertationContribution={(brief as any)?.dissertation_contribution as string | undefined}
+            />
+          </motion.div>
 
           <section className="flex flex-wrap items-center justify-end gap-3 rounded-3xl border border-white/10 bg-[#08101d] p-5">
             <ReportDownloadButton analysisId={analysis.id} />
