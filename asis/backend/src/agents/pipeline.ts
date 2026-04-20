@@ -24,6 +24,37 @@ const fieldMap: Record<string, string> = {
   synthesis: 'synthesisData',
 };
 
+// Maps backend agent IDs to frontend-facing display names
+const agentDisplayNames: Record<string, string> = {
+  strategist: 'Orchestrator',
+  quant: 'Financial Reasoning',
+  market_intel: 'Market Intelligence',
+  risk: 'Risk Assessment',
+  red_team: 'Competitor Analysis',
+  ethicist: 'Strategic Options',
+  cove: 'CoVe Verification',
+  synthesis: 'Synthesis',
+};
+
+async function getPastAnalysisContext(analysisId: string, organisationId: string | null): Promise<string> {
+  if (!organisationId) return '';
+  try {
+    const past = await prisma.analysis.findMany({
+      where: { organisationId, status: 'completed', id: { not: analysisId } },
+      orderBy: { completedAt: 'desc' },
+      take: 3,
+      select: { problemStatement: true, decisionRecommendation: true, overallConfidence: true, executiveSummary: true },
+    });
+    if (!past.length) return '';
+    const lines = past.map((p, i) =>
+      `Past Analysis ${i + 1}: "${p.problemStatement}" → ${p.decisionRecommendation || 'HOLD'} (confidence: ${p.overallConfidence || 0}%)\nSummary: ${(p.executiveSummary || '').slice(0, 200)}`
+    );
+    return `ORGANIZATIONAL MEMORY (from ${past.length} past analyses):\n${lines.join('\n\n')}\n`;
+  } catch {
+    return '';
+  }
+}
+
 async function saveAgentResult(analysisId: string, agentId: string, result: AgentOutput): Promise<void> {
   const confidenceField = result.data?.confidence_score ?? result.data?.overall_verification_score ?? result.confidenceScore ?? null;
   const updateData: Record<string, unknown> = {
@@ -42,7 +73,7 @@ async function saveAgentResult(analysisId: string, agentId: string, result: Agen
     data: {
       analysisId,
       agentId,
-      agentName: agentId.replace('_', ' ').replace(/\b\w/g, c => c.toUpperCase()),
+      agentName: agentDisplayNames[agentId] || agentId.replace('_', ' ').replace(/\b\w/g, c => c.toUpperCase()),
       status: result.status,
       attemptNumber: result.attemptNumber,
       confidenceScore: typeof confidenceField === 'number' ? confidenceField : null,
@@ -89,6 +120,9 @@ export async function runPipeline(analysisId: string): Promise<void> {
   try {
     await prisma.analysis.update({ where: { id: analysisId }, data: { status: 'running' } });
 
+    // Load organizational memory context from past analyses
+    const semanticMemoryContext = await getPastAnalysisContext(analysisId, analysis.organisationId);
+
     // ── Strategist ──────────────────────────────────────────────────────────
     log.info(`[PIPELINE] Running strategist for ${analysisId}`);
     emitPipelineEvent(analysisId, { agent: 'strategist', status: 'running' });
@@ -96,7 +130,8 @@ export async function runPipeline(analysisId: string): Promise<void> {
     const strategistResult = await runStrategistAgent({
       analysisId, problemStatement: state.problemStatement,
       organisationContext: state.organisationContext, industryContext: state.industryContext,
-      geographyContext: state.geographyContext, decisionType: state.decisionType, upstreamResults: {},
+      geographyContext: state.geographyContext, decisionType: state.decisionType,
+      upstreamResults: {}, semanticMemoryContext,
     });
     state.strategistData = strategistResult.data as any;
     state.agentConfidences.strategist = strategistResult.confidenceScore;
@@ -215,7 +250,7 @@ export async function runPipeline(analysisId: string): Promise<void> {
         status: 'completed',
         currentAgent: null,
         overallConfidence,
-        decisionRecommendation: state.synthesisData?.decision_recommendation,
+        decisionRecommendation: state.synthesisData?.decision_recommendation || 'CONDITIONAL_HOLD',
         executiveSummary: state.synthesisData?.executive_summary,
         boardNarrative: state.synthesisData?.board_narrative,
         durationSeconds,
@@ -226,7 +261,7 @@ export async function runPipeline(analysisId: string): Promise<void> {
       },
     });
 
-    emitAnalysisComplete(analysisId, { overallConfidence, decisionRecommendation: state.synthesisData?.decision_recommendation || 'HOLD', durationSeconds });
+    emitAnalysisComplete(analysisId, { overallConfidence, decisionRecommendation: state.synthesisData?.decision_recommendation || 'CONDITIONAL_HOLD', durationSeconds });
     log.info(`[PIPELINE] Completed ${analysisId} in ${durationSeconds.toFixed(1)}s — confidence: ${overallConfidence}`);
 
   } catch (error) {

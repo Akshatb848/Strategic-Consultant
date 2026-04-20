@@ -100,6 +100,20 @@ const coveFallback: CoVeOutput = {
   final_confidence_adjustment: -3
 };
 
+const LLM_JUDGE_PROMPT = `You are a quality judge evaluating a strategic consulting analysis. Score the analysis on 5 dimensions.
+
+Return ONLY this exact JSON:
+{
+  "evidence_quality": [0-100 integer],
+  "logical_consistency": [0-100 integer],
+  "specificity": [0-100 integer — penalise generic statements, reward named figures/companies/regulations],
+  "financial_grounding": [0-100 integer — reward specific NPV/IRR/ROI figures with methodology],
+  "actionability": [0-100 integer — reward specific owners, deadlines, KPIs],
+  "overall_judge_score": [weighted average: evidence×0.25 + consistency×0.20 + specificity×0.20 + financial×0.20 + actionability×0.15],
+  "quality_grade": "A|B|C|FAIL",
+  "judge_reasoning": "2 sentences: what makes this analysis strong or weak"
+}`;
+
 export async function runCoVeAgent(input: AgentInput): Promise<AgentOutput> {
   const start = Date.now();
   const allData = `
@@ -112,6 +126,75 @@ ETHICIST: ${JSON.stringify(input.upstreamResults?.ethicistData || {}, null, 2)}
 
 Calculate weighted confidence and verify all claims. Return ONLY valid JSON.
   `;
+
+  // Primary CoVe verification
   const result = await callLLMWithRetry<CoVeOutput>(COVE_SYSTEM_PROMPT, allData, ['verification_checks', 'logic_consistent', 'recommendation', 'overall_verification_score'], coveFallback);
-  return { agentId: 'cove', status: result.usedFallback ? 'self_corrected' : 'completed', data: result.data as Record<string, unknown>, confidenceScore: result.data.overall_verification_score, durationMs: Date.now() - start, attemptNumber: result.attempts, selfCorrected: result.usedFallback, tokenUsage: { input: result.inputTokens, output: result.outputTokens } };
+
+  // LLM-judge cross-check (secondary, non-blocking)
+  let judgeScore = 75;
+  let qualityGrade: 'A' | 'B' | 'C' | 'FAIL' = 'B';
+  let judgeDimensions = { evidence_quality: 75, logical_consistency: 75, specificity: 70, financial_grounding: 72, actionability: 70 };
+  let judgeAdjustment = 0;
+
+  try {
+    const marketIntelData = input.upstreamResults?.marketIntelData as any;
+    const riskData = input.upstreamResults?.riskData as any;
+    const quantData = input.upstreamResults?.quantData as any;
+
+    const judgeInput = `
+STRATEGIC ANALYSIS QUALITY ASSESSMENT:
+
+Market Intelligence Key Findings: ${JSON.stringify(marketIntelData?.key_findings || [])}
+Regulatory Landscape: ${JSON.stringify(marketIntelData?.regulatory_landscape || [])}
+Risk Register Top Items: ${JSON.stringify((riskData?.risk_register || []).slice(0, 3))}
+Financial Scenarios: ${JSON.stringify((quantData?.investment_scenarios || []).slice(0, 2))}
+Quant CFO Recommendation: ${quantData?.cfo_recommendation || ''}
+
+Evaluate quality. Return ONLY valid JSON.
+    `;
+
+    const judgeResult = await callLLMWithRetry(
+      LLM_JUDGE_PROMPT,
+      judgeInput,
+      ['overall_judge_score', 'quality_grade'],
+      { evidence_quality: 75, logical_consistency: 75, specificity: 70, financial_grounding: 72, actionability: 70, overall_judge_score: 74, quality_grade: 'B', judge_reasoning: 'Analysis meets baseline quality standards.' }
+    );
+
+    const jd = judgeResult.data as any;
+    judgeScore = jd.overall_judge_score || 74;
+    qualityGrade = jd.quality_grade || 'B';
+    judgeDimensions = { evidence_quality: jd.evidence_quality || 75, logical_consistency: jd.logical_consistency || 75, specificity: jd.specificity || 70, financial_grounding: jd.financial_grounding || 72, actionability: jd.actionability || 70 };
+
+    // Apply judge-based adjustments
+    if (judgeScore > 80) judgeAdjustment += 2;
+    if (judgeScore < 60) judgeAdjustment -= 5;
+    if (qualityGrade === 'A') judgeAdjustment += 3;
+    if (qualityGrade === 'FAIL') {
+      judgeAdjustment -= 10;
+      if (result.data.recommendation === 'PASS') {
+        (result.data as any).recommendation = 'CONDITIONAL_PASS';
+      }
+    }
+  } catch {
+    // Judge failure is non-blocking — CoVe still completes with primary verification
+  }
+
+  const finalData: CoVeOutput = {
+    ...result.data,
+    llm_judge_score: judgeScore,
+    quality_grade: qualityGrade,
+    judge_dimensions: judgeDimensions,
+    final_confidence_adjustment: (result.data.final_confidence_adjustment || 0) + judgeAdjustment,
+  };
+
+  return {
+    agentId: 'cove',
+    status: result.usedFallback ? 'self_corrected' : 'completed',
+    data: finalData as unknown as Record<string, unknown>,
+    confidenceScore: finalData.overall_verification_score,
+    durationMs: Date.now() - start,
+    attemptNumber: result.attempts,
+    selfCorrected: result.usedFallback,
+    tokenUsage: { input: result.inputTokens, output: result.outputTokens }
+  };
 }

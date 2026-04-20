@@ -1,5 +1,6 @@
 import { callLLMWithRetry } from '../lib/llmClient';
 import { MASTER_CONSULTANT_PERSONA, CONFIDENCE_FORMULA_INSTRUCTION } from './masterPrompt';
+import { webSearch } from '../lib/webSearch';
 import type { AgentInput, MarketIntelOutput, AgentOutput } from './types';
 
 const MARKET_INTEL_SYSTEM_PROMPT = `
@@ -94,6 +95,21 @@ const marketIntelFallback: MarketIntelOutput = {
 
 export async function runMarketIntelAgent(input: AgentInput): Promise<AgentOutput> {
   const start = Date.now();
+  const year = new Date().getFullYear();
+
+  // Live web search to ground analysis with current data
+  const [marketSearch, regulatorySearch, trendsSearch] = await Promise.all([
+    webSearch(`${input.problemStatement} market size ${input.industryContext || ''} ${year}`, 4),
+    webSearch(`${input.geographyContext || ''} ${input.industryContext || ''} regulations compliance ${year}`, 4),
+    webSearch(`${input.industryContext || ''} industry trends growth competitive landscape ${year}`, 4),
+  ]);
+
+  const searchContext = [
+    marketSearch.length ? `\nLIVE MARKET INTELLIGENCE (use to ground analysis with current data):\n${marketSearch.map(r => `• ${r.title}: ${r.snippet}`).join('\n')}` : '',
+    regulatorySearch.length ? `\nLIVE REGULATORY INTELLIGENCE:\n${regulatorySearch.map(r => `• ${r.title}: ${r.snippet}`).join('\n')}` : '',
+    trendsSearch.length ? `\nLIVE INDUSTRY TRENDS:\n${trendsSearch.map(r => `• ${r.title}: ${r.snippet}`).join('\n')}` : '',
+  ].filter(Boolean).join('\n');
+
   const userMessage = `
 Strategic problem: "${input.problemStatement}"
 Organisation: ${input.organisationContext || 'Unspecified'}
@@ -101,6 +117,7 @@ Industry: ${input.industryContext || 'Unspecified'}
 Geography: ${input.geographyContext || 'Unspecified'}
 
 ${input.upstreamResults?.strategistData ? `Strategist framework: ${JSON.stringify((input.upstreamResults.strategistData as any)?.analytical_framework || '')}` : ''}
+${searchContext}
 
 Apply PESTLE and Porter's Five Forces. Return ONLY valid JSON.
   `;

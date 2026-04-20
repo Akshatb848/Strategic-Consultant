@@ -1,5 +1,6 @@
 import { callLLMWithRetry } from '../lib/llmClient';
 import { MASTER_CONSULTANT_PERSONA, CONFIDENCE_FORMULA_INSTRUCTION } from './masterPrompt';
+import { webSearch } from '../lib/webSearch';
 import type { AgentInput, RiskOutput, AgentOutput } from './types';
 
 const RISK_SYSTEM_PROMPT = `
@@ -100,6 +101,19 @@ const riskFallback: RiskOutput = {
 
 export async function runRiskAgent(input: AgentInput): Promise<AgentOutput> {
   const start = Date.now();
+  const year = new Date().getFullYear();
+
+  // Live regulatory intelligence search
+  const [regulatorySearch, riskSearch] = await Promise.all([
+    webSearch(`${input.industryContext || ''} ${input.geographyContext || ''} regulatory requirements compliance penalties ${year}`, 4),
+    webSearch(`${input.problemStatement} risk factors failure rate industry ${year}`, 3),
+  ]);
+
+  const searchContext = [
+    regulatorySearch.length ? `\nLIVE REGULATORY INTELLIGENCE (ground your regulatory risk assessments with this current data):\n${regulatorySearch.map(r => `• ${r.title}: ${r.snippet}`).join('\n')}` : '',
+    riskSearch.length ? `\nLIVE RISK INTELLIGENCE:\n${riskSearch.map(r => `• ${r.title}: ${r.snippet}`).join('\n')}` : '',
+  ].filter(Boolean).join('\n');
+
   const userMessage = `
 Strategic problem: "${input.problemStatement}"
 Organisation: ${input.organisationContext || 'Unspecified'}
@@ -108,6 +122,7 @@ Geography: ${input.geographyContext || 'Unspecified'}
 
 ${input.upstreamResults?.strategistData ? `Strategist identified risks: ${JSON.stringify((input.upstreamResults.strategistData as any)?.problem_decomposition || [])}` : ''}
 ${input.upstreamResults?.marketIntelData ? `Market intelligence risks: ${JSON.stringify((input.upstreamResults.marketIntelData as any)?.emerging_risks || [])}` : ''}
+${searchContext}
 
 Build COSO ERM risk register with severity scores. Return ONLY valid JSON.
   `;

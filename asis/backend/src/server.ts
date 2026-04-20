@@ -8,6 +8,10 @@ import { initSocketIO } from './lib/socketio';
 import { log } from './lib/logger';
 import authRoutes from './routes/auth.routes';
 import analysisRoutes from './routes/analysis.routes';
+import reportsRoutes from './routes/reports.routes';
+import memoryRoutes from './routes/memory.routes';
+import patentRoutes from './routes/patent.routes';
+import dissertationRoutes from './routes/dissertation.routes';
 
 const app = express();
 const httpServer = http.createServer(app);
@@ -50,12 +54,25 @@ const loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, message: { c
 const signupLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 5, message: { code: 'TOO_MANY_SIGNUPS', message: 'Too many signups from this IP. Try again later.' } });
 
 app.use('/api/', apiLimiter);
+app.use('/api/v1/auth/login', loginLimiter);
+app.use('/api/v1/auth/signup', signupLimiter);
+// Legacy path compatibility
 app.use('/api/auth/login', loginLimiter);
 app.use('/api/auth/signup', signupLimiter);
 
+// v1 routes (primary)
+app.use('/api/v1/auth', authRoutes);
+app.use('/api/v1/analysis', analysisRoutes);
+app.use('/api/v1/reports', reportsRoutes);
+app.use('/api/v1/memory', memoryRoutes);
+app.use('/api/v1/patent', patentRoutes);
+app.use('/api/v1/dissertation', dissertationRoutes);
+
+// Legacy routes (backwards-compat)
 app.use('/api/auth', authRoutes);
 app.use('/api/analyses', analysisRoutes);
 
+app.get('/api/v1/health', (_req, res) => res.json({ status: 'ok', version: '4.0.0', environment: process.env.NODE_ENV || 'production', features: ['web-search', 'semantic-memory', 'patent-analysis', 'dissertation-scaffold', 'llm-judge-cove'] }));
 app.get('/api/health', (_req, res) => res.json({ status: 'ok', version: '4.0.0', environment: process.env.NODE_ENV || 'production' }));
 
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
