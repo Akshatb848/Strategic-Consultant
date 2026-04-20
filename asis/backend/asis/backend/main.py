@@ -56,9 +56,25 @@ app = FastAPI(title=settings.app_name, version=settings.app_version)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
+
+# Build the allowed-origins list: env-driven list + guaranteed frontend_url fallback.
+# This ensures CORS works even when ALLOWED_ORIGINS env-var parsing fails while
+# FRONTEND_URL (required by docker-compose) is always correct.
+_computed_origins: list[str] = list(
+    dict.fromkeys(  # preserve order, deduplicate
+        o for o in [*settings.allowed_origins, settings.frontend_url] if o
+    )
+)
+logger.info(
+    "cors_origins_configured",
+    allowed_origins=_computed_origins,
+    raw_allowed_origins_env=settings.allowed_origins,
+    frontend_url=settings.frontend_url,
+)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.allowed_origins,
+    allow_origins=_computed_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
