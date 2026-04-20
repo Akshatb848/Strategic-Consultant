@@ -22,6 +22,7 @@ _MODEL_COST_PER_1M: dict[str, tuple[float, float]] = {
     "gpt-4o": (5.0, 15.0),
     "gpt-4o-mini": (0.15, 0.6),
     "llama-3.3-70b-versatile": (0.59, 0.79),
+    "llama-3.1-8b-instant": (0.05, 0.08),
     "gpt-oss-20b": (0.075, 0.30),
     "gpt-oss-120b": (0.15, 0.60),
 }
