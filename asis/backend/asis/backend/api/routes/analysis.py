@@ -10,11 +10,12 @@ from sqlalchemy.orm import Session
 
 from asis.backend.api.dependencies import get_current_user
 from asis.backend.api.rate_limit import limiter
+from asis.backend.config.logging import logger
 from asis.backend.config.settings import get_settings
 from asis.backend.db import models
 from asis.backend.db.database import get_db
 from asis.backend.graph.context import extract_problem_context
-from asis.backend.schemas.analysis import AnalysisCreateRequest, AnalysisDetail, AnalysisResponse, AnalysisSummary
+from asis.backend.schemas.analysis import AgentLogResponse, AnalysisCreateRequest, AnalysisDetail, AnalysisResponse, AnalysisSummary
 from asis.backend.tasks.dispatcher import dispatch_analysis, cancel_analysis
 from asis.backend.tasks.event_bus import event_bus
 
@@ -29,22 +30,77 @@ def _analysis_day_limit() -> str:
     return f"{get_settings().rate_limit_analyses_per_day}/day"
 
 
+def _safe_dict(value: object) -> dict:
+    return value if isinstance(value, dict) else {}
+
+
+def _safe_float(value: object) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _safe_text(value: object) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        stripped = value.strip()
+        return stripped or None
+    if isinstance(value, dict):
+        ordered_keys = (
+            "headline",
+            "key_argument_1",
+            "key_argument_2",
+            "key_argument_3",
+            "critical_risk",
+            "next_step",
+        )
+        parts = [str(value.get(key)).strip() for key in ordered_keys if value.get(key)]
+        return "\n".join(parts) or None
+    return str(value).strip() or None
+
+
+def _coerce_executive_summary(analysis: models.Analysis) -> str | None:
+    summary = _safe_text(getattr(analysis, "executive_summary", None))
+    if summary:
+        return summary
+    return _safe_text((getattr(analysis, "strategic_brief", None) or {}).get("executive_summary"))
+
+
+def _safe_agent_logs(analysis: models.Analysis) -> list[AgentLogResponse]:
+    safe_logs: list[AgentLogResponse] = []
+    for log in getattr(analysis, "agent_logs", []) or []:
+        try:
+            safe_logs.append(AgentLogResponse.model_validate(log))
+        except Exception as exc:
+            logger.warning(
+                "agent_log_serialization_skipped",
+                analysis_id=getattr(analysis, "id", None),
+                agent_log_id=getattr(log, "id", None),
+                error=str(exc),
+            )
+    return safe_logs
+
+
 def _to_summary(analysis: models.Analysis) -> AnalysisSummary:
     return AnalysisSummary(
         id=analysis.id,
-        query=analysis.query,
-        company_context=analysis.company_context or {},
-        extracted_context=analysis.extracted_context or {},
-        status=analysis.status,
-        current_agent=analysis.current_agent,
-        pipeline_version=analysis.pipeline_version,
-        used_fallback=analysis.used_fallback,
-        overall_confidence=analysis.overall_confidence,
+        query=_safe_text(analysis.query) or "Strategic analysis",
+        company_context=_safe_dict(analysis.company_context),
+        extracted_context=_safe_dict(analysis.extracted_context),
+        status=_safe_text(analysis.status) or "queued",
+        current_agent=_safe_text(analysis.current_agent),
+        pipeline_version=_safe_text(analysis.pipeline_version) or "4.0.0",
+        used_fallback=bool(getattr(analysis, "used_fallback", False)),
+        overall_confidence=_safe_float(analysis.overall_confidence),
         decision_recommendation=analysis.decision_recommendation,
-        executive_summary=analysis.executive_summary,
-        error_message=analysis.error_message,
-        duration_seconds=analysis.duration_seconds,
-        total_cost_usd=analysis.total_cost_usd,
+        executive_summary=_coerce_executive_summary(analysis),
+        error_message=_safe_text(analysis.error_message),
+        duration_seconds=_safe_float(analysis.duration_seconds),
+        total_cost_usd=_safe_float(analysis.total_cost_usd),
         created_at=analysis.created_at,
         completed_at=analysis.completed_at,
     )
@@ -53,24 +109,24 @@ def _to_summary(analysis: models.Analysis) -> AnalysisSummary:
 def _to_detail(analysis: models.Analysis) -> AnalysisDetail:
     return AnalysisDetail(
         id=analysis.id,
-        query=analysis.query,
-        company_context=analysis.company_context or {},
-        extracted_context=analysis.extracted_context or {},
-        status=analysis.status,
-        current_agent=analysis.current_agent,
-        pipeline_version=analysis.pipeline_version,
-        used_fallback=analysis.used_fallback,
-        overall_confidence=analysis.overall_confidence,
+        query=_safe_text(analysis.query) or "Strategic analysis",
+        company_context=_safe_dict(analysis.company_context),
+        extracted_context=_safe_dict(analysis.extracted_context),
+        status=_safe_text(analysis.status) or "queued",
+        current_agent=_safe_text(analysis.current_agent),
+        pipeline_version=_safe_text(analysis.pipeline_version) or "4.0.0",
+        used_fallback=bool(getattr(analysis, "used_fallback", False)),
+        overall_confidence=_safe_float(analysis.overall_confidence),
         decision_recommendation=analysis.decision_recommendation,
-        executive_summary=analysis.executive_summary,
-        error_message=analysis.error_message,
-        duration_seconds=analysis.duration_seconds,
+        executive_summary=_coerce_executive_summary(analysis),
+        error_message=_safe_text(analysis.error_message),
+        duration_seconds=_safe_float(analysis.duration_seconds),
         created_at=analysis.created_at,
         completed_at=analysis.completed_at,
         strategic_brief=analysis.strategic_brief,
         logic_consistency_passed=analysis.logic_consistency_passed,
         self_correction_count=analysis.self_correction_count,
-        agent_logs=[log for log in analysis.agent_logs],
+        agent_logs=_safe_agent_logs(analysis),
         report_id=analysis.report.id if analysis.report else None,
     )
 
@@ -138,7 +194,20 @@ def list_analyses(
         query = query.filter(models.Analysis.query.ilike(f"%{search}%"))
     total = query.count()
     analyses = query.order_by(models.Analysis.created_at.desc()).offset(offset).limit(limit).all()
-    return {"analyses": [_to_summary(analysis) for analysis in analyses], "total": total}
+    safe_summaries: list[AnalysisSummary] = []
+    skipped = 0
+    for analysis in analyses:
+        try:
+            safe_summaries.append(_to_summary(analysis))
+        except Exception as exc:
+            skipped += 1
+            logger.warning(
+                "analysis_summary_serialization_skipped",
+                analysis_id=getattr(analysis, "id", None),
+                user_id=user.id,
+                error=str(exc),
+            )
+    return {"analyses": safe_summaries, "total": max(total - skipped, 0)}
 
 
 @router.get("/{analysis_id}", response_model=AnalysisResponse)
@@ -154,7 +223,17 @@ def get_analysis(
     )
     if not analysis:
         raise HTTPException(status_code=404, detail="ANALYSIS_NOT_FOUND")
-    return AnalysisResponse(analysis=_to_detail(analysis))
+    try:
+        return AnalysisResponse(analysis=_to_detail(analysis))
+    except Exception as exc:
+        logger.error(
+            "analysis_detail_serialization_failed",
+            analysis_id=analysis_id,
+            user_id=user.id,
+            error=str(exc),
+            exc_info=True,
+        )
+        raise HTTPException(status_code=422, detail="ANALYSIS_RECORD_INVALID") from exc
 
 
 @router.get("/{analysis_id}/events")

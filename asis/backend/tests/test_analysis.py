@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import pytest
 
+from asis.backend.db import database as db_state
+from asis.backend.db import models
 from conftest import register_user
 
 
@@ -271,3 +273,48 @@ async def test_v4_report_endpoints_and_pdf_generation(client, monkeypatch):
     pdf_status = await client.get(f"/api/v1/reports/{analysis_id}/pdf/status", headers=headers)
     assert pdf_status.status_code == 200, pdf_status.text
     assert pdf_status.json() == {"status": "ready", "progress": 100, "error": None}
+
+
+@pytest.mark.anyio
+async def test_legacy_analysis_rows_do_not_break_dashboard_listing(client):
+    headers = await register_user(client, email="legacy-list@example.com")
+    created = await client.post(
+        "/api/v1/analysis",
+        headers=headers,
+        json={
+            "query": "Should Legacy Advisory expand its strategic risk practice into India over the next 24 months?",
+            "company_context": {
+                "company_name": "Legacy Advisory",
+                "sector": "Consulting",
+                "geography": "India",
+            },
+        },
+    )
+    assert created.status_code == 201, created.text
+    analysis_id = created.json()["analysis"]["id"]
+
+    with db_state.session_scope() as db:
+        analysis = db.query(models.Analysis).filter(models.Analysis.id == analysis_id).one()
+        brief = dict(analysis.strategic_brief or {})
+        brief["executive_summary"] = {
+            "headline": "Proceed with a phased India expansion.",
+            "key_argument_1": "Client demand is visible in adjacent segments.",
+            "key_argument_2": "Capability build is feasible within the current cost envelope.",
+            "key_argument_3": "Execution risk remains manageable with staged hiring.",
+            "critical_risk": "Leadership bandwidth could slow the first wave.",
+            "next_step": "Validate anchor clients before committing the second tranche.",
+        }
+        analysis.executive_summary = None
+        analysis.company_context = "legacy-company-context"
+        analysis.strategic_brief = brief
+
+    listed = await client.get("/api/v1/analysis", headers=headers)
+    assert listed.status_code == 200, listed.text
+    payload = listed.json()
+    assert payload["total"] == 1
+    assert payload["analyses"][0]["executive_summary"].startswith("Proceed with a phased India expansion.")
+    assert payload["analyses"][0]["company_context"] == {}
+
+    detail = await client.get(f"/api/v1/analysis/{analysis_id}", headers=headers)
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["analysis"]["executive_summary"].startswith("Proceed with a phased India expansion.")
