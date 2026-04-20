@@ -167,11 +167,11 @@ function AnalysisDetailContent() {
         }
 
         if (event.event === "orchestrator_complete") {
-          setSectionActionTitles((current) => ({ ...current, ...(event.data.section_action_titles || {}) }));
+          setSectionActionTitles((current: Record<string, string>) => ({ ...current, ...(event.data.section_action_titles || {}) }));
         }
 
         if (event.event === "agent_collaboration") {
-          setCollaborationEvents((current) =>
+          setCollaborationEvents((current: AgentCollaborationEvent[]) =>
             dedupeCollaborationEvents([
               ...current,
               {
@@ -188,7 +188,7 @@ function AnalysisDetailContent() {
         if (event.event === "framework_complete") {
           const framework = String(event.data.framework || "");
           if (framework) {
-            setCompletedFrameworks((current) => (current.includes(framework) ? current : [...current, framework]));
+            setCompletedFrameworks((current: string[]) => (current.includes(framework) ? current : [...current, framework]));
           }
         }
 

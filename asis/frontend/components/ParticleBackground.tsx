@@ -1,19 +1,23 @@
 "use client";
 
-import { useCallback } from "react";
-import Particles from "@tsparticles/react";
+import { useEffect, useState } from "react";
+import Particles, { initParticlesEngine } from "@tsparticles/react";
 import { loadSlim } from "@tsparticles/slim";
-import type { Engine } from "@tsparticles/engine";
 
 export default function ParticleBackground() {
-  const particlesInit = useCallback(async (engine: Engine) => {
-    await loadSlim(engine);
+  const [engineReady, setEngineReady] = useState(false);
+
+  useEffect(() => {
+    initParticlesEngine(async (engine) => {
+      await loadSlim(engine);
+    }).then(() => setEngineReady(true));
   }, []);
+
+  if (!engineReady) return null;
 
   return (
     <Particles
       id="tsparticles-bg"
-      init={particlesInit}
       className="fixed inset-0 z-0 pointer-events-none"
       options={{
         background: { color: { value: "transparent" } },
@@ -46,7 +50,7 @@ export default function ParticleBackground() {
             speed: 0.4,
             straight: false,
           },
-          number: { density: { enable: true, area: 900 }, value: 40 },
+          number: { density: { enable: true, width: 900 }, value: 40 },
           opacity: { value: 0.3 },
           shape: { type: "circle" },
           size: { value: { min: 1, max: 2 } },
