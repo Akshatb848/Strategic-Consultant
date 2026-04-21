@@ -85,6 +85,28 @@ def _safe_agent_logs(analysis: models.Analysis) -> list[AgentLogResponse]:
     return safe_logs
 
 
+def _resolve_user_organisation_id(user: models.User, db: Session) -> str | None:
+    organisation_id = getattr(user, "organisation_id", None)
+    if not organisation_id:
+        return None
+
+    exists = (
+        db.query(models.Organisation.id)
+        .filter(models.Organisation.id == organisation_id)
+        .scalar()
+    )
+    if exists:
+        return organisation_id
+
+    logger.warning(
+        "analysis_create_stale_organisation_reference",
+        user_id=user.id,
+        organisation_id=organisation_id,
+    )
+    user.organisation_id = None
+    return None
+
+
 def _to_summary(analysis: models.Analysis) -> AnalysisSummary:
     return AnalysisSummary(
         id=analysis.id,
@@ -158,23 +180,42 @@ def create_analysis(
             status_code=429,
             detail=f"Daily analysis limit of {settings.rate_limit_analyses_per_day} reached. Resets at midnight UTC.",
         )
-    extracted = extract_problem_context(payload.query, payload.company_context.model_dump())
+    company_context = payload.company_context.model_dump(exclude_none=True)
+    extracted = extract_problem_context(payload.query, company_context)
+    organisation_id = _resolve_user_organisation_id(user, db)
     analysis = models.Analysis(
         id=uuid4().hex,
         user_id=user.id,
-        organisation_id=user.organisation_id,
+        organisation_id=organisation_id,
         query=payload.query,
-        company_context=payload.company_context.model_dump(),
+        company_context=company_context,
         extracted_context=extracted,
         status="queued",
         pipeline_version="4.0.0",
         run_baseline=payload.run_baseline,
     )
-    user.analysis_count += 1
+    user.analysis_count = int(getattr(user, "analysis_count", 0) or 0) + 1
     db.add(analysis)
     db.commit()
     db.refresh(analysis)
-    dispatch_analysis(analysis.id)
+    try:
+        dispatch_analysis(analysis.id)
+    except Exception as exc:
+        logger.error(
+            "analysis_dispatch_failed",
+            analysis_id=analysis.id,
+            user_id=user.id,
+            error=str(exc),
+            exc_info=True,
+        )
+        analysis.status = "failed"
+        analysis.error_message = "ASIS could not start the analysis pipeline. Please try again."
+        analysis.completed_at = datetime.utcnow()
+        db.commit()
+        raise HTTPException(
+            status_code=503,
+            detail="ASIS could not start the analysis pipeline. Please try again.",
+        ) from exc
     return AnalysisResponse(analysis=_to_summary(analysis))
 
 

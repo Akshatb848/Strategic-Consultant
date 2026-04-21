@@ -61,4 +61,8 @@ def cancel_analysis(analysis_id: str) -> None:
 
 def _celery_available(settings) -> bool:
     """Return True if Celery broker is configured and connection seems plausible."""
-    return bool(settings.celery_broker_url and not settings.celery_broker_url.startswith("redis://localhost"))
+    return bool(
+        settings.celery_broker_url
+        and not settings.celery_broker_url.startswith("redis://localhost")
+        and not settings.celery_broker_url.startswith("memory://")
+    )

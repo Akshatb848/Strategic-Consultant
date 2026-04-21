@@ -318,3 +318,66 @@ async def test_legacy_analysis_rows_do_not_break_dashboard_listing(client):
     detail = await client.get(f"/api/v1/analysis/{analysis_id}", headers=headers)
     assert detail.status_code == 200, detail.text
     assert detail.json()["analysis"]["executive_summary"].startswith("Proceed with a phased India expansion.")
+
+
+@pytest.mark.anyio
+async def test_create_analysis_with_stale_user_organisation_reference(client):
+    headers = await register_user(client, email="stale-org@example.com")
+
+    with db_state.session_scope() as db:
+        user = db.query(models.User).filter(models.User.email == "stale-org@example.com").one()
+        user.organisation_id = "missing-organisation"
+
+    created = await client.post(
+        "/api/v1/analysis",
+        headers=headers,
+        json={
+            "query": "Should Bain & Company expand its AI post-merger integration offer across Europe and India by 2027?",
+            "company_context": {
+                "company_name": "Bain & Company",
+                "sector": "Technology Consulting",
+                "geography": "India and Europe",
+                "decision_type": "Post Merger Integration and Acquisition",
+            },
+        },
+    )
+    assert created.status_code == 201, created.text
+    analysis_id = created.json()["analysis"]["id"]
+
+    with db_state.session_scope() as db:
+        analysis = db.query(models.Analysis).filter(models.Analysis.id == analysis_id).one()
+        user = db.query(models.User).filter(models.User.email == "stale-org@example.com").one()
+        assert analysis.organisation_id is None
+        assert user.organisation_id is None
+
+
+@pytest.mark.anyio
+async def test_create_analysis_dispatch_failure_returns_503(client, monkeypatch):
+    from asis.backend.api.routes import analysis as analysis_routes
+
+    headers = await register_user(client, email="dispatch-fail@example.com")
+
+    def fail_dispatch(_analysis_id: str) -> None:
+        raise RuntimeError("executor unavailable")
+
+    monkeypatch.setattr(analysis_routes, "dispatch_analysis", fail_dispatch)
+
+    created = await client.post(
+        "/api/v1/analysis",
+        headers=headers,
+        json={
+            "query": "Should Acme Financial expand its digital wealth business into India in 2026?",
+            "company_context": {
+                "company_name": "Acme Financial",
+                "sector": "Fintech",
+                "geography": "India",
+            },
+        },
+    )
+    assert created.status_code == 503, created.text
+    assert created.json()["detail"] == "ASIS could not start the analysis pipeline. Please try again."
+
+    with db_state.session_scope() as db:
+        analysis = db.query(models.Analysis).filter(models.Analysis.user_id == db.query(models.User).filter(models.User.email == "dispatch-fail@example.com").one().id).one()
+        assert analysis.status == "failed"
+        assert analysis.error_message == "ASIS could not start the analysis pipeline. Please try again."

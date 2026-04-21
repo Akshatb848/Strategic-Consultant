@@ -433,6 +433,9 @@ jobs:
           ENABLE_AUTO_SCHEMA=true
           SECURE_COOKIES=false
           LOCAL_WORKER_CONCURRENCY=1
+          REDIS_URL=memory://
+          CELERY_BROKER_URL=memory://
+          CELERY_RESULT_BACKEND=memory://
           LANGFUSE_ENABLED=false
           COST_TRACKING_ENABLED=false
           LITELLM_PROXY_URL=${LITELLM_PROXY_URL:-}
