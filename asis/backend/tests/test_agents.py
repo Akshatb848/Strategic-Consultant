@@ -153,3 +153,70 @@ def test_agents_fail_fast_without_live_provider_when_fallback_disabled(monkeypat
                 },
             }
         )
+
+
+def test_synthesis_retries_with_compact_repair_prompt(monkeypatch):
+    monkeypatch.setenv("ASIS_DEMO_MODE", "false")
+    monkeypatch.setenv("ALLOW_LLM_FALLBACK", "false")
+    monkeypatch.setenv("GROQ_API_KEY", "test-groq-key")
+    _clear_settings_cache()
+
+    prompts: list[str] = []
+    responses = [
+        None,
+        {
+            "decision_statement": "PROCEED — enter through a phased partnership route with milestone gates.",
+            "executive_summary": {
+                "headline": "placeholder",
+                "key_argument_1": "Demand and controls support phased expansion.",
+                "key_argument_2": "Capital discipline remains intact through staged investment.",
+                "key_argument_3": "Partner leverage reduces execution friction.",
+                "critical_risk": "Execution discipline must stay ahead of growth.",
+                "next_step": "Validate the first-wave partner roster.",
+            },
+            "board_narrative": "A compact retry prompt produced a valid live narrative patch.",
+            "recommendation": "PROCEED",
+            "overall_confidence": 0.78,
+        },
+    ]
+
+    def fake_generate_json(**kwargs):
+        prompts.append(str(kwargs["user_prompt"]))
+        return responses.pop(0)
+
+    monkeypatch.setattr("asis.backend.agents.synthesis_v4.llm_proxy.generate_json", fake_generate_json)
+
+    result = V4SynthesisAgent().run(
+        {
+            "analysis_id": "analysis-retry",
+            "query": "Should Bain & Company expand AI governance services across India and Europe by 2027?",
+            "company_context": {
+                "company_name": "Bain & Company",
+                "sector": "Consulting",
+                "geography": "India and Europe",
+                "decision_type": "expand",
+            },
+            "extracted_context": {
+                "company_name": "Bain & Company",
+                "sector": "Consulting",
+                "geography": "India and Europe",
+                "decision_type": "expand",
+            },
+            "market_intel_output": {},
+            "risk_assessment_output": {},
+            "competitor_analysis_output": {},
+            "geo_intel_output": {},
+            "financial_reasoning_output": {},
+            "strategic_options_output": {},
+            "framework_outputs": {},
+            "agent_collaboration_trace": [],
+            "quality_failures": [],
+            "quality_retry_count": 0,
+        }
+    )
+
+    assert result.used_fallback is False
+    assert result.data["board_narrative"] == "A compact retry prompt produced a valid live narrative patch."
+    assert len(prompts) == 2
+    assert len(prompts[1]) < len(prompts[0])
+    assert "required_fields" in prompts[1]

@@ -36,9 +36,10 @@ pipeline. You have received structured intelligence outputs from 7 specialist
 AI agents: Orchestrator, Market Intelligence, Risk Assessment, Competitor
 Analysis, Geopolitical Intelligence, Financial Reasoning, and Strategic Options.
 
-Your output is a single, valid JSON object conforming to StrategicBriefV4.
-You must produce every required field. No field may be null, empty, or
-truncated. Do not output any text outside the JSON object.
+You are enhancing a precomputed ASIS strategic brief scaffold. Return a single,
+valid JSON patch object containing only the fields that should override or
+enrich the scaffold. Omit unchanged fields. Do not output any text outside the
+JSON object.
 
 CRITICAL RULES:
    "PROCEED — ", "CONDITIONAL PROCEED — ", or "DO NOT PROCEED — "
@@ -82,24 +83,18 @@ CRITICAL RULES:
     Phase 2: Short-term (3-12 months)
     Phase 3: Medium-term (1-3 years)
     Phase 4: Long-term (3-5 years)
+
+11. PATCH MODE:
+    - You may omit any field that should remain unchanged from the scaffold.
+    - If you update executive_summary, it must remain an object with the full
+      ExecutiveSummary shape.
+    - If you update framework_outputs, include only the frameworks you are
+      improving and preserve valid framework names.
+    - Prefer concise overrides to reduce output length and improve reliability.
         """.strip()
 
     def user_prompt(self, state) -> str:
-        payload = {
-            "query": state.get("query"),
-            "company_context": state.get("extracted_context") or state.get("company_context"),
-            "market_intel_output": state.get("market_intel_output"),
-            "risk_assessment_output": state.get("risk_assessment_output"),
-            "competitor_analysis_output": state.get("competitor_analysis_output"),
-            "geo_intel_output": state.get("geo_intel_output"),
-            "financial_reasoning_output": state.get("financial_reasoning_output"),
-            "strategic_options_output": state.get("strategic_options_output"),
-            "framework_outputs": state.get("framework_outputs"),
-            "agent_collaboration_trace": state.get("agent_collaboration_trace"),
-            "quality_failures": state.get("quality_failures") or [],
-            "quality_retry_count": state.get("quality_retry_count") or 0,
-        }
-        return json.dumps(payload, indent=2, default=str)
+        return self._live_user_prompt(state, self.local_result(state))
 
     def _generate(self, state) -> dict:
         scaffold = self.local_result(state)
@@ -110,11 +105,19 @@ CRITICAL RULES:
 
         proxy_output = llm_proxy.generate_json(
             system_prompt=self.system_prompt(),
-            user_prompt=self.user_prompt(state),
+            user_prompt=self._live_user_prompt(state, scaffold),
             models=self.resolve_models(),
             agent_id=self.agent_id,
             analysis_id=state.get("analysis_id"),
         )
+        if not proxy_output:
+            proxy_output = llm_proxy.generate_json(
+                system_prompt=self.system_prompt(),
+                user_prompt=self._repair_user_prompt(state, scaffold),
+                models=self.resolve_models(),
+                agent_id=self.agent_id,
+                analysis_id=state.get("analysis_id"),
+            )
         if not proxy_output:
             if settings.allow_llm_fallback:
                 scaffold["_used_fallback"] = True
@@ -206,6 +209,105 @@ CRITICAL RULES:
             return deepcopy(generated)
 
         return deepcopy(generated)
+
+    def _live_user_prompt(self, state, scaffold: dict) -> str:
+        framework_outputs = scaffold.get("framework_outputs") or {}
+        framework_highlights = {
+            name: {
+                "implication": output.get("implication"),
+                "recommended_action": output.get("recommended_action"),
+                "risk_of_inaction": output.get("risk_of_inaction"),
+            }
+            for name, output in framework_outputs.items()
+        }
+        scenario_analysis = (scaffold.get("financial_analysis") or {}).get("scenario_analysis") or {}
+        strategic_pathways = (scaffold.get("market_analysis") or {}).get("strategic_pathways") or {}
+        execution_realism = (scaffold.get("risk_analysis") or {}).get("execution_realism") or {}
+        risk_register = (scaffold.get("risk_analysis") or {}).get("risk_register") or []
+
+        payload = {
+            "task": "Return a JSON patch that improves the board narrative, executive summary, and any fields that need stronger live synthesis. Omit unchanged fields.",
+            "query": state.get("query"),
+            "company_context": state.get("extracted_context") or state.get("company_context"),
+            "quality_failures": state.get("quality_failures") or [],
+            "quality_retry_count": state.get("quality_retry_count") or 0,
+            "scaffold_excerpt": {
+                "decision_statement": scaffold.get("decision_statement"),
+                "recommendation": scaffold.get("recommendation"),
+                "overall_confidence": scaffold.get("overall_confidence"),
+                "executive_summary": scaffold.get("executive_summary"),
+                "board_narrative": scaffold.get("board_narrative"),
+                "decision_evidence": scaffold.get("decision_evidence"),
+                "section_action_titles": scaffold.get("section_action_titles"),
+                "frameworks_applied": scaffold.get("frameworks_applied"),
+                "implementation_roadmap": scaffold.get("implementation_roadmap"),
+            },
+            "agent_highlights": {
+                "market_intel": {
+                    "market_size_summary": (state.get("market_intel_output") or {}).get("market_size_summary"),
+                    "key_findings": (state.get("market_intel_output") or {}).get("key_findings"),
+                    "strategic_implication": (state.get("market_intel_output") or {}).get("strategic_implication"),
+                },
+                "risk_assessment": {
+                    "top_risks": risk_register[:3],
+                    "execution_realism": execution_realism.get("items", [])[:4],
+                },
+                "competitor_analysis": {
+                    "top_competitors": (state.get("competitor_analysis_output") or {}).get("top_competitors"),
+                    "competitor_profiles": (state.get("competitor_analysis_output") or {}).get("competitor_profiles", [])[:3],
+                },
+                "geo_intel": {
+                    "regulatory_outlook": (state.get("geo_intel_output") or {}).get("regulatory_outlook"),
+                    "cage_distance_analysis": (state.get("geo_intel_output") or {}).get("cage_distance_analysis"),
+                },
+                "financial_reasoning": {
+                    "financial_projections": (state.get("financial_reasoning_output") or {}).get("financial_projections"),
+                    "scenario_analysis": {
+                        "recommended_case": scenario_analysis.get("recommended_case"),
+                        "decision_rule": scenario_analysis.get("decision_rule"),
+                        "scenarios": (scenario_analysis.get("scenarios") or [])[:3],
+                    },
+                },
+                "strategic_options": {
+                    "recommended_option": (state.get("strategic_options_output") or {}).get("recommended_option"),
+                    "option_rationale": (state.get("strategic_options_output") or {}).get("option_rationale"),
+                    "options": (state.get("strategic_options_output") or {}).get("strategic_options", [])[:3],
+                    "strategic_pathways": {
+                        "recommended_option": strategic_pathways.get("recommended_option"),
+                        "verdict": strategic_pathways.get("verdict"),
+                        "options": (strategic_pathways.get("options") or [])[:3],
+                    },
+                },
+            },
+            "framework_highlights": framework_highlights,
+        }
+        return json.dumps(payload, indent=2, default=str)
+
+    def _repair_user_prompt(self, state, scaffold: dict) -> str:
+        payload = {
+            "task": "Return a minimal JSON patch that keeps the existing ASIS scaffold but improves the live board narrative. Focus only on the fields below.",
+            "query": state.get("query"),
+            "company_context": state.get("extracted_context") or state.get("company_context"),
+            "required_fields": [
+                "decision_statement",
+                "executive_summary",
+                "board_narrative",
+                "recommendation",
+                "section_action_titles",
+                "so_what_callouts",
+                "implementation_roadmap",
+            ],
+            "current_scaffold": {
+                "decision_statement": scaffold.get("decision_statement"),
+                "executive_summary": scaffold.get("executive_summary"),
+                "board_narrative": scaffold.get("board_narrative"),
+                "recommendation": scaffold.get("recommendation"),
+                "section_action_titles": scaffold.get("section_action_titles"),
+                "so_what_callouts": scaffold.get("so_what_callouts"),
+                "implementation_roadmap": scaffold.get("implementation_roadmap"),
+            },
+        }
+        return json.dumps(payload, indent=2, default=str)
 
     def local_result(self, state) -> dict:
         context = state.get("extracted_context") or state.get("company_context") or {}
