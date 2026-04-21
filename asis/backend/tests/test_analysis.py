@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 import pytest
 
 from asis.backend.db import database as db_state
 from asis.backend.db import models
+from asis.backend.agents.types import AgentOutput
+from asis.backend.graph.pipeline import v4_workflow
+from asis.backend.schemas.v4 import AgentName, FrameworkName
 from conftest import register_user
 
 
@@ -381,3 +386,92 @@ async def test_create_analysis_dispatch_failure_returns_503(client, monkeypatch)
         analysis = db.query(models.Analysis).filter(models.Analysis.user_id == db.query(models.User).filter(models.User.email == "dispatch-fail@example.com").one().id).one()
         assert analysis.status == "failed"
         assert analysis.error_message == "ASIS could not start the analysis pipeline. Please try again."
+
+
+@pytest.mark.anyio
+async def test_synthesis_payloads_are_json_safe_before_persisting(client):
+    headers = await register_user(client, email="json-safe@example.com")
+    created = await client.post(
+        "/api/v1/analysis",
+        headers=headers,
+        json={
+            "query": "Should Contoso Advisory expand its AI governance practice across Europe in 2027?",
+            "company_context": {
+                "company_name": "Contoso Advisory",
+                "sector": "Consulting",
+                "geography": "Europe",
+            },
+        },
+    )
+    assert created.status_code == 201, created.text
+    analysis_id = created.json()["analysis"]["id"]
+
+    with db_state.session_scope() as db:
+        analysis = db.query(models.Analysis).filter(models.Analysis.id == analysis_id).one()
+        payload = dict(analysis.strategic_brief or {})
+        payload["report_metadata"] = dict(payload["report_metadata"])
+        payload["report_metadata"]["generated_at"] = datetime(2026, 4, 21, 12, 0, 0)
+        payload["framework_outputs"] = dict(payload["framework_outputs"])
+        payload["framework_outputs"]["pestle"] = dict(payload["framework_outputs"]["pestle"])
+        payload["framework_outputs"]["pestle"]["framework_name"] = FrameworkName.PESTLE
+        payload["framework_outputs"]["pestle"]["agent_author"] = AgentName.MARKET_INTELLIGENCE
+
+    result = AgentOutput(
+        agent_id="synthesis",
+        agent_name="Synthesis",
+        confidence_score=0.81,
+        duration_ms=1280,
+        model_used="test-model",
+        data=payload,
+    )
+    v4_workflow._save_agent_result(analysis_id, result)
+
+    with db_state.session_scope() as db:
+        analysis = db.query(models.Analysis).filter(models.Analysis.id == analysis_id).one()
+        latest_log = (
+            db.query(models.AgentLog)
+            .filter(models.AgentLog.analysis_id == analysis_id, models.AgentLog.agent_id == "synthesis")
+            .order_by(models.AgentLog.created_at.desc())
+            .first()
+        )
+
+        assert isinstance(analysis.strategic_brief["report_metadata"]["generated_at"], str)
+        assert analysis.strategic_brief["framework_outputs"]["pestle"]["framework_name"] == "pestle"
+        assert analysis.strategic_brief["framework_outputs"]["pestle"]["agent_author"] == "market_intel"
+        assert latest_log is not None
+        assert isinstance(latest_log.parsed_output["report_metadata"]["generated_at"], str)
+
+
+@pytest.mark.anyio
+async def test_pipeline_failure_message_is_sanitized(client, monkeypatch):
+    headers = await register_user(client, email="sanitized-error@example.com")
+    created = await client.post(
+        "/api/v1/analysis",
+        headers=headers,
+        json={
+            "query": "Should Fabrikam Ventures expand its M&A advisory unit in Southeast Asia?",
+            "company_context": {
+                "company_name": "Fabrikam Ventures",
+                "sector": "Professional Services",
+                "geography": "Southeast Asia",
+            },
+        },
+    )
+    assert created.status_code == 201, created.text
+    analysis_id = created.json()["analysis"]["id"]
+
+    def fail_invoke(_state):
+        raise RuntimeError(
+            "StatementError: insert failed with parameters [...]\n"
+            "Background on this error at: https://sqlalche.me/e/20/f405"
+        )
+
+    monkeypatch.setattr(v4_workflow.graph, "invoke", fail_invoke)
+    v4_workflow.run(analysis_id)
+
+    detail = await client.get(f"/api/v1/analysis/{analysis_id}", headers=headers)
+    assert detail.status_code == 200, detail.text
+    analysis = detail.json()["analysis"]
+    assert analysis["status"] == "failed"
+    assert analysis["error_message"] == "ASIS could not persist the final strategic brief. Please retry the analysis."
+    assert "sqlalche.me" not in analysis["error_message"]

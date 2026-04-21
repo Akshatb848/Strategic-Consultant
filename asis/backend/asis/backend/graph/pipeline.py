@@ -5,6 +5,7 @@ from datetime import datetime
 from time import perf_counter
 from uuid import uuid4
 
+from fastapi.encoders import jsonable_encoder
 from langgraph.graph import END, START, StateGraph
 from sqlalchemy.orm import Session
 
@@ -141,14 +142,15 @@ class V4EnterpriseWorkflow:
             analysis = db.get(models.Analysis, analysis_id)
             if analysis and analysis.status != "cancelled":
                 analysis.status = "failed"
-                analysis.error_message = str(exc)
+                public_message = self._public_error_message(exc)
+                analysis.error_message = public_message
                 db.commit()
                 publish_analysis_event(
                     analysis.id,
                     "analysis_failed",
                     {
                         "analysis_id": analysis.id,
-                        "message": str(exc),
+                        "message": public_message,
                         "timestamp_ms": now_ms(),
                     },
                 )
@@ -468,7 +470,18 @@ class V4EnterpriseWorkflow:
 
     def _save_agent_result(self, analysis_id: str, result: AgentOutput) -> None:
         with db_state.SessionLocal() as db:
-            token_meta = result.token_usage or {}
+            safe_payload = self._json_ready(result.data)
+            if result.agent_id == "synthesis":
+                try:
+                    safe_payload = StrategicBriefV4.model_validate(safe_payload).model_dump(mode="json")
+                except Exception:
+                    safe_payload = self._json_ready(safe_payload)
+
+            safe_tools_called = self._json_ready(result.tools_called)
+            safe_token_usage = self._json_ready(result.token_usage or {})
+            safe_citations = self._json_ready(result.citations)
+
+            token_meta = safe_token_usage if isinstance(safe_token_usage, dict) else {}
             tokens_in = int(token_meta.get("tokens_in") or 0)
             tokens_out = int(token_meta.get("tokens_out") or 0)
             cost_usd = float(token_meta.get("cost_usd") or 0.0)
@@ -482,18 +495,18 @@ class V4EnterpriseWorkflow:
                 status=result.status,
                 confidence_score=result.confidence_score,
                 model_used=result.model_used,
-                tools_called=result.tools_called,
+                tools_called=safe_tools_called,
                 langfuse_trace_id=result.langfuse_trace_id,
                 attempt_number=result.attempt_number,
                 self_corrected=result.self_corrected,
                 correction_reason=result.correction_reason,
                 duration_ms=result.duration_ms,
-                token_usage=result.token_usage,
+                token_usage=safe_token_usage,
                 tokens_in=tokens_in,
                 tokens_out=tokens_out,
                 cost_usd=cost_usd,
-                citations=result.citations,
-                parsed_output=result.data,
+                citations=safe_citations,
+                parsed_output=safe_payload,
                 used_fallback=result.used_fallback,
             )
             db.add(log)
@@ -505,11 +518,11 @@ class V4EnterpriseWorkflow:
                 if cost_usd > 0:
                     analysis.total_cost_usd = round((analysis.total_cost_usd or 0.0) + cost_usd, 8)
                 if result.agent_id == "synthesis":
-                    analysis.strategic_brief = result.data
-                    analysis.executive_summary = self._executive_summary_text(result.data)
-                    analysis.board_narrative = result.data.get("board_narrative")
-                    analysis.decision_recommendation = result.data.get("recommendation")
-                    analysis.overall_confidence = result.data.get("overall_confidence")
+                    analysis.strategic_brief = safe_payload
+                    analysis.executive_summary = self._executive_summary_text(safe_payload)
+                    analysis.board_narrative = safe_payload.get("board_narrative")
+                    analysis.decision_recommendation = safe_payload.get("recommendation")
+                    analysis.overall_confidence = safe_payload.get("overall_confidence")
             db.commit()
 
     @staticmethod
@@ -528,6 +541,25 @@ class V4EnterpriseWorkflow:
         if isinstance(summary, str):
             return summary
         return None
+
+    @staticmethod
+    def _json_ready(value):
+        return jsonable_encoder(value)
+
+    @staticmethod
+    def _public_error_message(exc: Exception) -> str:
+        raw = str(exc).strip()
+        lower = raw.lower()
+
+        if "cancelled by user" in lower:
+            return "Analysis cancelled by user."
+        if "sqlalche.me" in lower or "sqlalchemy" in lower or "statementerror" in lower:
+            return "ASIS could not persist the final strategic brief. Please retry the analysis."
+        if "validationerror" in lower or "validation error" in lower:
+            return "ASIS could not validate the final strategic brief. Please retry the analysis."
+        if raw and len(raw) <= 180 and "\n" not in raw and "\r" not in raw:
+            return raw
+        return "ASIS encountered an internal pipeline error. Please retry the analysis."
 
 
 v4_workflow = V4EnterpriseWorkflow()
