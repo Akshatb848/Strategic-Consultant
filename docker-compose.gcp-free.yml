@@ -24,8 +24,8 @@ services:
       GROQ_API_KEY: ${GROQ_API_KEY:-}
       GROQ_API_BASE: ${GROQ_API_BASE:-https://api.groq.com/openai/v1}
       GROQ_MODEL_PRIMARY: ${GROQ_MODEL_PRIMARY:-llama-3.3-70b-versatile}
-      GROQ_MODEL_FAST: ${GROQ_MODEL_FAST:-openai/gpt-oss-20b}
-      GROQ_MODEL_REASONING: ${GROQ_MODEL_REASONING:-openai/gpt-oss-120b}
+      GROQ_MODEL_FAST: ${GROQ_MODEL_FAST:-llama-3.1-8b-instant}
+      GROQ_MODEL_REASONING: ${GROQ_MODEL_REASONING:-llama-3.3-70b-versatile}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPEN_MODEL_API_BASE: ${OPEN_MODEL_API_BASE:-}
@@ -61,6 +61,7 @@ services:
     restart: unless-stopped
     environment:
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:?Set NEXT_PUBLIC_API_URL in .env.gcp}
+      BACKEND_INTERNAL_URL: http://backend:8000
       PUPPETEER_EXECUTABLE_PATH: ${PUPPETEER_EXECUTABLE_PATH:-/usr/bin/chromium}
       NODE_ENV: production
       PORT: 3000

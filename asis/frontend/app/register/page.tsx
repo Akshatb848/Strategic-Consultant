@@ -5,8 +5,9 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { authAPI, type AuthProviders } from "@/lib/api";
+import { getClientApiBase } from "@/lib/runtime-urls";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE = getClientApiBase();
 
 function RegisterPageContent() {
   const { register, isAuthenticated, loading } = useAuth();

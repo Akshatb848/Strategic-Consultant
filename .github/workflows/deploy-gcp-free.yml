@@ -54,7 +54,7 @@ jobs:
           file: asis/frontend/Dockerfile
           load: true
           build-args: |
-            NEXT_PUBLIC_API_URL=http://${{ env.VM_HOST }}:8000
+            NEXT_PUBLIC_API_URL=http://${{ env.VM_HOST }}:3001
           tags: ${{ steps.names.outputs.frontend_image }}
           cache-from: type=gha,scope=asis-frontend
           cache-to: type=gha,mode=max,scope=asis-frontend
@@ -424,7 +424,7 @@ jobs:
           FRONTEND_URL=http://${VM_HOST}:3001
           FRONTEND_INTERNAL_URL=http://frontend:3000
           ALLOWED_ORIGINS=http://${VM_HOST}:3001
-          NEXT_PUBLIC_API_URL=http://${VM_HOST}:8000
+          NEXT_PUBLIC_API_URL=http://${VM_HOST}:3001
           DATABASE_URL=sqlite:////data/asis_v4.db
           ASIS_DATA_DIR=${RESOLVED_VM_DATA_DIR}
           ENVIRONMENT=production

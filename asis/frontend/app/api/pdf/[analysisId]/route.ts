@@ -2,10 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 
 import type { StrategicBriefV4 } from "@/lib/api";
 import { buildPdfHtml } from "@/lib/pdf/template";
+import { getServerApiBase } from "@/lib/runtime-urls";
 
 export const runtime = "nodejs";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE = getServerApiBase();
 
 interface PdfRequestBody {
   analysis_id?: string;

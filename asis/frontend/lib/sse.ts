@@ -1,8 +1,9 @@
 "use client";
 
 import { getAccessToken } from "@/lib/api";
+import { getClientApiBase } from "@/lib/runtime-urls";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE = getClientApiBase();
 
 export interface AnalysisEvent {
   event:

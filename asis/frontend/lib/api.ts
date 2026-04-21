@@ -1,8 +1,9 @@
 "use client";
 
 import axios, { type AxiosError, type InternalAxiosRequestConfig } from "axios";
+import { getClientApiBase } from "@/lib/runtime-urls";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE = getClientApiBase();
 
 let accessToken: string | null = null;
 let refreshPromise: Promise<string | null> | null = null;
