@@ -67,6 +67,18 @@ class Settings(BaseModel):
     litellm_model_llama_governance: str = Field(default_factory=lambda: _env("LITELLM_MODEL_LLAMA_GOVERNANCE", "llama-governance") or "llama-governance")
     embedding_model: str = Field(default_factory=lambda: _env("EMBEDDING_MODEL", "text-embedding-3-small") or "text-embedding-3-small")
     demo_mode: bool = Field(default_factory=lambda: _env_bool("ASIS_DEMO_MODE", True))
+    allow_llm_fallback: bool = Field(
+        default_factory=lambda: (
+            _env(
+                "ALLOW_LLM_FALLBACK",
+                "true"
+                if (_env("ENVIRONMENT", _env("NODE_ENV", "development")) or "development") != "production"
+                else "false",
+            )
+            or "false"
+        ).lower()
+        == "true"
+    )
     redis_url: str = Field(default_factory=lambda: _env("REDIS_URL", "redis://localhost:6379/0") or "redis://localhost:6379/0")
     celery_broker_url: str = Field(default_factory=lambda: _env("CELERY_BROKER_URL", _env("REDIS_URL", "redis://localhost:6379/1")) or "redis://localhost:6379/1")
     celery_result_backend: str = Field(default_factory=lambda: _env("CELERY_RESULT_BACKEND", _env("REDIS_URL", "redis://localhost:6379/2")) or "redis://localhost:6379/2")

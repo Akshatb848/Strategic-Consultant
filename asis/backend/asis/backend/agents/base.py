@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from abc import ABC, abstractmethod
 from time import perf_counter
 
@@ -40,6 +41,7 @@ class BaseAgent(ABC):
         )
 
     def _generate(self, state: PipelineState) -> dict:
+        scaffold = self.local_result(state)
         proxy_output = None
         settings = get_settings()
         if not settings.demo_mode:
@@ -51,13 +53,22 @@ class BaseAgent(ABC):
                 analysis_id=state.get("analysis_id"),
             )
         if proxy_output:
-            proxy_output.setdefault("citations", build_citations(state.get("extracted_context") or {}))
-            proxy_output.setdefault("confidence_score", self.local_result(state)["confidence_score"])
-            proxy_output["_used_fallback"] = False
-            return proxy_output
-        local_output = self.local_result(state)
-        local_output["_used_fallback"] = True
-        return local_output
+            merged = self.merge_generated_output(scaffold, proxy_output)
+            merged["citations"] = merged.get("citations") or scaffold.get("citations") or build_citations(
+                state.get("extracted_context") or state.get("company_context") or {}
+            )
+            merged["confidence_score"] = self._normalize_confidence(
+                merged.get("confidence_score") or scaffold.get("confidence_score")
+            )
+            for metadata_key in ("_model_used", "_tools_called", "_langfuse_trace_id", "_token_usage"):
+                if metadata_key in proxy_output:
+                    merged[metadata_key] = proxy_output[metadata_key]
+            merged["_used_fallback"] = False
+            return merged
+        if settings.allow_llm_fallback or settings.demo_mode:
+            scaffold["_used_fallback"] = True
+            return scaffold
+        raise RuntimeError("ASIS could not obtain live model output from the configured LLM providers.")
 
     def resolve_models(self) -> list[str]:
         settings = get_settings()
@@ -86,6 +97,50 @@ class BaseAgent(ABC):
 
     def user_prompt(self, state: PipelineState) -> str:
         return f"Query: {state['query']}\nContext: {state.get('extracted_context') or state.get('company_context')}"
+
+    def merge_generated_output(self, scaffold: dict, generated: dict) -> dict:
+        return self._merge_value(scaffold, generated)
+
+    def _merge_value(self, scaffold, generated):
+        if generated in (None, "", [], {}):
+            return deepcopy(scaffold)
+
+        if isinstance(scaffold, dict):
+            if not isinstance(generated, dict):
+                return deepcopy(scaffold)
+            merged = deepcopy(scaffold)
+            for key, value in generated.items():
+                if isinstance(key, str) and key.startswith("_"):
+                    continue
+                if key in merged:
+                    merged[key] = self._merge_value(merged[key], value)
+                elif value not in (None, "", [], {}):
+                    merged[key] = deepcopy(value)
+            return merged
+
+        if isinstance(scaffold, list):
+            if not isinstance(generated, list) or not generated:
+                return deepcopy(scaffold)
+            if not scaffold:
+                return deepcopy(generated)
+            template = scaffold[0]
+            if isinstance(template, dict):
+                return [
+                    self._merge_value(template, item) if isinstance(item, dict) else deepcopy(template)
+                    for item in generated
+                ]
+            return deepcopy(generated)
+
+        return deepcopy(generated)
+
+    @staticmethod
+    def _normalize_confidence(value: float | int | None) -> float:
+        if value is None:
+            return 0.68
+        numeric = float(value)
+        if numeric > 1:
+            numeric /= 100
+        return round(max(0.0, min(1.0, numeric)), 3)
 
 
 def calculate_confidence(

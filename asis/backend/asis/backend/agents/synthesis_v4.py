@@ -1,11 +1,13 @@
 ﻿from __future__ import annotations
 
+from copy import deepcopy
 import json
 import re
 from datetime import datetime
 from statistics import mean
 
 from asis.backend.agents.base import BaseAgent
+from asis.backend.agents.llm_proxy import llm_proxy
 from asis.backend.agents.references import build_citations
 from asis.backend.agents.v4_support import (
     average_framework_confidence,
@@ -17,7 +19,8 @@ from asis.backend.agents.v4_support import (
     framework_display_name,
     framework_key_finding,
 )
-from asis.backend.schemas.v4 import AgentName, FrameworkName
+from asis.backend.config.settings import get_settings
+from asis.backend.schemas.v4 import AgentName, FrameworkName, StrategicBriefV4
 
 
 class V4SynthesisAgent(BaseAgent):
@@ -98,10 +101,111 @@ CRITICAL RULES:
         }
         return json.dumps(payload, indent=2, default=str)
 
+    def _generate(self, state) -> dict:
+        scaffold = self.local_result(state)
+        settings = get_settings()
+        if settings.demo_mode:
+            scaffold["_used_fallback"] = True
+            return scaffold
+
+        proxy_output = llm_proxy.generate_json(
+            system_prompt=self.system_prompt(),
+            user_prompt=self.user_prompt(state),
+            models=self.resolve_models(),
+            agent_id=self.agent_id,
+            analysis_id=state.get("analysis_id"),
+        )
+        if not proxy_output:
+            if settings.allow_llm_fallback:
+                scaffold["_used_fallback"] = True
+                return scaffold
+            raise RuntimeError("ASIS could not obtain live synthesis output from the configured LLM providers.")
+
+        merged = self._merge_generated_brief(scaffold, proxy_output)
+        for metadata_key in ("_model_used", "_tools_called", "_langfuse_trace_id", "_token_usage"):
+            if metadata_key in proxy_output:
+                merged[metadata_key] = proxy_output[metadata_key]
+        merged["_used_fallback"] = False
+        return merged
+
     @staticmethod
     def _confidence_variance(query: str, context: dict) -> float:
         fingerprint = (sum(ord(char) for char in query) + len(context.get("company_name") or "")) % 17
         return fingerprint / 1000
+
+    def _merge_generated_brief(self, scaffold: dict, generated: dict) -> dict:
+        merged = self._merge_value(scaffold, generated)
+        decision_statement = str(merged.get("decision_statement") or "").strip()
+        if not decision_statement.startswith(("PROCEED", "CONDITIONAL PROCEED", "DO NOT PROCEED")):
+            merged["decision_statement"] = scaffold["decision_statement"]
+
+        executive_summary = merged.get("executive_summary")
+        if not isinstance(executive_summary, dict):
+            executive_summary = deepcopy(scaffold["executive_summary"])
+            merged["executive_summary"] = executive_summary
+        executive_summary["headline"] = merged["decision_statement"]
+
+        if not isinstance(merged.get("verification"), dict):
+            merged["verification"] = deepcopy(scaffold["verification"])
+        if not isinstance(merged.get("quality_report"), dict):
+            merged["quality_report"] = deepcopy(scaffold["quality_report"])
+        if not isinstance(merged.get("framework_outputs"), dict):
+            merged["framework_outputs"] = deepcopy(scaffold["framework_outputs"])
+        if not isinstance(merged.get("report_metadata"), dict):
+            merged["report_metadata"] = deepcopy(scaffold["report_metadata"])
+        if not isinstance(merged.get("balanced_scorecard"), dict):
+            merged["balanced_scorecard"] = deepcopy(scaffold["balanced_scorecard"])
+
+        merged["frameworks_applied"] = merged.get("frameworks_applied") or list(scaffold.get("frameworks_applied") or [])
+        merged["roadmap"] = merged.get("roadmap") or deepcopy(merged.get("implementation_roadmap") or scaffold.get("roadmap") or [])
+        merged["implementation_roadmap"] = merged.get("implementation_roadmap") or deepcopy(scaffold.get("implementation_roadmap") or [])
+        merged["citations"] = ensure_minimum_citations(
+            merged.get("context") if isinstance(merged.get("context"), dict) else scaffold.get("context") or {},
+            merged.get("citations") or scaffold.get("citations") or build_citations(scaffold.get("context") or {}),
+            minimum=6,
+        )
+        merged["confidence_score"] = merged.get("confidence_score") or merged.get("overall_confidence") or scaffold.get("confidence_score", 0.68)
+
+        try:
+            validated = StrategicBriefV4.model_validate(merged).model_dump(mode="json")
+            validated["confidence_score"] = merged["confidence_score"]
+            return validated
+        except Exception:
+            validated = StrategicBriefV4.model_validate(scaffold).model_dump(mode="json")
+            validated["confidence_score"] = scaffold.get("confidence_score", scaffold.get("overall_confidence", 0.68))
+            return validated
+
+    def _merge_value(self, scaffold, generated):
+        if generated in (None, "", [], {}):
+            return deepcopy(scaffold)
+
+        if isinstance(scaffold, dict):
+            if not isinstance(generated, dict):
+                return deepcopy(scaffold)
+            merged = deepcopy(scaffold)
+            for key, value in generated.items():
+                if key.startswith("_"):
+                    continue
+                if key in merged:
+                    merged[key] = self._merge_value(merged[key], value)
+                elif value not in (None, "", [], {}):
+                    merged[key] = deepcopy(value)
+            return merged
+
+        if isinstance(scaffold, list):
+            if not isinstance(generated, list) or not generated:
+                return deepcopy(scaffold)
+            if not scaffold:
+                return deepcopy(generated)
+            template = scaffold[0]
+            if isinstance(template, dict):
+                return [
+                    self._merge_value(template, item) if isinstance(item, dict) else deepcopy(template)
+                    for item in generated
+                ]
+            return deepcopy(generated)
+
+        return deepcopy(generated)
 
     def local_result(self, state) -> dict:
         context = state.get("extracted_context") or state.get("company_context") or {}

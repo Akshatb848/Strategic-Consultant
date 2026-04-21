@@ -429,6 +429,7 @@ jobs:
           ASIS_DATA_DIR=${RESOLVED_VM_DATA_DIR}
           ENVIRONMENT=production
           ASIS_DEMO_MODE=false
+          ALLOW_LLM_FALLBACK=false
           RUN_ANALYSES_INLINE=false
           ENABLE_AUTO_SCHEMA=true
           SECURE_COOKIES=false
@@ -446,6 +447,7 @@ jobs:
           GROQ_MODEL_FAST=${GROQ_MODEL_FAST:-llama-3.1-8b-instant}
           GROQ_MODEL_REASONING=${GROQ_MODEL_REASONING:-llama-3.3-70b-versatile}
           ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+          ANTHROPIC_MAX_TOKENS=4096
           OPENAI_API_KEY=${OPENAI_API_KEY:-}
           OPEN_MODEL_API_BASE=${OPEN_MODEL_API_BASE:-}
           OPEN_MODEL_API_KEY=${OPEN_MODEL_API_KEY:-}
