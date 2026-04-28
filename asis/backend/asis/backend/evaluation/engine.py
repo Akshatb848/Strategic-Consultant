@@ -1,39 +1,54 @@
+"""
+Evaluation Engine — wires the RubricScorer into ASIS pipeline output.
+
+The engine is called by pipeline.py when run_baseline=True on an analysis.
+It scores both the multi-agent brief and the baseline brief using the same
+deterministic five-dimension rubric, then stores the paired result on the
+Report.evaluation JSON column for retrieval by the DSR runner script.
+"""
 from __future__ import annotations
+
+from typing import Any
+
+from asis.backend.evaluation.rubric import (
+    DIMENSION_WEIGHTS,
+    RubricResult,
+    score_brief,
+)
 
 
 class EvaluationEngine:
-    WEIGHTS = {
-        "analytical_depth": 0.25,
-        "factual_accuracy": 0.25,
-        "contextual_relevance": 0.20,
-        "actionability": 0.20,
-        "internal_consistency": 0.10,
-    }
+    """Score a multi-agent brief against a baseline brief using the rubric."""
 
-    def score(self, multi_agent_brief: dict, baseline_brief: dict) -> dict:
-        multi_dims = self._dimension_scores(multi_agent_brief)
-        base_dims = self._dimension_scores(baseline_brief)
-        multi_score = round(sum(multi_dims[k] * self.WEIGHTS[k] for k in self.WEIGHTS), 4)
-        base_score = round(sum(base_dims[k] * self.WEIGHTS[k] for k in self.WEIGHTS), 4)
-        return {
-            "multi_agent_score": multi_score,
-            "baseline_score": base_score,
-            "delta": round(multi_score - base_score, 4),
-            "dimension_scores": multi_dims,
+    WEIGHTS = DIMENSION_WEIGHTS
+
+    def score(self, multi_agent_brief: dict, baseline_brief: dict) -> dict[str, Any]:
+        """
+        Returns a dict stored in Report.evaluation with both scored results
+        and the per-dimension delta.
+        """
+        scenario_id = (
+            multi_agent_brief.get("_scenario_id")
+            or baseline_brief.get("_scenario_id")
+            or "UNKNOWN"
+        )
+
+        ma_result: RubricResult = score_brief(multi_agent_brief, scenario_id, "multi_agent")
+        bl_result: RubricResult = score_brief(baseline_brief, scenario_id, "baseline")
+
+        dimension_deltas = {
+            dim: round(ma_result.dimension_scores[dim] - bl_result.dimension_scores[dim], 4)
+            for dim in ma_result.dimension_scores
         }
 
-    def _dimension_scores(self, brief: dict) -> dict[str, float]:
-        citations = len(brief.get("citations") or [])
-        roadmap = len(brief.get("roadmap") or [])
-        bsc = len(brief.get("balanced_scorecard") or [])
-        recommendation = bool(brief.get("recommendation"))
-        verification = bool((brief.get("verification") or {}).get("recommendation") or brief.get("verification"))
-        context = brief.get("context") or {}
-        specificity = sum(1 for key in ("company_name", "sector", "geography") if context.get(key))
         return {
-            "analytical_depth": min(1.0, 0.45 + 0.08 * roadmap + 0.04 * bsc),
-            "factual_accuracy": min(1.0, 0.4 + 0.06 * citations),
-            "contextual_relevance": min(1.0, 0.45 + 0.15 * specificity),
-            "actionability": min(1.0, 0.35 + 0.15 * roadmap + (0.15 if recommendation else 0.0)),
-            "internal_consistency": 0.9 if verification else 0.65,
+            "multi_agent": ma_result.to_dict(),
+            "baseline": bl_result.to_dict(),
+            "composite_delta": round(ma_result.composite - bl_result.composite, 4),
+            "dimension_deltas": dimension_deltas,
+            # Legacy fields kept for backward compatibility
+            "multi_agent_score": round(ma_result.composite / 10.0, 4),
+            "baseline_score": round(bl_result.composite / 10.0, 4),
+            "delta": round((ma_result.composite - bl_result.composite) / 10.0, 4),
+            "dimension_scores": {k: round(v / 10.0, 4) for k, v in ma_result.dimension_scores.items()},
         }
