@@ -19,5 +19,7 @@ asis/backend/.pytest_cache/
 asis/backend/.venv/
 asis/backend/asis_v4.db
 asis_v4.db
+*.db
+*.db-journal
 prisma/*.db
 prisma/*.db-journal
