@@ -242,7 +242,15 @@ export async function runPipeline(analysisId: string): Promise<void> {
     await saveAgentResult(analysisId, 'synthesis', synthesisResult);
     emitPipelineEvent(analysisId, { agent: 'synthesis', status: 'completed', confidence: overallConfidence });
 
-    // ── Complete ────────────────────────────────────────────────────────────
+    const synthesisData = state.synthesisData as any;
+    const redTeamData = state.redTeamData as any;
+    const fatalInvalidationCount = (redTeamData?.invalidated_claims || []).filter((c: any) => c.severity === 'Fatal').length;
+    const majorInvalidationCount = (redTeamData?.invalidated_claims || []).filter((c: any) => c.severity === 'Major').length;
+    const redTeamResponse = synthesisData?.red_team_response || null;
+    const recommendationDowngraded = redTeamResponse?.recommendation_changed ?? false;
+    const originalRecommendation = redTeamResponse?.original_recommendation ?? null;
+
+    // Complete pipeline with all new fields
     const durationSeconds = (Date.now() - startTime) / 1000;
     await prisma.analysis.update({
       where: { id: analysisId },
@@ -250,18 +258,37 @@ export async function runPipeline(analysisId: string): Promise<void> {
         status: 'completed',
         currentAgent: null,
         overallConfidence,
-        decisionRecommendation: state.synthesisData?.decision_recommendation || 'CONDITIONAL_HOLD',
-        executiveSummary: state.synthesisData?.executive_summary,
-        boardNarrative: state.synthesisData?.board_narrative,
+        decisionRecommendation: synthesisData?.decision_recommendation || 'CONDITIONAL_HOLD',
+        executiveSummary: synthesisData?.executive_summary,
+        boardNarrative: synthesisData?.board_narrative,
         durationSeconds,
         completedAt: new Date(),
         logicConsistencyPassed: state.logicConsistencyPassed,
-        redTeamChallengeCount: (state.redTeamData as any)?.invalidated_claims?.length || 0,
+        redTeamChallengeCount: (redTeamData)?.invalidated_claims?.length || 0,
         selfCorrectionCount: state.selfCorrectionCount,
-      },
+        // New M&A + quality fields
+        fatalInvalidationCount,
+        majorInvalidationCount,
+        recommendationDowngraded,
+        originalRecommendation,
+        threeOptionsData: synthesisData?.three_options ?? null,
+        buildVsBuyVerdict: synthesisData?.build_vs_buy_verdict ?? null,
+        recommendedOption: synthesisData?.decision_recommendation ?? null,
+        hasBlockingWarnings: fatalInvalidationCount > 0,
+        confidenceBreakdown: {
+          strategist: state.agentConfidences.strategist || null,
+          quant: state.agentConfidences.quant || null,
+          market_intel: state.agentConfidences.market_intel || null,
+          risk: state.agentConfidences.risk || null,
+          red_team: state.agentConfidences.red_team || null,
+          ethicist: state.agentConfidences.ethicist || null,
+          cove: state.agentConfidences.cove || null,
+          overall: overallConfidence,
+        },
+      } as any,
     });
 
-    emitAnalysisComplete(analysisId, { overallConfidence, decisionRecommendation: state.synthesisData?.decision_recommendation || 'CONDITIONAL_HOLD', durationSeconds });
+    emitAnalysisComplete(analysisId, { overallConfidence, decisionRecommendation: synthesisData?.decision_recommendation || 'CONDITIONAL_HOLD', durationSeconds });
     log.info(`[PIPELINE] Completed ${analysisId} in ${durationSeconds.toFixed(1)}s — confidence: ${overallConfidence}`);
 
   } catch (error) {

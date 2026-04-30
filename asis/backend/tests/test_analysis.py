@@ -7,7 +7,9 @@ import pytest
 from asis.backend.db import database as db_state
 from asis.backend.db import models
 from asis.backend.agents.types import AgentOutput
+from asis.backend.agents.synthesis_v4 import V4SynthesisAgent
 from asis.backend.graph.pipeline import v4_workflow
+from asis.backend.config.settings import get_settings
 from asis.backend.schemas.v4 import AgentName, FrameworkName
 from conftest import register_user
 
@@ -475,3 +477,77 @@ async def test_pipeline_failure_message_is_sanitized(client, monkeypatch):
     assert analysis["status"] == "failed"
     assert analysis["error_message"] == "ASIS could not persist the final strategic brief. Please retry the analysis."
     assert "sqlalche.me" not in analysis["error_message"]
+
+
+def test_synthesis_agent_repairs_partial_live_output_without_fallback(monkeypatch):
+    from asis.backend.agents.llm_proxy import llm_proxy
+
+    monkeypatch.setenv("ASIS_DEMO_MODE", "false")
+    get_settings.cache_clear()
+
+    partial_live_output = {
+        "decision_statement": "PROCEED — pursue a phased expansion program with tight execution gates.",
+        "executive_summary": "bad-shape-from-llm",
+        "board_narrative": "Board narrative drafted from live model output.",
+        "recommendation": "PROCEED",
+        "overall_confidence": 0.79,
+        "framework_outputs": {
+            "pestle": {
+                "narrative": "Political and regulatory signals remain manageable under a staged launch.",
+                "structured_data": {"action_title": "Regulatory conditions support phased entry."},
+                "confidence_score": 0.74,
+            }
+        },
+        "_model_used": "llama-3.3-70b-versatile",
+        "_token_usage": {"tokens_in": 1200, "tokens_out": 900, "cost_usd": 0.0012},
+    }
+
+    monkeypatch.setattr(llm_proxy, "generate_json", lambda **kwargs: partial_live_output)
+
+    try:
+        agent = V4SynthesisAgent()
+        result = agent.run(
+            {
+                "analysis_id": "analysis-test",
+                "query": "Should Bain & Company expand AI governance services across India and Europe by 2027?",
+                "company_context": {
+                    "company_name": "Bain & Company",
+                    "sector": "Consulting",
+                    "geography": "India and Europe",
+                    "decision_type": "expand",
+                },
+                "extracted_context": {
+                    "company_name": "Bain & Company",
+                    "sector": "Consulting",
+                    "geography": "India and Europe",
+                    "decision_type": "expand",
+                },
+                "market_intel_output": {},
+                "risk_assessment_output": {},
+                "competitor_analysis_output": {},
+                "geo_intel_output": {},
+                "financial_reasoning_output": {},
+                "strategic_options_output": {},
+                "framework_outputs": {},
+                "agent_collaboration_trace": [],
+                "quality_failures": [],
+                "quality_retry_count": 0,
+            }
+        )
+
+        assert result.used_fallback is False
+        assert result.model_used == "llama-3.3-70b-versatile"
+        assert result.data["board_narrative"] == "Board narrative drafted from live model output."
+        assert result.data["executive_summary"]["headline"] == result.data["decision_statement"]
+        assert set(result.data["framework_outputs"].keys()) == {
+            "ansoff",
+            "balanced_scorecard",
+            "bcg_matrix",
+            "blue_ocean",
+            "mckinsey_7s",
+            "pestle",
+            "porters_five_forces",
+            "swot",
+        }
+    finally:
+        get_settings.cache_clear()

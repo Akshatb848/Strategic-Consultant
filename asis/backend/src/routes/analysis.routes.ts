@@ -81,6 +81,17 @@ function transformAnalysis(a: any): Record<string, unknown> {
     completed_at: a.completedAt ? (a.completedAt instanceof Date ? a.completedAt.toISOString() : String(a.completedAt)) : null,
     logic_consistency_passed: a.logicConsistencyPassed ?? null,
     self_correction_count: a.selfCorrectionCount ?? 0,
+    // ── M&A / Adversarial intelligence fields ─────────────────────────────
+    fatal_invalidation_count: a.fatalInvalidationCount ?? 0,
+    major_invalidation_count: a.majorInvalidationCount ?? 0,
+    recommendation_downgraded: a.recommendationDowngraded ?? false,
+    original_recommendation: a.originalRecommendation ?? null,
+    three_options: a.threeOptionsData ?? null,
+    build_vs_buy_verdict: a.buildVsBuyVerdict ?? null,
+    recommended_option: a.recommendedOption ?? null,
+    confidence_breakdown: a.confidenceBreakdown ?? null,
+    has_blocking_warnings: a.hasBlockingWarnings ?? false,
+    // ─────────────────────────────────────────────────────────────────────
     company_context: {},
     extracted_context: {
       organisation: a.organisationContext || '',

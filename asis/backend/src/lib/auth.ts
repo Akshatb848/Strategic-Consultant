@@ -20,13 +20,13 @@ export function generateTokenPair(userId: string): { accessToken: string; refres
   const accessToken = jwt.sign(
     { userId, type: 'access' },
     process.env.JWT_ACCESS_SECRET || 'dev-secret',
-    { expiresIn: process.env.JWT_ACCESS_EXPIRES || '15m' }
+    { expiresIn: process.env.JWT_ACCESS_EXPIRES || '15m' } as any
   );
   const refreshTokenValue = crypto.randomUUID() + '.' + Date.now();
   const refreshToken = jwt.sign(
     { userId, tokenId: refreshTokenValue, type: 'refresh' },
     process.env.JWT_REFRESH_SECRET || 'dev-secret',
-    { expiresIn: process.env.JWT_REFRESH_EXPIRES || '7d' }
+    { expiresIn: process.env.JWT_REFRESH_EXPIRES || '7d' } as any
   );
   return { accessToken, refreshToken };
 }

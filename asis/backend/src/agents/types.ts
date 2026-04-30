@@ -1,5 +1,6 @@
-// Re-export SearchResult so agents can import it from types
+// ── shared type re-exports ───────────────────────────────────────────────────
 export type { SearchResult } from '../lib/webSearch';
+import type { SearchResult } from '../lib/webSearch';
 
 export interface AgentInput {
   analysisId: string;
@@ -52,7 +53,29 @@ export interface PipelineState {
   completedAt: Date | null;
 }
 
+export interface CompanyProfile {
+  name: string;
+  estimated_revenue_usd: string;
+  revenue_tier: 'MEGA_CAP' | 'LARGE_CAP' | 'MID_CAP' | 'SME' | 'UNSPECIFIED';
+  ebitda_margin_pct: number | null;
+  market_cap_usd: string;
+  headquarters: string;
+  primary_sector: string;
+  key_subsidiaries_or_divisions: string[];
+  [k: string]: unknown;
+}
+
+export interface Citation {
+  id: string;
+  title: string;
+  publisher: string;
+  url: string;
+  year: string;
+  relevance: string;
+}
+
 export interface StrategistOutput {
+  company_profile: CompanyProfile;
   problem_decomposition: string[];
   mece_tree: MECEBranch[];
   analytical_framework: string;
@@ -64,6 +87,21 @@ export interface StrategistOutput {
   strategic_priority: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
   time_horizon: string;
   context: { org: string; industry: string; geography: string };
+  swot_analysis: { strengths: string[]; weaknesses: string[]; opportunities: string[]; threats: string[] };
+  ansoff_matrix: { current_position: string; recommended_move: string; rationale: string; risk_level: string; expected_revenue_impact: string };
+  mckinsey_7s: Record<string, { current_state: string; alignment_with_decision: string }>;
+  acquisition_prerequisites: AcquisitionPrerequisites | null;
+  citations: Citation[];
+  [k: string]: unknown;
+}
+
+export interface AcquisitionPrerequisites {
+  strategic_fit_score: number;
+  integration_complexity: 'Low' | 'Medium' | 'High' | 'Very High';
+  synergy_estimate: string;
+  build_vs_buy_trigger: string;
+  due_diligence_priorities: string[];
+  anti_trust_risk: string;
 }
 
 export interface MECEBranch {
@@ -72,7 +110,33 @@ export interface MECEBranch {
   assigned_agent: AgentId;
 }
 
+export interface MarketSizing {
+  tam: { value: string; basis: string; cagr: string; year: string };
+  sam: { value: string; calculation: string; rationale: string };
+  som: { value: string; calculation: string; timeline: string };
+  unit_economics: {
+    addressable_customers: number;
+    average_contract_value_usd: number;
+    conversion_rate_pct: number;
+    year1_revenue_usd: number;
+    gross_margin_pct: number;
+  };
+}
+
+export interface BCGMatrix {
+  quadrant: 'Star' | 'Cash Cow' | 'Question Mark' | 'Dog';
+  relative_market_share: number;
+  market_growth_rate_pct: number;
+  x_axis: number;
+  y_axis: number;
+  named_market_leader: string;
+  strategic_implication: string;
+}
+
 export interface QuantOutput {
+  company_scale_assumption: string;
+  market_sizing: MarketSizing;
+  bcg_matrix: BCGMatrix;
   investment_scenarios: InvestmentScenario[];
   monte_carlo_summary: MonteCarloSummary;
   cost_of_inaction: string;
@@ -85,6 +149,11 @@ export interface QuantOutput {
   sensitivity_factors: string[];
   confidence_score: number;
   cfo_recommendation: string;
+  revenue_attribution_methodology: string | null;
+  acquisition_premium_analysis: string | null;
+  total_acquisition_cost: string | null;
+  citations: Citation[];
+  [k: string]: unknown;
 }
 
 export interface InvestmentScenario {
@@ -111,9 +180,21 @@ export interface MonteCarloSummary {
   recommended_action: string;
 }
 
+export interface BlueOceanStrategy {
+  strategy_canvas: Array<{
+    factor: string;
+    industry_avg: number;
+    company_score: number;
+    competitor_scores: Record<string, number>;
+  }>;
+  errc_grid: { eliminate: string[]; reduce: string[]; raise: string[]; create: string[] };
+  blue_ocean_move: string;
+}
+
 export interface MarketIntelOutput {
   pestle_analysis: PESTLEAnalysis;
   porters_five_forces: PortersFiveForces;
+  blue_ocean_strategy: BlueOceanStrategy;
   regulatory_landscape: RegulatoryItem[];
   market_signals: string[];
   key_findings: string[];
@@ -122,6 +203,8 @@ export interface MarketIntelOutput {
   data_sources: string[];
   confidence_score: number;
   strategic_implication: string;
+  citations: Citation[];
+  [k: string]: unknown;
 }
 
 export interface PESTLEAnalysis {
@@ -162,6 +245,7 @@ export interface RiskOutput {
   confidence_score: number;
   board_escalation_required: boolean;
   escalation_rationale: string;
+  [k: string]: unknown;
 }
 
 export interface RiskItem {
@@ -192,9 +276,12 @@ export interface RedTeamOutput {
   surviving_claims: string[];
   talent_exodus_risk: string;
   competitor_response_scenarios: string[];
+  build_vs_buy_invalidation: string | null;
+  integration_failure_risks: string | null;
   confidence_score: number;
   overall_threat_level: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
   red_team_verdict: string;
+  [k: string]: unknown;
 }
 
 export interface PreMortemScenario {
@@ -213,15 +300,41 @@ export interface InvalidatedClaim {
   severity: 'Fatal' | 'Major' | 'Minor';
 }
 
+export interface ValueChainActivity {
+  current_state: string;
+  competitive_advantage: 'Yes' | 'No' | 'Partial';
+  gap_for_execution: string;
+}
+
+export interface VRIOItem {
+  capability: string;
+  valuable: boolean;
+  rare: boolean;
+  inimitable: boolean;
+  organised: boolean;
+  vrio_status: 'SUSTAINABLE_COMPETITIVE_ADVANTAGE' | 'UNUSED_COMPETITIVE_ADVANTAGE' | 'TEMPORARY_ADVANTAGE' | 'COMPETITIVE_PARITY' | 'COMPETITIVE_DISADVANTAGE';
+  strategic_implication: string;
+}
+
 export interface EthicistOutput {
+  value_chain_analysis: {
+    primary_activities: Record<string, ValueChainActivity>;
+    support_activities: Record<string, ValueChainActivity>;
+    value_chain_verdict: string;
+    margin_concentration: string;
+  };
+  vrio_assessment: VRIOItem[];
   brand_risk_assessment: string;
   esg_implications: string[];
   cultural_fit_score: number;
   regulatory_ethics_flags: string[];
   stakeholder_impact: StakeholderImpact[];
+  capability_readiness_verdict: string;
   recommendation: 'Proceed' | 'Proceed with Conditions' | 'Pause' | 'Do Not Proceed';
   conditions: string[];
   confidence_score: number;
+  citations: Citation[];
+  [k: string]: unknown;
 }
 
 export interface StakeholderImpact {
@@ -249,6 +362,7 @@ export interface CoVeOutput {
     financial_grounding: number;
     actionability: number;
   };
+  [k: string]: unknown;
 }
 
 export interface VerificationCheck {
@@ -273,6 +387,20 @@ export interface SelfCorrection {
   agent_affected: AgentId;
 }
 
+export interface RedTeamResponse {
+  fatal_invalidations_resolved: number;
+  major_invalidations_adjusted: number;
+  recommendation_changed: boolean;
+  original_recommendation: string;
+  adjustment_rationale: string;
+}
+
+export interface FrameworkSoWhat {
+  implication: string;
+  recommended_action: string;
+  risk_of_inaction: string;
+}
+
 export interface SynthesisOutput {
   executive_summary: string;
   board_narrative: string;
@@ -285,7 +413,13 @@ export interface SynthesisOutput {
   risk_adjusted_recommendation: string;
   overall_confidence: number;
   frameworks_applied: string[];
+  framework_so_whats: Record<string, FrameworkSoWhat> | null;
   dissertation_contribution?: string;
+  red_team_response: RedTeamResponse | null;
+  three_options: unknown | null;
+  build_vs_buy_verdict: string | null;
+  citations: Citation[];
+  [k: string]: unknown;
 }
 
 export interface RoadmapPhase {

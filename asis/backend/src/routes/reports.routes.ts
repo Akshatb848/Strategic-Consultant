@@ -39,138 +39,132 @@ function buildFrameworkOutputs(analysis: Record<string, unknown>): Record<string
   const strategistData = (analysis.strategistData || {}) as Record<string, unknown>;
   const quantData = (analysis.quantData || {}) as Record<string, unknown>;
   const synthesisData = (analysis.synthesisData || {}) as Record<string, unknown>;
+  const ethicistData = (analysis.ethicistData || {}) as Record<string, unknown>;
+
+  const soWhats = (synthesisData.framework_so_whats || {}) as Record<string, Record<string, string>>;
+
+  function withSoWhat(name: string, data: Record<string, unknown>, confidence?: number, source?: string): FrameworkOutput {
+    const sw = soWhats[name];
+    return {
+      name,
+      data: sw ? { ...data, so_what_callout: sw } : data,
+      confidence,
+      source_agent: source,
+    };
+  }
 
   const frameworks: Record<string, FrameworkOutput> = {};
 
   // PESTLE
-  if (marketIntelData.pestle_analysis) {
-    frameworks['pestle'] = {
-      name: 'PESTLE Analysis',
-      data: marketIntelData.pestle_analysis as Record<string, unknown>,
-      confidence: typeof marketIntelData.confidence_score === 'number' ? marketIntelData.confidence_score : undefined,
-      source_agent: 'market_intel',
-    };
-  } else {
-    frameworks['pestle'] = {
-      name: 'PESTLE Analysis',
-      data: { note: 'Extracted from market intelligence analysis', market_intel: marketIntelData },
-      source_agent: 'market_intel',
-    };
-  }
+  frameworks['pestle'] = withSoWhat(
+    'PESTLE Analysis',
+    marketIntelData.pestle_analysis ? marketIntelData.pestle_analysis as Record<string, unknown> : { market_intel: marketIntelData },
+    typeof marketIntelData.confidence_score === 'number' ? marketIntelData.confidence_score : undefined,
+    'market_intel'
+  );
 
   // Porter's Five Forces
-  if (marketIntelData.porters_analysis || marketIntelData.porters_five_forces) {
-    frameworks['porters_five_forces'] = {
-      name: "Porter's Five Forces",
-      data: (marketIntelData.porters_analysis || marketIntelData.porters_five_forces) as Record<string, unknown>,
-      confidence: typeof marketIntelData.confidence_score === 'number' ? marketIntelData.confidence_score : undefined,
-      source_agent: 'market_intel',
-    };
-  } else {
-    frameworks['porters_five_forces'] = {
-      name: "Porter's Five Forces",
-      data: { note: 'Extracted from market intelligence analysis', market_intel: marketIntelData },
-      source_agent: 'market_intel',
-    };
-  }
+  const portData = (marketIntelData.porters_analysis || marketIntelData.porters_five_forces || {}) as Record<string, unknown>;
+  frameworks['porters_five_forces'] = withSoWhat(
+    "Porter's Five Forces",
+    Object.keys(portData).length ? portData : { market_intel: marketIntelData },
+    typeof marketIntelData.confidence_score === 'number' ? marketIntelData.confidence_score : undefined,
+    'market_intel'
+  );
+
+  // Blue Ocean Strategy
+  frameworks['blue_ocean'] = withSoWhat(
+    'Blue Ocean Strategy',
+    marketIntelData.blue_ocean_strategy ? marketIntelData.blue_ocean_strategy as Record<string, unknown> : { market_intel: marketIntelData },
+    typeof marketIntelData.confidence_score === 'number' ? marketIntelData.confidence_score : undefined,
+    'market_intel'
+  );
 
   // SWOT
-  if (strategistData.swot_analysis) {
-    frameworks['swot'] = {
-      name: 'SWOT Analysis',
-      data: strategistData.swot_analysis as Record<string, unknown>,
-      confidence: typeof strategistData.confidence_score === 'number' ? strategistData.confidence_score : undefined,
-      source_agent: 'strategist',
-    };
-  } else {
-    frameworks['swot'] = {
-      name: 'SWOT Analysis',
-      data: { note: 'Extracted from strategic analysis', strategist: strategistData },
-      source_agent: 'strategist',
-    };
-  }
+  frameworks['swot'] = withSoWhat(
+    'SWOT Analysis',
+    strategistData.swot_analysis ? strategistData.swot_analysis as Record<string, unknown> : { strategist: strategistData },
+    typeof strategistData.confidence_score === 'number' ? strategistData.confidence_score : undefined,
+    'strategist'
+  );
 
   // BCG Matrix
-  if (quantData.bcg_matrix) {
-    frameworks['bcg_matrix'] = {
-      name: 'BCG Matrix',
-      data: quantData.bcg_matrix as Record<string, unknown>,
+  frameworks['bcg_matrix'] = withSoWhat(
+    'BCG Matrix',
+    quantData.bcg_matrix ? quantData.bcg_matrix as Record<string, unknown> : { quant: quantData },
+    typeof quantData.confidence_score === 'number' ? quantData.confidence_score : undefined,
+    'quant'
+  );
+
+  // Market Sizing (TAM/SAM/SOM)
+  if (quantData.market_sizing) {
+    frameworks['market_sizing'] = {
+      name: 'TAM → SAM → SOM Revenue Model',
+      data: quantData.market_sizing as Record<string, unknown>,
       confidence: typeof quantData.confidence_score === 'number' ? quantData.confidence_score : undefined,
-      source_agent: 'quant',
-    };
-  } else {
-    frameworks['bcg_matrix'] = {
-      name: 'BCG Matrix',
-      data: { note: 'Extracted from quantitative analysis', quant: quantData },
       source_agent: 'quant',
     };
   }
 
   // Ansoff Matrix
-  if (strategistData.ansoff_matrix) {
-    frameworks['ansoff_matrix'] = {
-      name: 'Ansoff Matrix',
-      data: strategistData.ansoff_matrix as Record<string, unknown>,
-      confidence: typeof strategistData.confidence_score === 'number' ? strategistData.confidence_score : undefined,
-      source_agent: 'strategist',
-    };
-  } else {
-    frameworks['ansoff_matrix'] = {
-      name: 'Ansoff Matrix',
-      data: { note: 'Extracted from strategic analysis', strategist: strategistData },
-      source_agent: 'strategist',
-    };
-  }
+  frameworks['ansoff_matrix'] = withSoWhat(
+    'Ansoff Matrix',
+    strategistData.ansoff_matrix ? strategistData.ansoff_matrix as Record<string, unknown> : { strategist: strategistData },
+    typeof strategistData.confidence_score === 'number' ? strategistData.confidence_score : undefined,
+    'strategist'
+  );
 
   // McKinsey 7-S
-  if (strategistData.mckinsey_7s) {
-    frameworks['mckinsey_7s'] = {
-      name: 'McKinsey 7-S Framework',
-      data: strategistData.mckinsey_7s as Record<string, unknown>,
-      confidence: typeof strategistData.confidence_score === 'number' ? strategistData.confidence_score : undefined,
-      source_agent: 'strategist',
-    };
-  } else {
-    frameworks['mckinsey_7s'] = {
-      name: 'McKinsey 7-S Framework',
-      data: { note: 'Extracted from strategic analysis', strategist: strategistData },
-      source_agent: 'strategist',
-    };
-  }
+  frameworks['mckinsey_7s'] = withSoWhat(
+    'McKinsey 7-S Framework',
+    strategistData.mckinsey_7s ? strategistData.mckinsey_7s as Record<string, unknown> : { strategist: strategistData },
+    typeof strategistData.confidence_score === 'number' ? strategistData.confidence_score : undefined,
+    'strategist'
+  );
 
-  // Blue Ocean
-  if (marketIntelData.blue_ocean) {
-    frameworks['blue_ocean'] = {
-      name: 'Blue Ocean Strategy',
-      data: marketIntelData.blue_ocean as Record<string, unknown>,
-      confidence: typeof marketIntelData.confidence_score === 'number' ? marketIntelData.confidence_score : undefined,
-      source_agent: 'market_intel',
-    };
-  } else {
-    frameworks['blue_ocean'] = {
-      name: 'Blue Ocean Strategy',
-      data: { note: 'Extracted from market intelligence analysis', market_intel: marketIntelData },
-      source_agent: 'market_intel',
-    };
-  }
+  // Porter's Value Chain
+  frameworks['value_chain'] = withSoWhat(
+    "Porter's Value Chain",
+    ethicistData.value_chain_analysis ? ethicistData.value_chain_analysis as Record<string, unknown> : { ethicist: ethicistData },
+    typeof ethicistData.confidence_score === 'number' ? ethicistData.confidence_score : undefined,
+    'ethicist'
+  );
+
+  // VRIO
+  frameworks['vrio'] = withSoWhat(
+    'VRIO Framework',
+    ethicistData.vrio_assessment ? { items: ethicistData.vrio_assessment, verdict: ethicistData.capability_readiness_verdict } : { ethicist: ethicistData },
+    typeof ethicistData.confidence_score === 'number' ? ethicistData.confidence_score : undefined,
+    'ethicist'
+  );
 
   // Balanced Scorecard
-  if (synthesisData.balanced_scorecard) {
-    frameworks['balanced_scorecard'] = {
-      name: 'Balanced Scorecard',
-      data: synthesisData.balanced_scorecard as Record<string, unknown>,
-      confidence: typeof synthesisData.overall_confidence === 'number' ? synthesisData.overall_confidence : undefined,
-      source_agent: 'synthesis',
-    };
-  } else {
-    frameworks['balanced_scorecard'] = {
-      name: 'Balanced Scorecard',
-      data: { note: 'Extracted from synthesis report', synthesis: synthesisData },
-      source_agent: 'synthesis',
-    };
-  }
+  frameworks['balanced_scorecard'] = withSoWhat(
+    'Balanced Scorecard',
+    synthesisData.balanced_scorecard ? synthesisData.balanced_scorecard as Record<string, unknown> : { synthesis: synthesisData },
+    typeof synthesisData.overall_confidence === 'number' ? synthesisData.overall_confidence : undefined,
+    'synthesis'
+  );
 
   return frameworks;
+}
+
+function buildCitations(analysis: Record<string, unknown>): unknown[] {
+  const agentFields = ['strategistData', 'quantData', 'marketIntelData', 'riskData', 'redTeamData', 'ethicistData', 'synthesisData'];
+  const seen = new Set<string>();
+  const citations: unknown[] = [];
+  for (const field of agentFields) {
+    const data = (analysis[field] || {}) as Record<string, unknown>;
+    const agentCites = (data.citations || []) as Array<Record<string, unknown>>;
+    for (const c of agentCites) {
+      const url = String(c.url || '');
+      if (url && !url.includes('example.com') && !seen.has(url)) {
+        seen.add(url);
+        citations.push(c);
+      }
+    }
+  }
+  return citations;
 }
 
 function buildCollaborationTrace(agentLogs: Array<Record<string, unknown>>): AgentCollaborationEvent[] {
@@ -358,7 +352,8 @@ router.get('/:analysisId/frameworks', requireAuth, async (req: Request, res: Res
     }
 
     const framework_outputs = buildFrameworkOutputs(analysis as unknown as Record<string, unknown>);
-    res.json({ framework_outputs });
+    const citations = buildCitations(analysis as unknown as Record<string, unknown>);
+    res.json({ framework_outputs, citations, citation_count: citations.length });
   } catch (err) {
     log.error('Frameworks extraction error', { error: String(err) });
     res.status(500).json({ code: 'INTERNAL_ERROR', message: 'Failed to extract frameworks' });
@@ -412,16 +407,20 @@ router.get('/:analysisId/decision', requireAuth, async (req: Request, res: Respo
     res.json({
       decision_statement: synthesisData.decision_recommendation || analysis.decisionRecommendation || 'HOLD',
       decision_confidence: synthesisData.overall_confidence || analysis.overallConfidence || 0,
-      decision_rationale: synthesisData.decision_rationale || analysis.executiveSummary || '',
-      supporting_frameworks: synthesisData.supporting_frameworks || [
-        'PESTLE Analysis',
-        "Porter's Five Forces",
-        'SWOT Analysis',
-        'BCG Matrix',
-        'Ansoff Matrix',
-      ],
+      decision_rationale: synthesisData.risk_adjusted_recommendation || synthesisData.decision_rationale || analysis.executiveSummary || '',
+      executive_summary: analysis.executiveSummary || synthesisData.executive_summary || '',
       board_narrative: analysis.boardNarrative || synthesisData.board_narrative || '',
+      strategic_imperatives: synthesisData.strategic_imperatives || [],
+      supporting_frameworks: synthesisData.frameworks_applied || [
+        'PESTLE Analysis', "Porter's Five Forces", 'Blue Ocean Strategy',
+        'SWOT Analysis', 'BCG Matrix', 'TAM→SAM→SOM', 'Ansoff Matrix',
+        'McKinsey 7-S', "Porter's Value Chain", 'VRIO Framework',
+        'COSO ERM 2017', 'Balanced Scorecard', 'McKinsey Three Horizons'
+      ],
+      framework_so_whats: synthesisData.framework_so_whats || null,
+      red_team_response: synthesisData.red_team_response || null,
     });
+
   } catch (err) {
     log.error('Decision payload error', { error: String(err) });
     res.status(500).json({ code: 'INTERNAL_ERROR', message: 'Failed to get decision' });
