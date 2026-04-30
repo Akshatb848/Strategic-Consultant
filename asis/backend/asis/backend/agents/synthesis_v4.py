@@ -19,6 +19,7 @@ from asis.backend.agents.v4_support import (
     framework_display_name,
     framework_key_finding,
 )
+from asis.backend.config.logging import logger
 from asis.backend.config.settings import get_settings
 from asis.backend.schemas.v4 import AgentName, FrameworkName, StrategicBriefV4
 
@@ -173,7 +174,8 @@ CRITICAL RULES:
             validated = StrategicBriefV4.model_validate(merged).model_dump(mode="json")
             validated["confidence_score"] = merged["confidence_score"]
             return validated
-        except Exception:
+        except Exception as exc:
+            logger.warning("synthesis_validation_fallback", error=str(exc))
             validated = StrategicBriefV4.model_validate(scaffold).model_dump(mode="json")
             validated["confidence_score"] = scaffold.get("confidence_score", scaffold.get("overall_confidence", 0.68))
             return validated

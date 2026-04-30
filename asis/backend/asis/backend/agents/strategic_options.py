@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from asis.backend.agents.base import BaseAgent, calculate_confidence
 from asis.backend.agents.references import build_citations
 from asis.backend.agents.v4_support import build_framework_output
@@ -10,6 +12,81 @@ class StrategicOptionsAgent(BaseAgent):
     agent_id = "strategic_options"
     agent_name = "Strategic Options"
     framework = "Ansoff Matrix + Blue Ocean + McKinsey 7S"
+
+    def system_prompt(self) -> str:
+        return """You are the Strategic Options agent for ASIS v4.0.
+Score and rank strategic options using Ansoff Matrix, Blue Ocean Strategy, and McKinsey 7S.
+You have access to all 5 upstream agent outputs. Return a JSON patch enriching the scaffold.
+JSON only, no markdown.
+
+Required patch shape:
+{
+  "ansoff_quadrant": "market_penetration|market_development|product_development|diversification",
+  "strategic_options": [
+    {
+      "option": "<specific option name>",
+      "quadrant": "<ansoff quadrant>",
+      "feasibility_score": <float 0-1>,
+      "risk_score": <float 0-1>,
+      "rationale": "<why this option scores as it does given upstream evidence>"
+    }
+  ],
+  "recommended_option": "<name of the top-ranked option>",
+  "option_rationale": "<one paragraph justifying the recommended option using upstream evidence>",
+  "blue_ocean_factors": {
+    "eliminate": ["<factor to eliminate>"],
+    "reduce": ["<factor to reduce>"],
+    "raise": ["<factor to raise>"],
+    "create": ["<new factor to create>"]
+  },
+  "mckinsey_7s_fit_score": <float 0-1>,
+  "mckinsey_7s_gaps": ["<critical gap 1>", "<critical gap 2>"],
+  "confidence_score": <float 0.5-0.95>
+}
+
+Rules:
+- strategic_options list must include AT LEAST 3 options with different Ansoff quadrants
+- feasibility_score must reflect financial_reasoning IRR and capital requirements
+- risk_score must incorporate risk register findings
+- blue_ocean factors must be specific to this company's competitive position vs named competitors
+- 7S gaps must reflect the actual capabilities required for the recommended option
+- option_rationale must EXPLICITLY reference data from at least 3 upstream agents"""
+
+    def user_prompt(self, state) -> str:
+        ctx = state.get("extracted_context") or state.get("company_context") or {}
+        market = state.get("market_intel_output") or {}
+        risk = state.get("risk_assessment_output") or {}
+        comp = state.get("competitor_analysis_output") or {}
+        geo = state.get("geo_intel_output") or {}
+        fin = state.get("financial_reasoning_output") or {}
+
+        upstream = {
+            "recommended_ansoff": (market.get("porters_five_forces") or {}).get("strategic_implication"),
+            "market_growth": (market.get("market_size_summary") or {}).get("growth_rate"),
+            "top_risks": [r.get("description") for r in (risk.get("risk_register") or [])[:3]],
+            "top_competitors": comp.get("top_competitors", []),
+            "competitive_positioning": comp.get("competitive_positioning_insight"),
+            "political_risk": geo.get("political_risk_score"),
+            "cage_distance": (geo.get("cage_distance_analysis") or {}).get("key_implication"),
+            "irr_base": (fin.get("scenario_analysis") or {}).get("base", {}).get("irr_pct"),
+            "irr_downside": (fin.get("scenario_analysis") or {}).get("downside", {}).get("irr_pct"),
+            "bcg_entry_position": next(
+                (u.get("category") for u in (fin.get("business_units") or []) if "entry" in (u.get("name") or "").lower()),
+                None,
+            ),
+        }
+        company_info = {
+            "company": ctx.get("company_name"),
+            "sector": ctx.get("sector"),
+            "geography": ctx.get("geography"),
+            "decision_type": ctx.get("decision_type"),
+        }
+        return (
+            f"Strategic question:\n{state['query']}\n\n"
+            f"Company:\n{json.dumps(company_info, ensure_ascii=False)}\n\n"
+            f"Upstream intelligence:\n{json.dumps(upstream, ensure_ascii=False)}\n\n"
+            "Score and rank the strategic options using Ansoff, Blue Ocean, and 7S. Return the JSON patch."
+        )
 
     def local_result(self, state) -> dict:
         context = state.get("extracted_context") or {}

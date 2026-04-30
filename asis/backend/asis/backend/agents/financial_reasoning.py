@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from asis.backend.agents.base import BaseAgent, calculate_confidence
 from asis.backend.agents.references import build_citations
 from asis.backend.agents.v4_support import build_framework_output
@@ -10,6 +12,83 @@ class FinancialReasoningAgent(BaseAgent):
     agent_id = "financial_reasoning"
     agent_name = "Financial Reasoning"
     framework = "BCG Matrix + capital case + balanced scorecard seed"
+
+    def system_prompt(self) -> str:
+        return """You are the Financial Reasoning agent for ASIS v4.0.
+Build the capital case, BCG Matrix positioning, financial projections, and balanced scorecard seed.
+You have access to outputs from Market Intelligence, Risk Assessment, Competitor Analysis, and Geo Intel.
+Return a JSON patch enriching the precomputed scaffold. JSON only, no markdown.
+
+Required patch shape:
+{
+  "business_units": [
+    {
+      "name": "<business unit name>",
+      "market_growth_rate": <float, annual %>,
+      "relative_market_share": <float, relative to largest competitor>,
+      "category": "star|cash_cow|question_mark|dog",
+      "strategic_implication": "<what this means for capital allocation>"
+    }
+  ],
+  "financial_projections": {
+    "year_1": {"revenue": <USD>, "ebitda": <USD>, "roi": <float 0-1>, "irr": <float 0-1>},
+    "year_3": {"revenue": <USD>, "ebitda": <USD>, "roi": <float 0-1>, "irr": <float 0-1>},
+    "year_5": {"revenue": <USD>, "ebitda": <USD>, "roi": <float 0-1>, "irr": <float 0-1>}
+  },
+  "scenario_analysis": {
+    "base": {"revenue_usd_mn": <float>, "irr_pct": <float>, "payback_months": <int>},
+    "upside": {"revenue_usd_mn": <float>, "irr_pct": <float>, "payback_months": <int>},
+    "downside": {"revenue_usd_mn": <float>, "irr_pct": <float>, "payback_months": <int>}
+  },
+  "capital_requirements": {
+    "phase_1_usd_mn": <float>,
+    "total_investment_usd_mn": <float>,
+    "funding_structure": "<e.g. 60% equity / 40% debt>"
+  },
+  "peer_benchmarking": [
+    {"company": "<peer name>", "metric": "<metric>", "value": "<value>", "peer_average": "<average>"}
+  ],
+  "key_financial_risks": ["<risk 1 from risk assessment>", "..."],
+  "confidence_score": <float 0.5-0.95>
+}
+
+Rules:
+- Revenue and EBITDA must be calibrated to the company's size (from company context)
+- BCG positioning must reflect market_intel growth rates and competitor analysis share data
+- Scenario analysis must reflect risk assessment findings (downside = worst risks materialise)
+- Capital requirements must be realistic for this sector and scale
+- key_financial_risks must come from the risk register provided"""
+
+    def user_prompt(self, state) -> str:
+        ctx = state.get("extracted_context") or state.get("company_context") or {}
+        market = state.get("market_intel_output") or {}
+        risk = state.get("risk_assessment_output") or {}
+        comp = state.get("competitor_analysis_output") or {}
+        geo = state.get("geo_intel_output") or {}
+
+        upstream = {
+            "market_summary": market.get("market_size_summary"),
+            "market_growth_themes": (market.get("market_growth_themes") or [])[:3],
+            "market_attractiveness": (market.get("porters_five_forces") or {}).get("overall_attractiveness"),
+            "top_risks": [r.get("description") for r in (risk.get("risk_register") or [])[:3]],
+            "top_competitors": comp.get("top_competitors", []),
+            "political_risk_score": geo.get("political_risk_score"),
+            "fdi_sentiment": geo.get("fdi_sentiment"),
+        }
+        company_info = {
+            "company": ctx.get("company_name"),
+            "sector": ctx.get("sector"),
+            "geography": ctx.get("geography"),
+            "annual_revenue": ctx.get("annual_revenue"),
+            "employees": ctx.get("employees"),
+            "decision_type": ctx.get("decision_type"),
+        }
+        return (
+            f"Strategic question:\n{state['query']}\n\n"
+            f"Company:\n{json.dumps(company_info, ensure_ascii=False)}\n\n"
+            f"Upstream intelligence summary:\n{json.dumps(upstream, ensure_ascii=False)}\n\n"
+            "Build the financial case calibrated to this company's scale and risk profile. Return the JSON patch."
+        )
 
     def local_result(self, state) -> dict:
         context = state.get("extracted_context") or {}
