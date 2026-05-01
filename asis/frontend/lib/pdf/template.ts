@@ -1,4 +1,4 @@
-import type { StrategicBriefV4 } from "@/lib/api";
+import type { ReportTheme, SoWhatCallout, StrategicBriefV4 } from "@/lib/api";
 import {
   renderAnsoffHtml,
   renderBcgSvg,
@@ -18,6 +18,53 @@ const COLORS = {
   divider: "#e2e8f0",
 };
 
+const PDF_THEME_COLORS: Record<ReportTheme, typeof COLORS> = {
+  mckinsey: {
+    primary: "#051C2C",
+    accent: "#00A9CE",
+    text: "#1A1A1A",
+    muted: "#666666",
+    divider: "#E0E0E0",
+  },
+  bain: {
+    primary: "#1A1A1A",
+    accent: "#CC0000",
+    text: "#1A1A1A",
+    muted: "#666666",
+    divider: "#E7D7D7",
+  },
+  bcg: {
+    primary: "#2D2D2D",
+    accent: "#009B77",
+    text: "#1A1A1A",
+    muted: "#666666",
+    divider: "#D7E6E1",
+  },
+  neutral: {
+    primary: "#1C2B3A",
+    accent: "#4A90D9",
+    text: "#1A1A1A",
+    muted: "#666666",
+    divider: "#E0E6ED",
+  },
+};
+
+type JsonRecord = Record<string, unknown>;
+
+function asRecord(value: unknown): JsonRecord {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : {};
+}
+
+function asRecordArray(value: unknown): JsonRecord[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is JsonRecord => Boolean(item) && typeof item === "object" && !Array.isArray(item))
+    : [];
+}
+
+function asStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0) : [];
+}
+
 function inlineLogo(logoUrl?: string | null): string {
   if (logoUrl) {
     return `<img src="${logoUrl}" alt="Company logo" style="max-height:42px;max-width:180px;" />`;
@@ -34,7 +81,7 @@ function list(items: string[]) {
   return `<ul>${items.map((item) => `<li>${item}</li>`).join("")}</ul>`;
 }
 
-function citationList(citations: Array<Record<string, any>>) {
+function citationList(citations: JsonRecord[]) {
   return `
     <ol class="citations">
       ${citations
@@ -110,14 +157,15 @@ function calloutBox(title: string, body: string, tone: "amber" | "blue" | "slate
   `;
 }
 
-function soWhatBox(callout?: Record<string, any>) {
+function soWhatBox(callout?: SoWhatCallout | JsonRecord) {
   if (!callout) return "";
+  const data = asRecord(callout);
   return `
     <div class="so-what-box">
       <div class="callout-title">So What</div>
-      <p><strong>Implication:</strong> ${String(callout.implication || "-")}</p>
-      <p><strong>Recommended Action:</strong> ${String(callout.recommended_action || "-")}</p>
-      <p><strong>Risk of Inaction:</strong> ${String(callout.risk_of_inaction || "-")}</p>
+      <p><strong>Implication:</strong> ${String(data.implication || "-")}</p>
+      <p><strong>Recommended Action:</strong> ${String(data.recommended_action || "-")}</p>
+      <p><strong>Risk of Inaction:</strong> ${String(data.risk_of_inaction || "-")}</p>
     </div>
   `;
 }
@@ -126,27 +174,31 @@ export function buildPdfHtml({
   brief,
   appendix,
   logoUrl,
+  theme = "mckinsey",
 }: {
   brief: StrategicBriefV4;
-  appendix: Record<string, any>;
+  appendix: JsonRecord;
   logoUrl?: string | null;
+  theme?: ReportTheme;
 }): string {
-  const context = brief.context || {};
+  const themeColors = PDF_THEME_COLORS[theme];
+  const context = asRecord(brief.context);
   const citations = brief.citations || [];
-  const riskRegister = brief.risk_analysis?.risk_register || [];
-  const competitorProfiles = brief.market_analysis?.competitor_profiles || [];
-  const projections = brief.financial_analysis?.financial_projections || {};
-  const bottomUp = brief.financial_analysis?.bottom_up_revenue_model || {};
-  const sectorBuild = Array.isArray(bottomUp.sector_build) ? bottomUp.sector_build : [];
-  const scenarioAnalysis = brief.financial_analysis?.scenario_analysis || {};
-  const scenarios = Array.isArray(scenarioAnalysis.scenarios) ? scenarioAnalysis.scenarios : [];
-  const pathwayAnalysis = brief.market_analysis?.strategic_pathways || {};
-  const pathwayOptions = Array.isArray(pathwayAnalysis.options) ? pathwayAnalysis.options : [];
-  const capabilityFit = brief.market_analysis?.capability_fit_matrix || {};
-  const capabilityRows = Array.isArray(capabilityFit.rows) ? capabilityFit.rows : [];
-  const executionRealism = brief.risk_analysis?.execution_realism || {};
-  const executionItems = Array.isArray(executionRealism.items) ? executionRealism.items : [];
-  const ansoff = brief.framework_outputs?.ansoff?.structured_data || {};
+  const riskRegister = asRecordArray(brief.risk_analysis?.risk_register);
+  const competitorProfiles = asRecordArray(brief.market_analysis?.competitor_profiles);
+  const marketSizing = asRecord(brief.market_analysis?.market_sizing);
+  const projections = asRecord(brief.financial_analysis?.financial_projections);
+  const bottomUp = asRecord(brief.financial_analysis?.bottom_up_revenue_model);
+  const sectorBuild = asRecordArray(bottomUp.sector_build);
+  const scenarioAnalysis = asRecord(brief.financial_analysis?.scenario_analysis);
+  const scenarios = asRecordArray(scenarioAnalysis.scenarios);
+  const pathwayAnalysis = asRecord(brief.market_analysis?.strategic_pathways);
+  const pathwayOptions = asRecordArray(pathwayAnalysis.options);
+  const capabilityFit = asRecord(brief.market_analysis?.capability_fit_matrix);
+  const capabilityRows = asRecordArray(capabilityFit.rows);
+  const executionRealism = asRecord(brief.risk_analysis?.execution_realism);
+  const executionItems = asRecordArray(executionRealism.items);
+  const ansoff = asRecord(brief.framework_outputs?.ansoff?.structured_data);
   const optionRows = [
     ["market_penetration", "Market Penetration"],
     ["market_development", "Market Development"],
@@ -154,7 +206,7 @@ export function buildPdfHtml({
     ["diversification", "Diversification"],
   ]
     .map(([key, label]) => {
-      const option = ansoff[key] || {};
+      const option = asRecord(ansoff[key]);
       return {
         label,
         key,
@@ -164,7 +216,9 @@ export function buildPdfHtml({
       };
     })
     .filter((option) => option.feasibility > 0 || option.rationale);
-  const geoRiskEntries = Object.entries((brief.risk_analysis?.cage_distance_analysis || {}) as Record<string, string>);
+  const geoRiskEntries = Object.entries(asRecord(brief.risk_analysis?.cage_distance_analysis)).map(
+    ([key, value]) => [key, String(value)] as [string, string]
+  );
   const decisionPalette = decisionTone(brief.decision_statement);
   const collaborationRows = (brief.agent_collaboration_trace || [])
     .map(
@@ -175,7 +229,7 @@ export function buildPdfHtml({
   const frameworkRows = Object.entries(brief.framework_outputs || {})
     .map(
       ([key, output]) =>
-        `<tr><td>${key}</td><td>${output.agent_author}</td><td>${Math.round((output.confidence_score || 0) * 100)}%</td><td>${output.narrative}</td></tr>`
+        `<tr><td>${key}</td><td>${output.agent_author}</td><td>${formatPercent(output.confidence_score)}</td><td>${output.narrative}</td></tr>`
     )
     .join("");
 
@@ -186,38 +240,38 @@ export function buildPdfHtml({
       <meta charset="utf-8" />
       <style>
         @page { size: A4; margin: 25mm 20mm 20mm 25mm; }
-        body { font-family: Arial, sans-serif; color: ${COLORS.text}; font-size: 10pt; line-height: 1.5; margin: 0; }
+        body { font-family: Arial, sans-serif; color: ${themeColors.text}; font-size: 10pt; line-height: 1.5; margin: 0; background:#fff; }
         .page-break { page-break-before: always; }
         .cover { min-height: 250mm; display: flex; flex-direction: column; justify-content: space-between; }
-        h1, h2, h3, h4 { color: ${COLORS.primary}; margin: 0; }
+        h1, h2, h3, h4 { color: ${themeColors.primary}; margin: 0; }
         h1 { font-size: 28pt; line-height: 1.1; }
-        h2 { font-size: 18pt; margin-bottom: 10px; }
+        h2 { font-size: 18pt; margin-bottom: 10px; letter-spacing: 0.04em; text-transform: uppercase; }
         h3 { font-size: 14pt; margin: 18px 0 10px; }
         h4 { font-size: 11pt; margin: 12px 0 8px; }
         p { margin: 8px 0; }
-        .subtitle { font-size: 14pt; color: ${COLORS.muted}; }
-        .query-box { border-left: 4px solid ${COLORS.accent}; padding: 12px 16px; background: #f7fafc; font-style: italic; }
+        .subtitle { font-size: 14pt; color: ${themeColors.muted}; }
+        .query-box { border-left: 4px solid ${themeColors.accent}; padding: 12px 16px; background: #f7fafc; font-style: italic; }
         .badge { display: inline-block; padding: 6px 10px; border-radius: 999px; background: #fed7d7; color: #9b2c2c; font-size: 9pt; font-weight: 700; }
-        .bottom-strip { background: ${COLORS.primary}; color: white; padding: 12px 18px; font-size: 11pt; font-weight: 700; }
-        .toc li { display: flex; justify-content: space-between; border-bottom: 1px dotted ${COLORS.divider}; padding: 6px 0; }
-        .decision-box { background: ${COLORS.primary}; color: white; padding: 16px; border-radius: 14px; font-size: 14pt; font-weight: 700; }
+        .bottom-strip { background: ${themeColors.primary}; color: white; padding: 12px 18px; font-size: 11pt; font-weight: 700; }
+        .toc li { display: flex; justify-content: space-between; border-bottom: 1px dotted ${themeColors.divider}; padding: 6px 0; }
+        .decision-box { background: ${themeColors.primary}; color: white; padding: 16px; border-radius: 14px; font-size: 14pt; font-weight: 700; }
         .meta-table, .data-table { width: 100%; border-collapse: collapse; }
-        .meta-table th, .meta-table td, .data-table th, .data-table td { border: 1px solid ${COLORS.divider}; padding: 8px; text-align: left; vertical-align: top; }
+        .meta-table th, .meta-table td, .data-table th, .data-table td { border: 1px solid ${themeColors.divider}; padding: 8px; text-align: left; vertical-align: top; }
         .meta-table th, .data-table th { width: 28%; background: #f8fafc; }
-        .section-card { border: 1px solid ${COLORS.divider}; border-radius: 14px; padding: 16px; margin-top: 12px; }
-        .chart { margin: 14px 0; border: 1px solid ${COLORS.divider}; border-radius: 14px; padding: 10px; background: white; }
+        .section-card { border: 1px solid ${themeColors.divider}; border-radius: 14px; padding: 16px; margin-top: 12px; }
+        .chart { margin: 14px 0; border: 1px solid ${themeColors.divider}; border-radius: 14px; padding: 10px; background: white; }
         .citations { padding-left: 18px; }
         .callout-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 14px; }
-        .callout { border-left: 4px solid ${COLORS.accent}; border-radius: 12px; padding: 12px 14px; }
-        .callout-title { font-size: 9pt; text-transform: uppercase; letter-spacing: 0.08em; color: ${COLORS.muted}; font-weight: 700; margin-bottom: 6px; }
+        .callout { border-left: 4px solid ${themeColors.accent}; border-radius: 12px; padding: 12px 14px; }
+        .callout-title { font-size: 9pt; text-transform: uppercase; letter-spacing: 0.08em; color: ${themeColors.muted}; font-weight: 700; margin-bottom: 6px; }
         .decision-metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 16px 0 12px; }
-        .metric-card { border: 1px solid ${COLORS.divider}; border-radius: 12px; padding: 12px; background: #f8fafc; }
-        .metric-card strong { display: block; font-size: 16px; color: ${COLORS.primary}; margin-top: 4px; }
-        .so-what-box { border: 1px solid ${COLORS.divider}; border-radius: 14px; padding: 14px 16px; background: #f8fafc; margin: 14px 0; }
+        .metric-card { border: 1px solid ${themeColors.divider}; border-radius: 12px; padding: 12px; background: #f8fafc; }
+        .metric-card strong { display: block; font-size: 16px; color: ${themeColors.primary}; margin-top: 4px; }
+        .so-what-box { border: 1px solid ${themeColors.divider}; border-radius: 14px; padding: 14px 16px; background: #f8fafc; margin: 14px 0; }
         .so-what-box p { margin: 6px 0; }
         .errc-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-        .errc-grid > div { border: 1px solid ${COLORS.divider}; border-radius: 12px; padding: 10px; }
-        .footer-note { font-size: 8pt; color: ${COLORS.muted}; margin-top: 24px; }
+        .errc-grid > div { border: 1px solid ${themeColors.divider}; border-radius: 12px; padding: 10px; }
+        .footer-note { font-size: 8pt; color: ${themeColors.muted}; margin-top: 24px; }
       </style>
     </head>
     <body>
@@ -259,7 +313,7 @@ export function buildPdfHtml({
         <h3>1.1 Strategic Decision</h3>
         <div class="decision-box" style="background:${decisionPalette.bg};">${brief.decision_statement}</div>
         <div class="decision-metrics">
-          <div class="metric-card"><span>Decision Confidence</span><strong>${Math.round(brief.decision_confidence * 100)}%</strong></div>
+          <div class="metric-card"><span>Decision Confidence</span><strong>${formatPercent(brief.decision_confidence)}</strong></div>
           <div class="metric-card"><span>Quality Grade</span><strong>${brief.quality_report?.overall_grade || "B"}</strong></div>
           <div class="metric-card"><span>Recommendation</span><strong>${brief.recommendation}</strong></div>
         </div>
@@ -318,12 +372,12 @@ export function buildPdfHtml({
         <div class="chart">${renderPestleRadarSvg(brief)}</div>
         <h3>4.2 Dimension-by-dimension analysis</h3>
         ${table([
-          ["Political", String(brief.framework_outputs.pestle?.structured_data?.political?.factors?.join("; ") || "-")],
-          ["Economic", String(brief.framework_outputs.pestle?.structured_data?.economic?.factors?.join("; ") || "-")],
-          ["Social", String(brief.framework_outputs.pestle?.structured_data?.social?.factors?.join("; ") || "-")],
-          ["Technological", String(brief.framework_outputs.pestle?.structured_data?.technological?.factors?.join("; ") || "-")],
-          ["Legal", String(brief.framework_outputs.pestle?.structured_data?.legal?.factors?.join("; ") || "-")],
-          ["Environmental", String(brief.framework_outputs.pestle?.structured_data?.environmental?.factors?.join("; ") || "-")],
+          ["Political", asStringArray(asRecord(brief.framework_outputs.pestle?.structured_data).political && asRecord(asRecord(brief.framework_outputs.pestle?.structured_data).political).factors).join("; ") || "-"],
+          ["Economic", asStringArray(asRecord(brief.framework_outputs.pestle?.structured_data).economic && asRecord(asRecord(brief.framework_outputs.pestle?.structured_data).economic).factors).join("; ") || "-"],
+          ["Social", asStringArray(asRecord(brief.framework_outputs.pestle?.structured_data).social && asRecord(asRecord(brief.framework_outputs.pestle?.structured_data).social).factors).join("; ") || "-"],
+          ["Technological", asStringArray(asRecord(brief.framework_outputs.pestle?.structured_data).technological && asRecord(asRecord(brief.framework_outputs.pestle?.structured_data).technological).factors).join("; ") || "-"],
+          ["Legal", asStringArray(asRecord(brief.framework_outputs.pestle?.structured_data).legal && asRecord(asRecord(brief.framework_outputs.pestle?.structured_data).legal).factors).join("; ") || "-"],
+          ["Environmental", asStringArray(asRecord(brief.framework_outputs.pestle?.structured_data).environmental && asRecord(asRecord(brief.framework_outputs.pestle?.structured_data).environmental).factors).join("; ") || "-"],
         ])}
         <h3>4.3 PESTLE Narrative</h3>
         <p>${brief.framework_outputs.pestle?.narrative || ""}</p>
@@ -342,8 +396,8 @@ export function buildPdfHtml({
           <tbody>
             ${competitorProfiles
               .map(
-                (profile: Record<string, any>) =>
-                  `<tr><td>${profile.name}</td><td>${profile.market_share}</td><td>${(profile.key_strengths || []).join(", ")}</td><td>${(profile.key_weaknesses || []).join(", ")}</td></tr>`
+                (profile) =>
+                  `<tr><td>${String(profile.name || "-")}</td><td>${String(profile.market_share || "-")}</td><td>${asStringArray(profile.key_strengths).join(", ")}</td><td>${asStringArray(profile.key_weaknesses).join(", ")}</td></tr>`
               )
               .join("")}
           </tbody>
@@ -355,7 +409,7 @@ export function buildPdfHtml({
           ${["eliminate", "reduce", "raise", "create"]
             .map(
               (key) =>
-                `<div><h4 style="margin-top:0;">${key.toUpperCase()}</h4>${list(brief.framework_outputs.blue_ocean?.structured_data?.[key] || [])}</div>`
+                `<div><h4 style="margin-top:0;">${key.toUpperCase()}</h4>${list(asStringArray(asRecord(brief.framework_outputs.blue_ocean?.structured_data)[key]))}</div>`
             )
             .join("")}
         </div>
@@ -387,7 +441,7 @@ export function buildPdfHtml({
           <tbody>
             ${pathwayOptions
               .map(
-                (option: Record<string, any>) =>
+                (option) =>
                   `<tr${option.recommended ? ` style="background:${COLORS.primary};color:white;"` : ""}><td>${String(option.name || "-")}</td><td>${String(option.strategic_logic || "-")}</td><td>${formatPercent(option.fit_score)}</td><td>${String(option.capital_intensity || "-")}</td><td>${String(option.flexibility || "-")}</td><td>${String(option.execution_risk || "-")}</td></tr>`
               )
               .join("")}
@@ -399,7 +453,7 @@ export function buildPdfHtml({
           <tbody>
             ${capabilityRows
               .map(
-                (row: Record<string, any>) =>
+                (row) =>
                   `<tr><td>${String(row.capability || "-")}</td><td>${String(row.gap || "-")}</td><td>${String(row.build_fit || "-")}</td><td>${String(row.acquisition_fit || "-")}</td><td>${String(row.integration_risk || "-")}</td><td>${String(row.recommended_action || "-")}</td></tr>`
               )
               .join("")}
@@ -412,9 +466,9 @@ export function buildPdfHtml({
         <h2>${brief.section_action_titles?.financial_analysis || "7.0 Market & Financial Analysis"}</h2>
         <h3>7.1 Market Intelligence Summary</h3>
         ${table([
-          ["Market Headline", String(brief.market_analysis?.market_sizing?.tam || "-")],
-          ["Growth Rate", String(brief.market_analysis?.market_sizing?.growth_rate || "-")],
-          ["Regulatory Landscape", String(brief.market_analysis?.market_sizing?.source?.title || "-")],
+          ["Market Headline", String(marketSizing.tam || "-")],
+          ["Growth Rate", String(marketSizing.growth_rate || "-")],
+          ["Regulatory Landscape", String(asRecord(marketSizing.source).title || "-")],
         ])}
         <h3>7.2 BCG Matrix</h3>
         <div class="chart">${renderBcgSvg(brief)}</div>
@@ -425,7 +479,7 @@ export function buildPdfHtml({
             ${Object.entries(projections)
               .map(
                 ([period, values]) =>
-                  `<tr><td>${period}</td><td>${(values as Record<string, any>).revenue}</td><td>${(values as Record<string, any>).ebitda}</td><td>${(values as Record<string, any>).roi}</td><td>${(values as Record<string, any>).irr}</td></tr>`
+                  `<tr><td>${period}</td><td>${String(asRecord(values).revenue || "-")}</td><td>${String(asRecord(values).ebitda || "-")}</td><td>${String(asRecord(values).roi || "-")}</td><td>${String(asRecord(values).irr || "-")}</td></tr>`
               )
               .join("")}
           </tbody>
@@ -437,7 +491,7 @@ export function buildPdfHtml({
           <tbody>
             ${sectorBuild
               .map(
-                (entry: Record<string, any>) =>
+                (entry) =>
                   `<tr><td>${String(entry.sector || "-")}</td><td>${String(entry.target_clients || "-")}</td><td>${formatUsdMn(entry.average_contract_value_usd_mn)}</td><td>${formatPercent(entry.win_rate)}</td><td>${formatMonths(entry.sales_cycle_months)}</td><td>${formatUsdMn(entry.year_3_revenue_usd_mn)}</td></tr>`
               )
               .join("")}
@@ -450,7 +504,7 @@ export function buildPdfHtml({
           <tbody>
             ${scenarios
               .map(
-                (scenario: Record<string, any>) =>
+                (scenario) =>
                   `<tr${String(scenario.name || "").toLowerCase() === String(scenarioAnalysis.recommended_case || "Base").toLowerCase() ? ` style="background:${COLORS.primary};color:white;"` : ""}><td>${String(scenario.name || "-")}</td><td>${formatUsdMn(scenario.revenue_year_3_usd_mn)}</td><td>${formatPercent(scenario.ebitda_margin_pct, 1)}</td><td>${asNumber(scenario.roi_multiple)?.toFixed(2) || "-"}x</td><td>${formatPercent(scenario.irr_pct, 1)}</td><td>${formatMonths(scenario.payback_months)}</td></tr>`
               )
               .join("")}
@@ -469,7 +523,7 @@ export function buildPdfHtml({
           <tbody>
             ${riskRegister
               .map(
-                (risk: Record<string, any>) =>
+                (risk) =>
                   `<tr><td>${risk.risk_id}</td><td>${risk.category}</td><td>${risk.description}</td><td>${risk.likelihood}</td><td>${risk.impact}</td><td>${risk.mitigation}</td></tr>`
               )
               .join("")}
@@ -490,7 +544,7 @@ export function buildPdfHtml({
           <tbody>
             ${executionItems
               .map(
-                (item: Record<string, any>) =>
+                (item) =>
                   `<tr><td>${String(item.factor || "-")}</td><td>${String(item.baseline || "-")}</td><td>${String(item.risk || "-")}</td><td>${String(item.mitigation || "-")}</td></tr>`
               )
               .join("")}
@@ -530,10 +584,10 @@ export function buildPdfHtml({
         <table class="data-table">
           <thead><tr><th>Agent</th><th>Model Used</th><th>Tokens In</th><th>Tokens Out</th><th>Latency</th><th>Tools Called</th></tr></thead>
           <tbody>
-            ${(appendix.agent_execution_log || [])
+            ${asRecordArray(appendix.agent_execution_log)
               .map(
-                (item: Record<string, any>) =>
-                  `<tr><td>${item.agent}</td><td>${item.model_used || "-"}</td><td>${item.tokens_in || "-"}</td><td>${item.tokens_out || "-"}</td><td>${item.latency_ms || "-"}</td><td>${(item.tools_called || []).map((tool: Record<string, any>) => tool.tool_name).join(", ") || "-"}</td></tr>`
+                (item) =>
+                  `<tr><td>${String(item.agent || "-")}</td><td>${String(item.model_used || "-")}</td><td>${String(item.tokens_in || "-")}</td><td>${String(item.tokens_out || "-")}</td><td>${String(item.latency_ms || "-")}</td><td>${asRecordArray(item.tools_called).map((tool) => String(tool.tool_name || "-")).join(", ") || "-"}</td></tr>`
               )
               .join("")}
           </tbody>

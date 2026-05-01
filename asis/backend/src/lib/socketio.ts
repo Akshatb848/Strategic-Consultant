@@ -63,7 +63,7 @@ export function emitPipelineEvent(analysisId: string, event: {
   if (io) io.to(`analysis:${analysisId}`).emit('pipeline:update', payload);
   // SSE broadcast — map to frontend event names
   const eventName = event.status === 'running' ? 'agent_start' : event.status === 'completed' ? 'agent_complete' : event.status === 'failed' ? 'analysis_failed' : 'agent_start';
-  broadcastSse(analysisId, eventName, { agent: event.agent, ...payload });
+  broadcastSse(analysisId, eventName, payload);
 }
 
 export function emitAnalysisComplete(analysisId: string, summary: {

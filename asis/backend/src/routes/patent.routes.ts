@@ -6,6 +6,10 @@ import { log } from '../lib/logger';
 
 const router = Router();
 
+function singleParam(value: string | string[] | undefined): string {
+  return Array.isArray(value) ? value[0] ?? '' : value ?? '';
+}
+
 const PATENT_SYSTEM_PROMPT = `You are a senior patent attorney with 20+ years experience in technology and AI patents at leading IP firms.
 
 Your task: Analyse the strategic AI system described and produce a structured patent readiness report.
@@ -48,8 +52,9 @@ const patentStore = new Map<string, Record<string, unknown>>();
 router.post('/analyze/:analysisId', requireAuth, async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user.id as string;
+    const analysisId = singleParam(req.params.analysisId);
     const analysis = await prisma.analysis.findFirst({
-      where: { id: req.params.analysisId, userId },
+      where: { id: analysisId, userId },
       select: { id: true, problemStatement: true, synthesisData: true, strategistData: true },
     });
 
@@ -124,9 +129,9 @@ Generate a comprehensive patent readiness report. Return ONLY valid JSON.
       fallback
     );
 
-    patentStore.set(req.params.analysisId, result.data);
-    log.info('Patent analysis generated', { analysisId: req.params.analysisId });
-    res.json({ patent_analysis: result.data, analysis_id: req.params.analysisId });
+    patentStore.set(analysisId, result.data);
+    log.info('Patent analysis generated', { analysisId });
+    res.json({ patent_analysis: result.data, analysis_id: analysisId });
   } catch (err) {
     log.error('Patent analysis error', { error: String(err) });
     res.status(500).json({ code: 'INTERNAL_ERROR', message: 'Failed to generate patent analysis' });
@@ -134,7 +139,7 @@ Generate a comprehensive patent readiness report. Return ONLY valid JSON.
 });
 
 router.get('/status/:analysisId', requireAuth, async (req: Request, res: Response) => {
-  const cached = patentStore.get(req.params.analysisId);
+  const cached = patentStore.get(singleParam(req.params.analysisId));
   if (cached) {
     res.json({ status: 'ready', patent_analysis: cached });
   } else {

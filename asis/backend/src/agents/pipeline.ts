@@ -1,3 +1,5 @@
+import { Prisma } from '@prisma/client';
+
 import { prisma } from '../lib/database';
 import { log } from '../lib/logger';
 import { emitPipelineEvent, emitAnalysisComplete } from '../lib/socketio';
@@ -82,7 +84,7 @@ async function saveAgentResult(analysisId: string, agentId: string, result: Agen
       inputTokens: result.tokenUsage.input,
       outputTokens: result.tokenUsage.output,
       durationMs: result.durationMs,
-      parsedOutput: result.data,
+      parsedOutput: result.data as Prisma.InputJsonValue,
     }
   });
 }

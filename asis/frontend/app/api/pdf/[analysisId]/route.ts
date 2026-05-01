@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import type { StrategicBriefV4 } from "@/lib/api";
+import type { ReportTheme, StrategicBriefV4 } from "@/lib/api";
 import { buildPdfHtml } from "@/lib/pdf/template";
 import { getServerApiBase } from "@/lib/runtime-urls";
 
@@ -11,9 +11,22 @@ const API_BASE = getServerApiBase();
 interface PdfRequestBody {
   analysis_id?: string;
   brief?: StrategicBriefV4;
-  appendix?: Record<string, any>;
+  appendix?: Record<string, unknown>;
   pdf_max_pages?: number;
   report_company_logo_url?: string | null;
+  theme?: ReportTheme;
+}
+
+interface AppendixAgentLog {
+  agent_name?: string;
+  model_used?: string | null;
+  token_usage?: {
+    prompt_tokens?: number | null;
+    completion_tokens?: number | null;
+  } | null;
+  duration_ms?: number | null;
+  tools_called?: unknown[];
+  langfuse_trace_id?: string | null;
 }
 
 async function loadBriefFromBackend(analysisId: string, authHeader: string) {
@@ -36,7 +49,11 @@ export async function POST(
   { params }: { params: { analysisId: string } }
 ) {
   const authHeader = request.headers.get("authorization") || "";
-  if (!authHeader) {
+  const internalToken = process.env.INTERNAL_REPORT_TOKEN || process.env.JWT_SECRET || "";
+  const providedInternalToken = request.headers.get("x-asis-internal-report-token") || "";
+  const isInternalRequest = Boolean(internalToken) && providedInternalToken === internalToken;
+
+  if (!authHeader && !isInternalRequest) {
     return NextResponse.json({ detail: "UNAUTHORIZED" }, { status: 401 });
   }
 
@@ -55,8 +72,9 @@ export async function POST(
   if (!brief) {
     const analysis = await loadBriefFromBackend(analysisId, authHeader);
     brief = analysis.strategic_brief as StrategicBriefV4;
+    const agentLogs = Array.isArray(analysis.agent_logs) ? (analysis.agent_logs as AppendixAgentLog[]) : [];
     appendix = {
-      agent_execution_log: (analysis.agent_logs || []).map((log: Record<string, any>) => ({
+      agent_execution_log: agentLogs.map((log) => ({
         agent: log.agent_name,
         model_used: log.model_used,
         tokens_in: log.token_usage?.prompt_tokens,
@@ -64,7 +82,7 @@ export async function POST(
         latency_ms: log.duration_ms,
         tools_called: log.tools_called || [],
       })),
-      trace_id: (analysis.agent_logs || []).find((log: Record<string, any>) => log.langfuse_trace_id)?.langfuse_trace_id || null,
+      trace_id: agentLogs.find((log) => log.langfuse_trace_id)?.langfuse_trace_id || null,
       trace_url: null,
     };
   }
@@ -77,6 +95,7 @@ export async function POST(
     brief,
     appendix,
     logoUrl: body.report_company_logo_url || process.env.REPORT_COMPANY_LOGO_URL || null,
+    theme: body.theme || "mckinsey",
   });
 
   const puppeteerModule = await import("puppeteer");
