@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { runPipeline } from '../agents/pipeline';
 import { requireAuth } from '../lib/auth';
 import { prisma } from '../lib/database';
-import { robustJsonParse } from '../lib/llmClient';
+import { isLiveLLMConfigured, isLlmFallbackAllowed, robustJsonParse } from '../lib/llmClient';
 import { log } from '../lib/logger';
 import { transformAnalysisRecord } from '../lib/reportAdapter';
 import { registerSseClient } from '../lib/socketio';
@@ -81,6 +81,15 @@ router.post('/', requireAuth, async (req: Request, res: Response, next: NextFunc
 
     const problemStatement = parsed.data.problemStatement || parsed.data.query || '';
     const companyContext = (parsed.data.company_context || {}) as Record<string, string>;
+
+    if (!isLiveLLMConfigured() && !isLlmFallbackAllowed()) {
+      res.status(503).json({
+        code: 'LLM_UNAVAILABLE',
+        message: 'Live analysis is temporarily unavailable because the Anthropic provider is not configured.',
+      });
+      return;
+    }
+
     const extracted = await extractProblemContext(problemStatement);
     const finalContext = {
       organisationContext: companyContext.company_name || extracted.organisationContext,

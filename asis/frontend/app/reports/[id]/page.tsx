@@ -99,7 +99,17 @@ function ReportDetailContent() {
           <div className="danger-callout rounded-[16px]">{error}</div>
         </div>
       ) : isStrategicBriefV4(brief) ? (
-        <ConsultantReportView brief={brief as StrategicBriefV4} theme={theme} />
+        <>
+          {report?.used_fallback ? (
+            <div className="mx-auto max-w-7xl px-6 pt-6">
+              <div className="warning-callout rounded-[16px]">
+                This report was assembled from structured fallback output rather than a fully validated live LLM run.
+                Treat the figures as illustrative and rerun the analysis after provider health is restored.
+              </div>
+            </div>
+          ) : null}
+          <ConsultantReportView brief={brief as StrategicBriefV4} theme={theme} />
+        </>
       ) : (
         <div className="mx-auto max-w-4xl px-6 py-16">
           <div className="warning-callout rounded-[16px]">

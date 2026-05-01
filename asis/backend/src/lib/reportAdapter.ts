@@ -85,6 +85,12 @@ function asNumber(value: unknown, fallback = 0): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
+function normalizedScore(value: unknown): number {
+  const numeric = asNumber(value);
+  if (!numeric) return 0;
+  return numeric <= 1 ? numeric : numeric / 100;
+}
+
 function sentence(value: string, fallback: string): string {
   const text = value.trim();
   if (!text) return fallback;
@@ -438,7 +444,7 @@ export function buildCollaborationTrace(agentLogs: AgentLog[]): AgentCollaborati
 
 function buildQualityReport(analysis: AnalysisWithLogs, coveData: JsonRecord) {
   const judgeDimensions = asRecord(coveData.judge_dimensions);
-  const overallConfidence = asNumber(analysis.overallConfidence);
+  const overallConfidence = normalizedScore(analysis.overallConfidence);
   return {
     overall_grade:
       (asString(coveData.quality_grade) as 'A' | 'B' | 'C' | 'FAIL') ||
@@ -536,6 +542,7 @@ export function buildStrategicBrief(analysis: AnalysisWithLogs): JsonRecord | nu
     confidentiality_level: 'STRICTLY CONFIDENTIAL',
     disclaimer: 'This report is AI-assisted strategic analysis for internal decision support and must be reviewed before material action.',
   };
+  const usedFallback = (analysis.agentLogs || []).some((agentLog) => Boolean(agentLog.selfCorrected));
 
   return {
     decision_statement: asString(synthesisData.decision_recommendation || analysis.decisionRecommendation || 'HOLD'),
@@ -604,12 +611,14 @@ export function buildStrategicBrief(analysis: AnalysisWithLogs): JsonRecord | nu
       recommended_option: analysis.recommendedOption ?? null,
       confidence_breakdown: analysis.confidenceBreakdown ?? null,
       has_blocking_warnings: analysis.hasBlockingWarnings ?? false,
+      used_fallback: usedFallback,
     },
   };
 }
 
 export function transformAnalysisRecord(analysis: AnalysisWithLogs): JsonRecord {
   const strategicBrief = buildStrategicBrief(analysis);
+  const usedFallback = (analysis.agentLogs || []).some((agentLog) => Boolean(agentLog.selfCorrected));
   return {
     id: analysis.id,
     analysis_id: analysis.id,
@@ -618,6 +627,7 @@ export function transformAnalysisRecord(analysis: AnalysisWithLogs): JsonRecord 
     status: analysis.status,
     current_agent: analysis.currentAgent || null,
     overall_confidence: analysis.overallConfidence ?? null,
+    used_fallback: usedFallback,
     decision_recommendation: analysis.decisionRecommendation ?? null,
     executive_summary: analysis.executiveSummary ?? null,
     board_narrative: analysis.boardNarrative ?? null,
