@@ -37,6 +37,15 @@ function numericValue(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
+function escapeMarkup(value: unknown): string {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 function svgWrapper(width: number, height: number, content: string): string {
   return `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg">${content}</svg>`;
 }
@@ -74,7 +83,7 @@ export function renderPestleRadarSvg(brief: StrategicBriefV4): string {
       const ly = 170 + Math.sin(angle) * 146;
       return `
         <line x1="240" y1="170" x2="${x}" y2="${y}" stroke="#cbd5e0" stroke-width="1" />
-        <text x="${lx}" y="${ly}" font-size="11" text-anchor="middle" fill="${TEXT}">${label}</text>
+        <text x="${lx}" y="${ly}" font-size="11" text-anchor="middle" fill="${TEXT}">${escapeMarkup(label)}</text>
       `;
     })
     .join("");
@@ -107,7 +116,7 @@ export function renderPorterSvg(brief: StrategicBriefV4): string {
       const angle = (-Math.PI / 2) + (index / labels.length) * Math.PI * 2;
       const x = 240 + Math.cos(angle) * 135;
       const y = 170 + Math.sin(angle) * 135;
-      return `<text x="${x}" y="${y}" font-size="11" text-anchor="middle" fill="${TEXT}">${label} (${score})</text>`;
+      return `<text x="${x}" y="${y}" font-size="11" text-anchor="middle" fill="${TEXT}">${escapeMarkup(label)} (${score})</text>`;
     })
     .join("");
   return svgWrapper(
@@ -131,7 +140,7 @@ export function renderBcgSvg(brief: StrategicBriefV4): string {
       const r = 18 + (index % 3) * 8;
       return `
         <circle cx="${x}" cy="${y}" r="${r}" fill="${["#2b6cb0", "#1a365d", "#4299e1"][index % 3]}" fill-opacity="0.6" />
-        <text x="${x}" y="${y + 4}" text-anchor="middle" font-size="10" fill="white">${unit.name}</text>
+        <text x="${x}" y="${y + 4}" text-anchor="middle" font-size="10" fill="white">${escapeMarkup(unit.name)}</text>
       `;
     })
     .join("");
@@ -171,7 +180,7 @@ export function renderMckinseySvg(brief: StrategicBriefV4): string {
       const angle = (-Math.PI / 2) + (index / labels.length) * Math.PI * 2;
       const x = 240 + Math.cos(angle) * 142;
       const y = 170 + Math.sin(angle) * 142;
-      return `<text x="${x}" y="${y}" text-anchor="middle" font-size="11" fill="${TEXT}">${label}</text>`;
+      return `<text x="${x}" y="${y}" text-anchor="middle" font-size="11" fill="${TEXT}">${escapeMarkup(label)}</text>`;
     })
     .join("");
   return svgWrapper(
@@ -208,14 +217,14 @@ export function renderBlueOceanSvg(brief: StrategicBriefV4): string {
         .join(" ");
       return `
         <path d="${points}" fill="none" stroke="${color}" stroke-width="${lineIndex === 0 ? 3 : 2}" />
-        <text x="430" y="${34 + lineIndex * 18}" font-size="11" fill="${color}">${name}</text>
+        <text x="430" y="${34 + lineIndex * 18}" font-size="11" fill="${color}">${escapeMarkup(name)}</text>
       `;
     })
     .join("");
   const labels = factors
     .map((factor, index) => {
       const x = 70 + index * (factors.length > 1 ? 380 / (factors.length - 1) : 1);
-      return `<text x="${x}" y="330" text-anchor="middle" font-size="10" fill="${TEXT}">${factor}</text>`;
+      return `<text x="${x}" y="330" text-anchor="middle" font-size="10" fill="${TEXT}">${escapeMarkup(factor)}</text>`;
     })
     .join("");
   return svgWrapper(
@@ -238,7 +247,7 @@ export function renderRiskHeatmapHtml(brief: StrategicBriefV4): string {
       const risk = risks.find((item) => item.likelihood === col + 1 && item.impact === 5 - row);
       const score = typeof risk?.inherent_score === "number" ? risk.inherent_score : 0;
       const background = score >= 16 ? "#fc8181" : score >= 9 ? "#f6ad55" : "#68d391";
-      return `<div style="border:1px solid #e2e8f0;background:${background};min-height:54px;padding:6px;font-size:10px;color:#1a202c;">${risk ? `${risk.risk_id}<br/>${risk.category}` : ""}</div>`;
+      return `<div style="border:1px solid #e2e8f0;background:${background};min-height:54px;padding:6px;font-size:10px;color:#1a202c;">${risk ? `${escapeMarkup(risk.risk_id)}<br/>${escapeMarkup(risk.category)}` : ""}</div>`;
     }).join("")
   ).join("");
   return `<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:0;">${cells}</div>`;
@@ -248,9 +257,9 @@ export function renderSwotHtml(brief: StrategicBriefV4): string {
   const structured = asRecord(brief.framework_outputs?.swot?.structured_data);
   const quadrant = (items: JsonRecord[], title: string, background: string) => `
     <div style="border:1px solid #e2e8f0;background:${background};padding:12px;">
-      <h4 style="margin:0 0 8px 0;font-size:12px;color:${TEXT};">${title}</h4>
+      <h4 style="margin:0 0 8px 0;font-size:12px;color:${TEXT};">${escapeMarkup(title)}</h4>
       <ul style="margin:0;padding-left:16px;font-size:10px;color:${TEXT};line-height:1.5;">
-        ${items.map((item) => `<li>${item.point}</li>`).join("")}
+        ${items.map((item) => `<li>${escapeMarkup(item.point)}</li>`).join("")}
       </ul>
     </div>
   `;
@@ -271,9 +280,9 @@ export function renderAnsoffHtml(brief: StrategicBriefV4): string {
     const recommended = structured.recommended_quadrant === key;
     return `
       <div style="border:2px solid ${recommended ? BLUE : "#e2e8f0"};padding:14px;border-radius:12px;background:${recommended ? "#ebf8ff" : "white"};">
-        <div style="font-size:12px;font-weight:700;color:${TEXT};">${title}${recommended ? " - RECOMMENDED" : ""}</div>
+        <div style="font-size:12px;font-weight:700;color:${TEXT};">${escapeMarkup(title)}${recommended ? " - RECOMMENDED" : ""}</div>
         <div style="margin-top:6px;font-size:10px;color:${TEXT};">Feasibility: ${Math.round(numericValue(item.feasibility) * 100)}%</div>
-        <div style="margin-top:6px;font-size:10px;color:${TEXT};line-height:1.5;">${item.rationale || ""}</div>
+        <div style="margin-top:6px;font-size:10px;color:${TEXT};line-height:1.5;">${escapeMarkup(item.rationale)}</div>
       </div>
     `;
   };

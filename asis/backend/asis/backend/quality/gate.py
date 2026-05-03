@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from statistics import mean
+from typing import Any
 
 from asis.backend.schemas.v4 import QualityCheckResult, QualityReport, StrategicBriefV4
 
@@ -49,6 +50,10 @@ class QualityGate:
             self._check_internal_consistency(brief),
             self._check_cross_agent_consistency(brief),
             self._check_roadmap_phases(brief),
+            self._check_recommendation_pathway_alignment(brief),
+            self._check_financial_scenario_consistency(brief),
+            self._check_context_leakage(brief),
+            self._check_duplicate_semantic_keys(brief),
         ]
         flags = [check.notes for check in checks if not check.passed and check.notes]
         citation_density_score = self._citation_density_score(brief)
@@ -268,6 +273,157 @@ class QualityGate:
             notes=None if passed else f"Roadmap has only {len(roadmap)} phase(s); all 4 phases are required for board-ready reporting.",
         )
 
+    def _check_recommendation_pathway_alignment(self, brief: StrategicBriefV4) -> QualityCheckResult:
+        """Acquisition/M&A recommendations must align with the recommended pathway."""
+        intent_text = " ".join(
+            [
+                str((brief.context or {}).get("decision_type") or ""),
+                str((brief.report_metadata.query if brief.report_metadata else "") or ""),
+                str(brief.decision_statement or ""),
+                str(brief.recommendation or ""),
+            ]
+        ).lower()
+        acquisition_terms = (
+            "acquire",
+            "acquisition",
+            "minority stake",
+            "take a stake",
+            "m&a",
+            "merger",
+            "post-merger",
+            "post merger",
+            "buyout",
+            "takeover",
+        )
+        if not any(term in intent_text for term in acquisition_terms):
+            return QualityCheckResult(
+                id="recommendation_pathway_alignment",
+                description="Recommended pathway must match acquisition/M&A intent when the question requires it",
+                level="BLOCK",
+                passed=True,
+                notes=None,
+            )
+
+        pathways = ((brief.market_analysis or {}).get("strategic_pathways") or {}).get("options") or []
+        recommended = [option for option in pathways if isinstance(option, dict) and option.get("recommended")]
+        if not recommended and pathways:
+            recommended = [pathways[0]]
+
+        pathway_text = " ".join(
+            self._flatten_text(option)
+            for option in recommended
+            if isinstance(option, dict)
+        ).lower()
+        aligned_terms = (
+            "acquisition",
+            "acquire",
+            "stake",
+            "minority",
+            "merger",
+            "m&a",
+            "partnership",
+            "alliance",
+            "joint venture",
+            "call option",
+            "invest",
+        )
+        passed = bool(pathway_text and any(term in pathway_text for term in aligned_terms))
+        return QualityCheckResult(
+            id="recommendation_pathway_alignment",
+            description="Acquisition/M&A questions must recommend an acquisition, minority investment, alliance, partnership, or explicit build-vs-buy path",
+            level="BLOCK",
+            passed=passed,
+            notes=None if passed else "The final recommendation has acquisition/M&A intent, but the recommended pathway is generic or unrelated.",
+        )
+
+    def _check_financial_scenario_consistency(self, brief: StrategicBriefV4) -> QualityCheckResult:
+        """Bottom-up Year 3 revenue must reconcile with the recommended scenario."""
+        financial_analysis = brief.financial_analysis or {}
+        bottom_up = financial_analysis.get("bottom_up_revenue_model") or {}
+        scenario_analysis = financial_analysis.get("scenario_analysis") or {}
+
+        bottom_up_total = self._coerce_float(bottom_up.get("total_year_3_revenue_usd_mn"))
+        if bottom_up_total is None:
+            sector_rows = bottom_up.get("sector_build") or []
+            row_values = [
+                self._coerce_float(row.get("base_year_3_revenue_usd_mn"))
+                for row in sector_rows
+                if isinstance(row, dict)
+            ]
+            bottom_up_total = sum(value for value in row_values if value is not None) if row_values else None
+
+        scenarios = scenario_analysis.get("scenarios") or []
+        recommended_name = str(scenario_analysis.get("recommended_case") or "Base").lower()
+        scenario = None
+        for candidate in scenarios:
+            if not isinstance(candidate, dict):
+                continue
+            candidate_name = str(candidate.get("name") or candidate.get("scenario") or "").lower()
+            if candidate_name == recommended_name or recommended_name in candidate_name:
+                scenario = candidate
+                break
+        if scenario is None and scenarios:
+            scenario = scenarios[0]
+
+        scenario_revenue = self._coerce_float((scenario or {}).get("revenue_year_3_usd_mn"))
+        if bottom_up_total is None or scenario_revenue is None or bottom_up_total <= 0:
+            return QualityCheckResult(
+                id="financial_scenario_consistency",
+                description="Recommended financial scenario must reconcile with bottom-up Year 3 revenue build",
+                level="BLOCK",
+                passed=True,
+                notes=None,
+            )
+
+        ratio = scenario_revenue / bottom_up_total
+        passed = 0.65 <= ratio <= 1.35
+        return QualityCheckResult(
+            id="financial_scenario_consistency",
+            description="Recommended scenario Year 3 revenue should be within 35% of the bottom-up build unless explicitly justified",
+            level="BLOCK",
+            passed=passed,
+            notes=None if passed else (
+                f"Scenario Year 3 revenue (${scenario_revenue:.1f}M) does not reconcile with "
+                f"bottom-up build (${bottom_up_total:.1f}M)."
+            ),
+        )
+
+    def _check_context_leakage(self, brief: StrategicBriefV4) -> QualityCheckResult:
+        """Block obvious stale-context leakage from previously generated analyses."""
+        allowed_context = " ".join(
+            [
+                str(brief.report_metadata.query or ""),
+                self._flatten_text(brief.context or {}),
+            ]
+        ).lower()
+        payload_text = self._flatten_text(brief.model_dump(mode="json")).lower()
+        leakage_terms = ("reliance", "jioai", "jio ai", "jio")
+        leaked = [
+            term
+            for term in leakage_terms
+            if term in payload_text and term not in allowed_context
+        ]
+        passed = not leaked
+        return QualityCheckResult(
+            id="context_leakage",
+            description="Brief must not contain company, competitor, or case-study names that are absent from the query/context",
+            level="BLOCK",
+            passed=passed,
+            notes=None if passed else f"Potential stale-context leakage detected: {', '.join(sorted(set(leaked)))}.",
+        )
+
+    def _check_duplicate_semantic_keys(self, brief: StrategicBriefV4) -> QualityCheckResult:
+        """Block JSON payloads that duplicate keys by case/underscore variants."""
+        duplicates = self._semantic_duplicate_paths(brief.model_dump(mode="json"))
+        passed = not duplicates
+        return QualityCheckResult(
+            id="duplicate_semantic_keys",
+            description="Nested report JSON must not contain semantically duplicate keys such as pestle_analysis and PESTLE_Analysis",
+            level="BLOCK",
+            passed=passed,
+            notes=None if passed else f"Semantically duplicate JSON keys detected: {'; '.join(duplicates[:5])}.",
+        )
+
     def _citation_density_score(self, brief: StrategicBriefV4) -> float:
         scores = [min(1.0, len(output.citations) / 5) for output in brief.framework_outputs.values()]
         return round(mean(scores), 3) if scores else 0.0
@@ -337,6 +493,47 @@ class QualityGate:
         roadmap_score = min(1.0, len(brief.implementation_roadmap or []) / 4)
 
         return round(mean([realism_score, capability_score, pathway_score, roadmap_score]), 3)
+
+    @staticmethod
+    def _coerce_float(value: object) -> float | None:
+        if value is None:
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            if isinstance(value, str):
+                match = re.search(r"-?\d+(?:\.\d+)?", value.replace(",", ""))
+                if match:
+                    return float(match.group(0))
+            return None
+
+    def _flatten_text(self, value: Any) -> str:
+        if isinstance(value, dict):
+            return " ".join(self._flatten_text(item) for item in value.values())
+        if isinstance(value, list):
+            return " ".join(self._flatten_text(item) for item in value)
+        if value is None:
+            return ""
+        return str(value)
+
+    def _semantic_duplicate_paths(self, value: Any, path: str = "$") -> list[str]:
+        duplicates: list[str] = []
+        if isinstance(value, list):
+            for index, item in enumerate(value):
+                duplicates.extend(self._semantic_duplicate_paths(item, f"{path}[{index}]"))
+            return duplicates
+        if not isinstance(value, dict):
+            return duplicates
+
+        seen: dict[str, str] = {}
+        for key, item in value.items():
+            semantic_key = re.sub(r"[^a-z0-9]", "", str(key).lower())
+            if semantic_key in seen:
+                duplicates.append(f"{path}.{seen[semantic_key]} / {key}")
+            else:
+                seen[semantic_key] = str(key)
+            duplicates.extend(self._semantic_duplicate_paths(item, f"{path}.{key}"))
+        return duplicates
 
     def _grade(
         self,

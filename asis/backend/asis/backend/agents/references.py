@@ -69,6 +69,22 @@ SECTOR_REFERENCES = {
             excerpt="India technology market sizing and delivery-capability benchmarks remain useful for competitive positioning.",
         ),
     ],
+    "automotive": [
+        Citation(
+            title="Automotive software and electronics market outlook",
+            source="McKinsey",
+            url="https://www.mckinsey.com/features/mckinsey-center-for-future-mobility/our-insights/mapping-the-automotive-software-and-electronics-landscape",
+            published_at="2026-02-01",
+            excerpt="Automotive software, electronics, connectivity and AI-enabled value pools should be treated separately from generic enterprise-software demand.",
+        ),
+        Citation(
+            title="2026 Global Automotive Supplier Study",
+            source="BCG",
+            url="https://www.bcg.com/publications/2026/the-2026-global-automotive-supplier-study",
+            published_at="2026-03-01",
+            excerpt="Automotive supplier strategy should reflect margin pressure, portfolio rotation, electrification exposure and software-defined vehicle economics.",
+        ),
+    ],
 }
 
 GEOGRAPHY_REFERENCES = {
@@ -102,6 +118,8 @@ GEOGRAPHY_REFERENCES = {
 
 def infer_sector_key(context: dict) -> str | None:
     sector = (context.get("sector") or "").lower()
+    if any(token in sector for token in ("auto", "mobility", "vehicle", "ev", "battery")):
+        return "automotive"
     if "fin" in sector or "bank" in sector:
         return "financial"
     if "consult" in sector or "professional" in sector or "advis" in sector:

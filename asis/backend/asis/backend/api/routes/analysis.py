@@ -143,6 +143,7 @@ def _to_detail(analysis: models.Analysis) -> AnalysisDetail:
         executive_summary=_coerce_executive_summary(analysis),
         error_message=_safe_text(analysis.error_message),
         duration_seconds=_safe_float(analysis.duration_seconds),
+        total_cost_usd=_safe_float(analysis.total_cost_usd),
         created_at=analysis.created_at,
         completed_at=analysis.completed_at,
         strategic_brief=analysis.strategic_brief,

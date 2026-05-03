@@ -45,7 +45,9 @@ export function ReportExecutiveSummary({
           </p>
           <div className="space-y-3 text-[var(--c-text)]">
             {topFindings.map((finding) => (
-              <p key={finding}>• {finding}</p>
+              <p key={finding} className="border-l-2 border-[var(--c-brand-rule)] pl-3">
+                {finding}
+              </p>
             ))}
           </div>
         </div>

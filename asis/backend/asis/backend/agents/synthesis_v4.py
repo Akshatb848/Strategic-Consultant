@@ -36,10 +36,9 @@ pipeline. You have received structured intelligence outputs from 7 specialist
 AI agents: Orchestrator, Market Intelligence, Risk Assessment, Competitor
 Analysis, Geopolitical Intelligence, Financial Reasoning, and Strategic Options.
 
-You are enhancing a precomputed ASIS strategic brief scaffold. Return a single,
-valid JSON patch object containing only the fields that should override or
-enrich the scaffold. Omit unchanged fields. Do not output any text outside the
-JSON object.
+You are reconciling live specialist-agent evidence into the final ASIS strategic
+brief. Return a single, valid JSON object containing only evidence-backed
+updates. Do not output any text outside the JSON object.
 
 CRITICAL RULES:
    "PROCEED — ", "CONDITIONAL PROCEED — ", or "DO NOT PROCEED — "
@@ -84,13 +83,20 @@ CRITICAL RULES:
     Phase 3: Medium-term (1-3 years)
     Phase 4: Long-term (3-5 years)
 
-11. PATCH MODE:
-    - You may omit any field that should remain unchanged from the scaffold.
+11. EVIDENCE-FIRST OVERRIDE MODE:
+    - Do not preserve generic scaffold language if it conflicts with the query,
+      decision type, company, sector, geography, or agent evidence.
+    - You MUST reconcile decision_statement, recommendation, executive_summary,
+      board_narrative, section_action_titles, so_what_callouts, and roadmap
+      language with the actual decision type and preferred strategic pathway.
+    - Do not overwrite structured financial or option data unless you keep all
+      totals, scenarios, recommendation, and rationale internally consistent.
+    - If the query is an acquisition, minority stake, merger, or M&A question,
+      the recommendation must explicitly compare full acquisition, minority
+      investment/partnership, and organic/build alternatives where available.
     - If you update executive_summary, it must remain an object with the full
       ExecutiveSummary shape.
-    - If you update framework_outputs, include only the frameworks you are
-      improving and preserve valid framework names.
-    - Prefer concise overrides to reduce output length and improve reliability.
+    - If you update framework_outputs, include only valid framework names.
         """.strip()
 
     def user_prompt(self, state) -> str:
@@ -124,7 +130,30 @@ CRITICAL RULES:
                 return scaffold
             raise RuntimeError("ASIS could not obtain live synthesis output from the configured LLM providers.")
 
-        merged = self._merge_generated_brief(scaffold, proxy_output)
+        try:
+            merged = self._merge_generated_brief(scaffold, proxy_output)
+        except Exception as first_exc:
+            repair_output = llm_proxy.generate_json(
+                system_prompt=self.system_prompt(),
+                user_prompt=self._repair_user_prompt(state, scaffold, validation_error=str(first_exc)),
+                models=self.resolve_models(),
+                agent_id=self.agent_id,
+                analysis_id=state.get("analysis_id"),
+            )
+            if repair_output:
+                try:
+                    merged = self._merge_generated_brief(scaffold, repair_output)
+                    proxy_output = repair_output
+                except Exception as repair_exc:
+                    if settings.allow_llm_fallback:
+                        scaffold["_used_fallback"] = True
+                        return scaffold
+                    raise RuntimeError(f"ASIS could not validate live synthesis output: {repair_exc}") from repair_exc
+            elif settings.allow_llm_fallback:
+                scaffold["_used_fallback"] = True
+                return scaffold
+            else:
+                raise RuntimeError(f"ASIS could not validate live synthesis output: {first_exc}") from first_exc
         for metadata_key in ("_model_used", "_tools_called", "_langfuse_trace_id", "_token_usage"):
             if metadata_key in proxy_output:
                 merged[metadata_key] = proxy_output[metadata_key]
@@ -137,7 +166,9 @@ CRITICAL RULES:
         return fingerprint / 1000
 
     def _merge_generated_brief(self, scaffold: dict, generated: dict) -> dict:
+        generated = self._sanitize_semantic_keys(generated)
         merged = self._merge_value(scaffold, generated)
+        merged = self._reconcile_structured_analysis(scaffold, merged)
         decision_statement = str(merged.get("decision_statement") or "").strip()
         if not decision_statement.startswith(("PROCEED", "CONDITIONAL PROCEED", "DO NOT PROCEED")):
             merged["decision_statement"] = scaffold["decision_statement"]
@@ -169,14 +200,82 @@ CRITICAL RULES:
         )
         merged["confidence_score"] = merged.get("confidence_score") or merged.get("overall_confidence") or scaffold.get("confidence_score", 0.68)
 
-        try:
-            validated = StrategicBriefV4.model_validate(merged).model_dump(mode="json")
-            validated["confidence_score"] = merged["confidence_score"]
-            return validated
-        except Exception:
-            validated = StrategicBriefV4.model_validate(scaffold).model_dump(mode="json")
-            validated["confidence_score"] = scaffold.get("confidence_score", scaffold.get("overall_confidence", 0.68))
-            return validated
+        validated = StrategicBriefV4.model_validate(merged).model_dump(mode="json")
+        validated = self._sanitize_semantic_keys(validated)
+        validated["confidence_score"] = merged["confidence_score"]
+        return validated
+
+    def _sanitize_semantic_keys(self, value):
+        """Remove case/underscore duplicate keys before the report is persisted."""
+        if isinstance(value, list):
+            return [self._sanitize_semantic_keys(item) for item in value]
+        if not isinstance(value, dict):
+            return value
+
+        cleaned = {}
+        seen: set[str] = set()
+        for key, item in value.items():
+            if not isinstance(key, str):
+                cleaned[key] = self._sanitize_semantic_keys(item)
+                continue
+            semantic_key = re.sub(r"[^a-z0-9]", "", key.lower())
+            if semantic_key in seen:
+                continue
+            seen.add(semantic_key)
+            cleaned[key] = self._sanitize_semantic_keys(item)
+        return cleaned
+
+    def _reconcile_structured_analysis(self, scaffold: dict, merged: dict) -> dict:
+        """Keep deterministic quantitative structures internally consistent."""
+        reconciled = deepcopy(merged)
+
+        scaffold_market = scaffold.get("market_analysis") if isinstance(scaffold.get("market_analysis"), dict) else {}
+        scaffold_financial = scaffold.get("financial_analysis") if isinstance(scaffold.get("financial_analysis"), dict) else {}
+        scaffold_risk = scaffold.get("risk_analysis") if isinstance(scaffold.get("risk_analysis"), dict) else {}
+
+        market_analysis = reconciled.setdefault("market_analysis", {})
+        financial_analysis = reconciled.setdefault("financial_analysis", {})
+        risk_analysis = reconciled.setdefault("risk_analysis", {})
+
+        for key in ("capability_fit_matrix", "strategic_pathways"):
+            if key in scaffold_market:
+                market_analysis[key] = deepcopy(scaffold_market[key])
+
+        for key in ("bottom_up_revenue_model", "scenario_analysis", "financial_projections", "business_units"):
+            if key in scaffold_financial:
+                financial_analysis[key] = deepcopy(scaffold_financial[key])
+
+        for key in ("risk_register", "risk_heat_map", "execution_realism"):
+            if key in scaffold_risk:
+                risk_analysis[key] = deepcopy(scaffold_risk[key])
+
+        primary_pathway = self._primary_pathway(market_analysis.get("strategic_pathways") or {})
+        if primary_pathway:
+            financial_analysis["recommended_option"] = primary_pathway.get("name")
+
+        if isinstance(reconciled.get("decision_rationale"), str):
+            base_case = self._scenario_by_name(
+                financial_analysis.get("scenario_analysis") or {},
+                (financial_analysis.get("scenario_analysis") or {}).get("recommended_case", "Base"),
+            )
+            total_year_3 = self._extract_numeric(base_case.get("revenue_year_3_usd_mn"), 0.0)
+            if total_year_3:
+                reconciled["decision_rationale"] = self._replace_revenue_mentions(
+                    reconciled["decision_rationale"],
+                    total_year_3,
+                )
+
+        return reconciled
+
+    @staticmethod
+    def _replace_revenue_mentions(text: str, year_3_revenue_usd_mn: float) -> str:
+        replacement = f"${year_3_revenue_usd_mn:.1f}M of year-three revenue"
+        return re.sub(
+            r"\$0\.\d+M of year-three revenue|\$\d+(?:\.\d+)?M of year-three revenue",
+            replacement,
+            text,
+            flags=re.IGNORECASE,
+        )
 
     def _merge_value(self, scaffold, generated):
         if generated in (None, "", [], {}):
@@ -226,7 +325,13 @@ CRITICAL RULES:
         risk_register = (scaffold.get("risk_analysis") or {}).get("risk_register") or []
 
         payload = {
-            "task": "Return a JSON patch that improves the board narrative, executive summary, and any fields that need stronger live synthesis. Omit unchanged fields.",
+            "task": (
+                "Return an evidence-backed JSON update for the final strategic brief. "
+                "Do not preserve generic scaffold language. Reconcile the recommendation, "
+                "executive summary, board narrative, action titles, so-what callouts, and roadmap "
+                "with the actual company, decision type, geography, sector, financial case, risks, "
+                "and preferred strategic pathway."
+            ),
             "query": state.get("query"),
             "company_context": state.get("extracted_context") or state.get("company_context"),
             "quality_failures": state.get("quality_failures") or [],
@@ -283,11 +388,12 @@ CRITICAL RULES:
         }
         return json.dumps(payload, indent=2, default=str)
 
-    def _repair_user_prompt(self, state, scaffold: dict) -> str:
+    def _repair_user_prompt(self, state, scaffold: dict, validation_error: str | None = None) -> str:
         payload = {
-            "task": "Return a minimal JSON patch that keeps the existing ASIS scaffold but improves the live board narrative. Focus only on the fields below.",
+            "task": "Return a minimal JSON patch that fixes validation and consistency failures without changing structured financial totals or option tables.",
             "query": state.get("query"),
             "company_context": state.get("extracted_context") or state.get("company_context"),
+            "validation_error": validation_error,
             "required_fields": [
                 "decision_statement",
                 "executive_summary",
@@ -564,7 +670,7 @@ CRITICAL RULES:
         }
 
     def _analysis_profile(self, *, company: str, geography: str, context: dict, query: str, recommendation: str | None) -> dict[str, object]:
-        decision_type = str(context.get("decision_type") or "").lower().strip() or "enter"
+        decision_type = self._normalize_decision_type(str(context.get("decision_type") or ""), query)
         target_label = geography if geography and geography != "the target market" else "the target market"
         target_scope = geography if geography and geography != "the target market" else "the business"
 
@@ -757,6 +863,25 @@ CRITICAL RULES:
         if recommendation:
             profile["default_recommendation"] = str(recommendation).strip().lower()
         return profile
+
+    @staticmethod
+    def _normalize_decision_type(raw_decision_type: str, query: str) -> str:
+        text = f"{raw_decision_type} {query}".lower()
+        if any(token in text for token in ("minority stake", "take a stake", "acquire", "acquisition", "m&a", "buyout", "takeover")):
+            return "acquire"
+        if any(token in text for token in ("merger", "merge", "post-merger", "post merger")):
+            return "merge"
+        if any(token in text for token in ("restructure", "turnaround", "cost-out", "cost out")):
+            return "restructure"
+        if any(token in text for token in ("divest", "dispose", "sell down")):
+            return "divest"
+        if any(token in text for token in ("exit", "withdraw")):
+            return "exit"
+        if any(token in text for token in ("invest", "investment", "allocate")):
+            return "invest"
+        if any(token in text for token in ("enter", "launch", "expand", "market entry", "new market")):
+            return "enter"
+        return "enter"
 
     def _query_specificity(self, query: str, context: dict) -> float:
         score = 0.28
@@ -1232,7 +1357,7 @@ CRITICAL RULES:
     ) -> dict:
         top_risk = risk_register[0]["description"] if risk_register else "Regulatory delay could slow time-to-value."
         base_case = self._scenario_by_name(scenario_analysis, scenario_analysis.get("recommended_case", "Base"))
-        base_revenue = self._safe_float(base_case.get("revenue_year_3_usd_mn"), 28.0)
+        base_revenue = self._extract_numeric(base_case.get("revenue_year_3_usd_mn"), 28.0)
         payback_months = int(base_case.get("payback_months") or 28)
         pricing_model = execution_realism.get("pricing_model") or "A phased commercial model"
         return {
@@ -1260,8 +1385,8 @@ CRITICAL RULES:
     ) -> str:
         base_case = self._scenario_by_name(scenario_analysis, scenario_analysis.get("recommended_case", "Base"))
         aggressive_case = self._scenario_by_name(scenario_analysis, "Aggressive")
-        base_revenue = self._safe_float(base_case.get("revenue_year_3_usd_mn"), 28.0)
-        aggressive_revenue = self._safe_float(aggressive_case.get("revenue_year_3_usd_mn"), base_revenue * 1.35)
+        base_revenue = self._extract_numeric(base_case.get("revenue_year_3_usd_mn"), 28.0)
+        aggressive_revenue = self._extract_numeric(aggressive_case.get("revenue_year_3_usd_mn"), base_revenue * 1.35)
         capability_gaps = capability_fit_matrix.get("critical_gaps") or []
         commercial_model = execution_realism.get("commercial_model") or "a mixed consulting and recurring-revenue model"
         paragraph_one = (
@@ -1875,8 +2000,8 @@ CRITICAL RULES:
         bottom_up_revenue_model: dict[str, object],
         normalized_risks: list[dict],
     ) -> dict[str, object]:
-        total_year_3 = self._safe_float(bottom_up_revenue_model.get("total_year_3_revenue_usd_mn"), 38.0)
-        total_year_1 = self._safe_float(bottom_up_revenue_model.get("total_year_1_revenue_usd_mn"), 12.0)
+        total_year_3 = self._extract_numeric(bottom_up_revenue_model.get("total_year_3_revenue_usd_mn"), 38.0)
+        total_year_1 = self._extract_numeric(bottom_up_revenue_model.get("total_year_1_revenue_usd_mn"), 12.0)
         top_risk = max((item["inherent_score"] for item in normalized_risks), default=10)
         risk_drag = max(0.0, (top_risk - 10) / 50)
         decision_type = str(profile.get("decision_type") or "enter")
@@ -2274,6 +2399,19 @@ CRITICAL RULES:
                 {"sector": "Audit and monitoring managed services", "priority": "Selective", "addressable_clients": 24, "target_clients": 4, "win_rate": 0.16, "average_contract_value_usd_mn": 0.95, "sales_cycle_months": 8, "base_year_3_revenue_usd_mn": 7.1},
             ]
 
+        if any(keyword in f"{sector} {query_lower}" for keyword in ("automotive", "mobility", "vehicle", "ev ", "battery", "connected car")):
+            if decision_type in {"acquire", "merge"}:
+                return [
+                    {"sector": "Battery analytics software attach", "priority": "Primary", "addressable_clients": 16, "target_clients": 5, "win_rate": 0.24, "average_contract_value_usd_mn": 1.6, "sales_cycle_months": 8, "base_year_3_revenue_usd_mn": 11.2},
+                    {"sector": "Connected-vehicle service monetisation", "priority": "Primary", "addressable_clients": 12, "target_clients": 4, "win_rate": 0.22, "average_contract_value_usd_mn": 1.9, "sales_cycle_months": 9, "base_year_3_revenue_usd_mn": 10.6},
+                    {"sector": "Dealer and fleet retention analytics", "priority": "Secondary", "addressable_clients": 34, "target_clients": 7, "win_rate": 0.18, "average_contract_value_usd_mn": 0.62, "sales_cycle_months": 6, "base_year_3_revenue_usd_mn": 6.8},
+                ]
+            return [
+                {"sector": "EV ownership analytics", "priority": "Primary", "addressable_clients": 20, "target_clients": 5, "win_rate": 0.18, "average_contract_value_usd_mn": 1.15, "sales_cycle_months": 8, "base_year_3_revenue_usd_mn": 8.9},
+                {"sector": "Software-defined vehicle services", "priority": "Primary", "addressable_clients": 14, "target_clients": 4, "win_rate": 0.19, "average_contract_value_usd_mn": 1.35, "sales_cycle_months": 9, "base_year_3_revenue_usd_mn": 8.1},
+                {"sector": "After-sales and fleet analytics", "priority": "Secondary", "addressable_clients": 42, "target_clients": 8, "win_rate": 0.15, "average_contract_value_usd_mn": 0.48, "sales_cycle_months": 6, "base_year_3_revenue_usd_mn": 5.7},
+            ]
+
         if "health" in sector:
             return [
                 {"sector": "Provider networks", "priority": "Primary", "addressable_clients": 22, "target_clients": 4, "win_rate": 0.18, "average_contract_value_usd_mn": 1.2, "sales_cycle_months": 9, "base_year_3_revenue_usd_mn": 8.7},
@@ -2313,6 +2451,16 @@ CRITICAL RULES:
             ]
 
         decision_type = str(profile.get("decision_type") or "enter")
+        sector = str(context.get("sector") or "").lower()
+        if any(keyword in f"{sector} {query_lower}" for keyword in ("automotive", "mobility", "vehicle", "ev ", "battery", "connected car")):
+            return [
+                {"capability": "Battery and vehicle-data product depth", "current_state": "Medium", "target_state": "Strong", "gap": "Battery analytics, telematics, and connected-service data need product-grade repeatability rather than one-off analytics work.", "priority": "Critical", "build_fit": "Moderate", "acquisition_fit": "Strong", "integration_risk": "Medium", "recommended_action": "Secure differentiated analytics IP through minority investment or controlled partnership before scaling."},
+                {"capability": "OEM platform integration", "current_state": "Medium", "target_state": "Strong", "gap": "Data ingestion, consent, cybersecurity, and service APIs must integrate with the OEM digital stack.", "priority": "Critical", "build_fit": "Strong", "acquisition_fit": "Moderate", "integration_risk": "High", "recommended_action": "Run integration pilots against two priority vehicle/service journeys before full rollout."},
+                {"capability": "Dealer and service-network adoption", "current_state": "Low", "target_state": "Strong", "gap": "Value capture depends on field adoption across dealers, service centers, and fleet partners.", "priority": "High", "build_fit": "Strong", "acquisition_fit": "Low", "integration_risk": "Medium", "recommended_action": "Tie rollout to dealer incentives, training, and measured retention uplift."},
+                {"capability": "Automotive data governance", "current_state": "Medium", "target_state": "Strong", "gap": "Vehicle, battery, and customer data create privacy, cybersecurity, and liability exposure if controls lag product launch.", "priority": "High", "build_fit": "Strong", "acquisition_fit": "Moderate", "integration_risk": "Medium", "recommended_action": "Embed data governance and cyber controls in the first commercial pilot."},
+                {"capability": "Monetisation and attach-rate discipline", "current_state": "Low", "target_state": "Strong", "gap": "The business case depends on attach rates, churn reduction, and paid service conversion that must be proven empirically.", "priority": "Critical", "build_fit": "Strong", "acquisition_fit": "Moderate", "integration_risk": "Low", "recommended_action": "Gate investment by cohort-level attach-rate and retention evidence."},
+            ]
+
         if decision_type in {"acquire", "merge"}:
             return [
                 {"capability": "Target screening and valuation", "current_state": "Medium", "target_state": "Strong", "gap": "The deal thesis must separate strategic fit from momentum-driven valuation.", "priority": "Critical", "build_fit": "Strong", "acquisition_fit": "Low", "integration_risk": "Low", "recommended_action": "Strengthen internal deal-screening discipline before committing."},

@@ -10,7 +10,8 @@ from asis.backend.agents.types import AgentOutput
 from asis.backend.agents.synthesis_v4 import V4SynthesisAgent
 from asis.backend.graph.pipeline import v4_workflow
 from asis.backend.config.settings import get_settings
-from asis.backend.schemas.v4 import AgentName, FrameworkName
+from asis.backend.quality.gate import QualityGate
+from asis.backend.schemas.v4 import AgentName, FrameworkName, StrategicBriefV4
 from conftest import register_user
 
 
@@ -29,6 +30,25 @@ def _parse_sse_events(raw: str) -> list[tuple[str, str]]:
         if event_name:
             events.append((event_name, data))
     return events
+
+
+def _synthesis_state(query: str, company_context: dict) -> dict:
+    return {
+        "analysis_id": "quality-test",
+        "query": query,
+        "company_context": company_context,
+        "extracted_context": company_context,
+        "market_intel_output": {},
+        "risk_assessment_output": {},
+        "competitor_analysis_output": {},
+        "geo_intel_output": {},
+        "financial_reasoning_output": {},
+        "strategic_options_output": {},
+        "framework_outputs": {},
+        "agent_collaboration_trace": [],
+        "quality_failures": [],
+        "quality_retry_count": 0,
+    }
 
 
 @pytest.mark.anyio
@@ -58,6 +78,7 @@ async def test_analysis_lifecycle_and_report_generation(client):
     assert analysis["status"] == "completed"
     assert analysis["pipeline_version"] == "4.0.0"
     assert analysis["overall_confidence"] != 85
+    assert "total_cost_usd" in analysis
     assert analysis["strategic_brief"]["overall_confidence"] == analysis["overall_confidence"]
     assert analysis["strategic_brief"]["verification"]["overall_verification_score"] == analysis["overall_confidence"]
     assert len(analysis["strategic_brief"]["financial_analysis"]["bottom_up_revenue_model"]["sector_build"]) >= 3
@@ -551,3 +572,96 @@ def test_synthesis_agent_repairs_partial_live_output_without_fallback(monkeypatc
         }
     finally:
         get_settings.cache_clear()
+
+
+def test_synthesis_acquisition_profile_keeps_recommended_pathway_aligned():
+    query = (
+        "Should Maruti Suzuki acquire a minority stake in an Indian EV battery analytics "
+        "startup by 2027 to accelerate connected-vehicle services?"
+    )
+    context = {
+        "company_name": "Maruti Suzuki",
+        "sector": "Automotive",
+        "geography": "India",
+        "decision_type": "minority stake acquisition",
+    }
+
+    brief = V4SynthesisAgent().local_result(_synthesis_state(query, context))
+    decision_text = f"{brief['decision_statement']} {brief['recommendation']}".lower()
+    pathways = brief["market_analysis"]["strategic_pathways"]["options"]
+    recommended = [option for option in pathways if option.get("recommended")] or pathways[:1]
+    recommended_text = " ".join(str(value) for option in recommended for value in option.values()).lower()
+    sector_rows = brief["financial_analysis"]["bottom_up_revenue_model"]["sector_build"]
+    sector_text = " ".join(row["sector"] for row in sector_rows).lower()
+
+    assert any(term in decision_text for term in ("acquire", "acquisition", "minority stake", "stake"))
+    assert any(term in recommended_text for term in ("acquisition", "minority", "stake", "partnership", "alliance"))
+    assert "battery" in sector_text
+    assert "connected" in sector_text
+
+
+@pytest.mark.anyio
+async def test_quality_gate_blocks_acquisition_recommendation_with_generic_pathway():
+    query = "Should Gamma SaaS acquire a regional AI startup in Europe by 2027?"
+    context = {
+        "company_name": "Gamma SaaS",
+        "sector": "Technology",
+        "geography": "Europe",
+        "decision_type": "acquisition",
+    }
+    payload = V4SynthesisAgent().local_result(_synthesis_state(query, context))
+    payload["market_analysis"]["strategic_pathways"]["options"] = [
+        {
+            "name": "Partner-led phased rollout",
+            "description": "Enter through staged pilots and lighthouse accounts.",
+            "recommended": True,
+        }
+    ]
+
+    report = await QualityGate().validate(StrategicBriefV4.model_validate(payload))
+    failed_checks = {check.id for check in report.checks if not check.passed}
+
+    assert "recommendation_pathway_alignment" in failed_checks
+    assert report.overall_grade == "FAIL"
+
+
+@pytest.mark.anyio
+async def test_quality_gate_blocks_financial_scenario_mismatch():
+    query = "Should Acme Financial enter the Indian fintech market in 2026?"
+    context = {
+        "company_name": "Acme Financial",
+        "sector": "Fintech",
+        "geography": "India",
+        "decision_type": "enter",
+    }
+    payload = V4SynthesisAgent().local_result(_synthesis_state(query, context))
+    payload["financial_analysis"]["bottom_up_revenue_model"]["total_year_3_revenue_usd_mn"] = 28.6
+    payload["financial_analysis"]["scenario_analysis"]["recommended_case"] = "Base"
+    payload["financial_analysis"]["scenario_analysis"]["scenarios"][0]["name"] = "Base"
+    payload["financial_analysis"]["scenario_analysis"]["scenarios"][0]["revenue_year_3_usd_mn"] = 0.3
+
+    report = await QualityGate().validate(StrategicBriefV4.model_validate(payload))
+    failed_checks = {check.id for check in report.checks if not check.passed}
+
+    assert "financial_scenario_consistency" in failed_checks
+    assert report.overall_grade == "FAIL"
+
+
+@pytest.mark.anyio
+async def test_quality_gate_blocks_duplicate_semantic_keys():
+    query = "Should Contoso Advisory expand AI governance services across Europe by 2027?"
+    context = {
+        "company_name": "Contoso Advisory",
+        "sector": "Consulting",
+        "geography": "Europe",
+        "decision_type": "expand",
+    }
+    payload = V4SynthesisAgent().local_result(_synthesis_state(query, context))
+    payload["market_analysis"]["pestle_analysis"] = {"status": "original"}
+    payload["market_analysis"]["PESTLE_Analysis"] = {"status": "duplicate"}
+
+    report = await QualityGate().validate(StrategicBriefV4.model_validate(payload))
+    failed_checks = {check.id for check in report.checks if not check.passed}
+
+    assert "duplicate_semantic_keys" in failed_checks
+    assert report.overall_grade == "FAIL"
