@@ -665,3 +665,83 @@ async def test_quality_gate_blocks_duplicate_semantic_keys():
 
     assert "duplicate_semantic_keys" in failed_checks
     assert report.overall_grade == "FAIL"
+
+
+@pytest.mark.anyio
+async def test_quality_gate_blocks_incomplete_framework_outputs():
+    query = "Should Maruti Suzuki launch connected-vehicle analytics in India by 2027?"
+    context = {
+        "company_name": "Maruti Suzuki",
+        "sector": "Automotive",
+        "geography": "India",
+        "decision_type": "launch",
+    }
+    payload = V4SynthesisAgent().local_result(_synthesis_state(query, context))
+    payload["framework_outputs"]["bcg_matrix"]["structured_data"]["business_units"] = []
+
+    report = await QualityGate().validate(StrategicBriefV4.model_validate(payload))
+    failed_checks = {check.id for check in report.checks if not check.passed}
+
+    assert "framework_structural_depth" in failed_checks
+    assert report.overall_grade == "FAIL"
+
+
+@pytest.mark.anyio
+async def test_quality_gate_blocks_unverifiable_citations():
+    query = "Should Acme Financial enter the Indian fintech market in 2026?"
+    context = {
+        "company_name": "Acme Financial",
+        "sector": "Fintech",
+        "geography": "India",
+        "decision_type": "enter",
+    }
+    payload = V4SynthesisAgent().local_result(_synthesis_state(query, context))
+    payload["framework_outputs"]["pestle"]["citations"][0]["url"] = "https://example.com/source"
+
+    report = await QualityGate().validate(StrategicBriefV4.model_validate(payload))
+    failed_checks = {check.id for check in report.checks if not check.passed}
+
+    assert "citation_verifiability" in failed_checks
+    assert report.overall_grade == "FAIL"
+
+
+@pytest.mark.anyio
+async def test_quality_gate_blocks_financial_input_range_errors():
+    query = "Should Acme Financial enter the Indian fintech market in 2026?"
+    context = {
+        "company_name": "Acme Financial",
+        "sector": "Fintech",
+        "geography": "India",
+        "decision_type": "enter",
+    }
+    payload = V4SynthesisAgent().local_result(_synthesis_state(query, context))
+    payload["financial_analysis"]["bottom_up_revenue_model"]["sector_build"][0]["addressable_clients"] = 4
+    payload["financial_analysis"]["bottom_up_revenue_model"]["sector_build"][0]["target_clients"] = 9
+
+    report = await QualityGate().validate(StrategicBriefV4.model_validate(payload))
+    failed_checks = {check.id for check in report.checks if not check.passed}
+
+    assert "financial_input_ranges" in failed_checks
+    assert report.overall_grade == "FAIL"
+
+
+@pytest.mark.anyio
+async def test_quality_gate_blocks_flat_confidence_scores():
+    query = "Should Acme Financial enter the Indian fintech market in 2026?"
+    context = {
+        "company_name": "Acme Financial",
+        "sector": "Fintech",
+        "geography": "India",
+        "decision_type": "enter",
+    }
+    payload = V4SynthesisAgent().local_result(_synthesis_state(query, context))
+    payload["overall_confidence"] = 0.76
+    payload["decision_confidence"] = 0.76
+    for output in payload["framework_outputs"].values():
+        output["confidence_score"] = 0.75
+
+    report = await QualityGate().validate(StrategicBriefV4.model_validate(payload))
+    failed_checks = {check.id for check in report.checks if not check.passed}
+
+    assert "confidence_calibration" in failed_checks
+    assert report.overall_grade == "FAIL"

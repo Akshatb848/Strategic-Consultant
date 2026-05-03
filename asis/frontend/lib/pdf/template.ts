@@ -624,7 +624,7 @@ export function buildPdfHtml({
       const sectionTitle = text(brief.section_action_titles?.[key], displayName);
       const title = findingTitle(output.exhibit_title, `${displayName} clarifies the main implication for the strategic decision`);
       return `
-        <section class="report-section page-break">
+        <section class="report-section framework-section">
           ${sectionHeader(`4.${index + 1}`, sectionTitle)}
           <p class="section-lead">${escapeHtml(sentence(output.narrative, `${displayName} evidence supports the final recommendation.`))}</p>
           ${exhibit(nextExhibit(), title, sourceForFramework(output), frameworkBody(key, output, brief))}
@@ -661,7 +661,7 @@ export function buildPdfHtml({
           font-weight: 500;
           letter-spacing: -0.02em;
           line-height: 1.05;
-          margin: 32mm 0 8mm;
+          margin: 24mm 0 8mm;
           max-width: 165mm;
         }
         h2 {
@@ -738,6 +738,11 @@ export function buildPdfHtml({
         .toc span:first-child { color: ${colors.text}; }
         .toc span:last-child { color: ${colors.muted}; }
         .report-section { padding-top: 2mm; }
+        .framework-section {
+          break-before: auto;
+          margin-top: 12px;
+          page-break-before: auto;
+        }
         .section-header {
           border-bottom: 1.5px solid ${colors.accent};
           display: grid;

@@ -500,6 +500,18 @@ CRITICAL RULES:
 
         mece_score = round(self._compute_mece_score(risk, framework_outputs, context=context, query=query), 3)
         internal_consistency_score = round(self._compute_internal_consistency(framework_outputs, financial=financial, risk=risk, profile=profile), 3)
+        framework_outputs = self._calibrate_framework_confidences(
+            framework_outputs,
+            query=query,
+            context=context,
+            bottom_up_revenue_model=bottom_up_revenue_model,
+            scenario_analysis=scenario_analysis,
+            capability_fit_matrix=capability_fit_matrix,
+            execution_realism=execution_realism,
+            strategic_pathways=strategic_pathways,
+            mece_score=mece_score,
+            internal_consistency_score=internal_consistency_score,
+        )
         overall_confidence = round(
             self._overall_confidence(
                 query=query,
@@ -634,7 +646,7 @@ CRITICAL RULES:
             "generated_at": datetime.utcnow().isoformat(),
             "asis_version": "4.0.0",
             "confidentiality_level": "STRICTLY CONFIDENTIAL",
-            "disclaimer": "This report was produced by an AI-assisted multi-agent system and should be reviewed by qualified human experts before implementation.",
+            "disclaimer": "This report is decision-support material and should be reviewed by qualified human experts before implementation.",
         }
 
         return {
@@ -979,6 +991,46 @@ CRITICAL RULES:
         score = composite - risk_penalty - float(profile.get("complexity_penalty", 0.03)) + self._confidence_variance(query, context)
         return max(0.46, min(0.93, score))
 
+    def _calibrate_framework_confidences(
+        self,
+        framework_outputs: dict[str, dict],
+        *,
+        query: str,
+        context: dict,
+        bottom_up_revenue_model: dict[str, object],
+        scenario_analysis: dict[str, object],
+        capability_fit_matrix: dict[str, object],
+        execution_realism: dict[str, object],
+        strategic_pathways: dict[str, object],
+        mece_score: float,
+        internal_consistency_score: float,
+    ) -> dict[str, dict]:
+        """Convert static framework defaults into evidence-dependent confidence scores."""
+        query_signal = self._query_specificity(query, context)
+        citation_signal = self._citation_strength(framework_outputs)
+        commercial_signal = self._commercial_rigor_signal(bottom_up_revenue_model, scenario_analysis)
+        execution_signal = self._execution_signal(execution_realism, capability_fit_matrix, strategic_pathways)
+        framework_weights = {
+            "pestle": (query_signal, citation_signal, mece_score),
+            "porters_five_forces": (query_signal, citation_signal, internal_consistency_score),
+            "swot": (mece_score, internal_consistency_score, execution_signal),
+            "ansoff": (query_signal, commercial_signal, execution_signal),
+            "bcg_matrix": (commercial_signal, citation_signal, internal_consistency_score),
+            "mckinsey_7s": (execution_signal, mece_score, internal_consistency_score),
+            "blue_ocean": (query_signal, citation_signal, execution_signal),
+            "balanced_scorecard": (execution_signal, commercial_signal, internal_consistency_score),
+        }
+        calibrated = deepcopy(framework_outputs)
+        for index, (framework_key, output) in enumerate(calibrated.items()):
+            baseline = self._safe_float(output.get("confidence_score"), 0.7)
+            evidence_components = framework_weights.get(framework_key, (query_signal, citation_signal, internal_consistency_score))
+            evidence_score = mean(evidence_components)
+            variance = self._confidence_variance(f"{query}:{framework_key}:{index}", context)
+            confidence = (baseline * 0.36) + (evidence_score * 0.54) + (min(1.0, len(output.get("citations") or []) / 6) * 0.10)
+            confidence = confidence + variance - (0.012 * index)
+            output["confidence_score"] = round(max(0.48, min(0.92, confidence)), 3)
+        return calibrated
+
     def _build_framework_outputs(self, *, state, context, citations, market, risk, competitor, geo, financial, strategic, profile) -> dict[str, dict]:
         competitor_profiles = competitor.get("competitor_profiles") or []
         program_label = str(profile["program_label"])
@@ -1200,7 +1252,7 @@ CRITICAL RULES:
         }
         balanced_scorecard_structured["action_title"] = f"Execution should be governed through a balanced scorecard that ties the {program_label} to measurable financial, customer, process, and capability outcomes."
 
-        return {
+        framework_outputs = {
             "pestle": build_framework_output(
                 framework_name=FrameworkName.PESTLE,
                 agent_author=AgentName.SYNTHESIS,
@@ -1314,6 +1366,7 @@ CRITICAL RULES:
                 risk_of_inaction="Absent a scorecard, the organisation risks scaling activity faster than it scales control, capability, and customer proof.",
             ),
         }
+        return framework_outputs
 
     def _decision_statement(
         self,

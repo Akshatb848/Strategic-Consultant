@@ -41,7 +41,10 @@ class QualityGate:
             self._check_decision_length(brief),
             self._check_citation_density(brief),
             self._check_citation_url_format(brief),
+            self._check_citation_verifiability(brief),
             self._check_framework_completeness(brief),
+            self._check_framework_structural_depth(brief),
+            self._check_framework_distinctiveness(brief),
             self._check_collaboration_trace(brief),
             self._check_context_specificity(brief),
             self._check_bottom_up_economics(brief),
@@ -52,6 +55,8 @@ class QualityGate:
             self._check_roadmap_phases(brief),
             self._check_recommendation_pathway_alignment(brief),
             self._check_financial_scenario_consistency(brief),
+            self._check_financial_input_ranges(brief),
+            self._check_confidence_calibration(brief),
             self._check_context_leakage(brief),
             self._check_duplicate_semantic_keys(brief),
         ]
@@ -117,6 +122,82 @@ class QualityGate:
             level="BLOCK",
             passed=passed,
             notes=None if passed else f"Missing framework outputs: {', '.join(missing)}.",
+        )
+
+    def _check_framework_structural_depth(self, brief: StrategicBriefV4) -> QualityCheckResult:
+        """Every named framework must expose the minimum data structure needed to solve it."""
+        failures: list[str] = []
+        outputs = brief.framework_outputs or {}
+        required_paths = {
+            "pestle": ("political", "economic", "social", "technological", "legal", "environmental"),
+            "porters_five_forces": (
+                "competitive_rivalry",
+                "threat_of_new_entrants",
+                "threat_of_substitutes",
+                "bargaining_power_buyers",
+                "bargaining_power_suppliers",
+            ),
+            "swot": ("strengths", "weaknesses", "opportunities", "threats"),
+            "ansoff": ("market_penetration", "market_development", "product_development", "diversification", "recommended_quadrant"),
+            "mckinsey_7s": ("strategy", "structure", "systems", "staff", "style", "skills", "shared_values"),
+        }
+        for framework, keys in required_paths.items():
+            data = (outputs.get(framework).structured_data if outputs.get(framework) else {}) or {}
+            missing = [key for key in keys if key not in data or data.get(key) in ({}, [], "", None)]
+            if missing:
+                failures.append(f"{framework}: missing {', '.join(missing)}")
+
+        bcg_units = ((outputs.get("bcg_matrix").structured_data if outputs.get("bcg_matrix") else {}) or {}).get("business_units") or []
+        if len(bcg_units) < 2:
+            failures.append("bcg_matrix: fewer than 2 business units")
+
+        blue = (outputs.get("blue_ocean").structured_data if outputs.get("blue_ocean") else {}) or {}
+        if not blue.get("factors") or not blue.get("company_curve"):
+            failures.append("blue_ocean: missing factors or company curve")
+
+        scorecard = brief.balanced_scorecard.model_dump(mode="json") if brief.balanced_scorecard else {}
+        for perspective in ("financial", "customer", "internal_process", "learning_and_growth"):
+            item = scorecard.get(perspective) or {}
+            if not item.get("objectives") or not item.get("measures") or not item.get("targets") or not item.get("initiatives"):
+                failures.append(f"balanced_scorecard: incomplete {perspective}")
+
+        passed = not failures
+        return QualityCheckResult(
+            id="framework_structural_depth",
+            description="Each named framework must include the core fields needed to solve that framework from the analysis data",
+            level="BLOCK",
+            passed=passed,
+            notes=None if passed else f"Incomplete framework data: {'; '.join(failures[:6])}.",
+        )
+
+    def _check_framework_distinctiveness(self, brief: StrategicBriefV4) -> QualityCheckResult:
+        """Framework sections should not collapse into repeated generic narrative."""
+        normalized: dict[str, str] = {}
+        generic_titles: list[str] = []
+        for framework_name, output in (brief.framework_outputs or {}).items():
+            title = (output.exhibit_title or "").strip().lower()
+            if title in {"market analysis", "competition", "growth", "framework analysis", "risk register", "vrio analysis"}:
+                generic_titles.append(framework_name)
+            narrative = re.sub(r"[^a-z0-9]+", " ", (output.narrative or "").lower()).strip()
+            normalized[framework_name] = " ".join(narrative.split()[:26])
+
+        duplicates = []
+        seen: dict[str, str] = {}
+        for framework_name, narrative_key in normalized.items():
+            if narrative_key and narrative_key in seen:
+                duplicates.append(f"{seen[narrative_key]} / {framework_name}")
+            elif narrative_key:
+                seen[narrative_key] = framework_name
+
+        passed = not duplicates and not generic_titles
+        return QualityCheckResult(
+            id="framework_distinctiveness",
+            description="Framework sections must have distinct, finding-led titles and narratives rather than repeated generic consulting language",
+            level="BLOCK",
+            passed=passed,
+            notes=None if passed else (
+                f"Generic framework presentation detected: duplicate narratives {duplicates[:3]} generic titles {generic_titles[:5]}."
+            ),
         )
 
     def _check_collaboration_trace(self, brief: StrategicBriefV4) -> QualityCheckResult:
@@ -209,6 +290,27 @@ class QualityGate:
             level="WARN",
             passed=passed,
             notes=None if passed else f"Malformed citation URLs detected: {'; '.join(bad_citations[:5])}.",
+        )
+
+    def _check_citation_verifiability(self, brief: StrategicBriefV4) -> QualityCheckResult:
+        """Citations must include a named source and a usable public URL, not placeholders."""
+        unverifiable: list[str] = []
+        placeholder_terms = ("example.com", "placeholder", "unknown", "n/a", "internal estimate", "asis synthesis")
+        for framework_name, output in brief.framework_outputs.items():
+            for citation in output.citations:
+                source = str(getattr(citation, "source", "") or getattr(citation, "publisher", "") or "").strip()
+                title = str(getattr(citation, "title", "") or "").strip()
+                url = str(getattr(citation, "url", "") or "").strip()
+                combined = f"{source} {title} {url}".lower()
+                if not source or not title or not url or not _looks_like_url(url) or any(term in combined for term in placeholder_terms):
+                    unverifiable.append(f"{framework_name}: {title or source or url or 'missing citation'}")
+        passed = not unverifiable
+        return QualityCheckResult(
+            id="citation_verifiability",
+            description="All framework citations must have a real source, title, and verifiable http/https URL",
+            level="BLOCK",
+            passed=passed,
+            notes=None if passed else f"Unverifiable citations detected: {'; '.join(unverifiable[:6])}.",
         )
 
     def _check_cross_agent_consistency(self, brief: StrategicBriefV4) -> QualityCheckResult:
@@ -386,6 +488,71 @@ class QualityGate:
                 f"Scenario Year 3 revenue (${scenario_revenue:.1f}M) does not reconcile with "
                 f"bottom-up build (${bottom_up_total:.1f}M)."
             ),
+        )
+
+    def _check_financial_input_ranges(self, brief: StrategicBriefV4) -> QualityCheckResult:
+        """Financial rows must use sane ranges and totals must reconcile to displayed segment rows."""
+        bottom_up = ((brief.financial_analysis or {}).get("bottom_up_revenue_model") or {})
+        sector_rows = bottom_up.get("sector_build") or []
+        failures: list[str] = []
+        row_total = 0.0
+        for index, row in enumerate(sector_rows):
+            if not isinstance(row, dict):
+                failures.append(f"row {index + 1}: not an object")
+                continue
+            addressable = self._coerce_float(row.get("addressable_clients"))
+            target = self._coerce_float(row.get("target_clients"))
+            win_rate = self._coerce_float(row.get("win_rate"))
+            acv = self._coerce_float(row.get("average_contract_value_usd_mn"))
+            revenue = self._coerce_float(row.get("year_3_revenue_usd_mn") or row.get("base_year_3_revenue_usd_mn"))
+            if addressable is not None and target is not None and target > addressable:
+                failures.append(f"row {index + 1}: target clients exceed addressable clients")
+            if win_rate is None or not 0 <= win_rate <= 1:
+                failures.append(f"row {index + 1}: win rate must be 0-1")
+            if acv is None or acv <= 0:
+                failures.append(f"row {index + 1}: ACV must be positive")
+            if revenue is None or revenue <= 0:
+                failures.append(f"row {index + 1}: Year 3 revenue must be positive")
+            else:
+                row_total += revenue
+
+        reported_total = self._coerce_float(bottom_up.get("total_year_3_revenue_usd_mn"))
+        if sector_rows and reported_total is not None and row_total > 0:
+            ratio = reported_total / row_total
+            if not 0.98 <= ratio <= 1.02:
+                failures.append(f"reported Year 3 total ${reported_total:.1f}M does not equal segment sum ${row_total:.1f}M")
+
+        passed = not failures
+        return QualityCheckResult(
+            id="financial_input_ranges",
+            description="Bottom-up financial rows must use sane ranges and reconcile displayed totals",
+            level="BLOCK",
+            passed=passed,
+            notes=None if passed else f"Financial input integrity failures: {'; '.join(failures[:6])}.",
+        )
+
+    def _check_confidence_calibration(self, brief: StrategicBriefV4) -> QualityCheckResult:
+        """Confidence must be calculated and variable, not flat or hardcoded."""
+        scores = [round(float(output.confidence_score), 3) for output in brief.framework_outputs.values()]
+        confidence = round(float(brief.overall_confidence), 3)
+        decision_confidence = round(float(brief.decision_confidence), 3)
+        failures: list[str] = []
+        if confidence in {0.85, 85.0} or decision_confidence in {0.85, 85.0}:
+            failures.append("overall confidence is the known hardcoded 85 value")
+        if abs(confidence - decision_confidence) > 0.001:
+            failures.append("decision confidence and overall confidence diverge")
+        if scores and max(scores) - min(scores) < 0.025:
+            failures.append("framework confidence scores are too flat")
+        if len(set(scores)) <= 2:
+            failures.append("too few distinct framework confidence scores")
+
+        passed = not failures
+        return QualityCheckResult(
+            id="confidence_calibration",
+            description="Overall and framework confidence must vary with evidence quality, specificity, financial rigor, and execution risk",
+            level="BLOCK",
+            passed=passed,
+            notes=None if passed else f"Confidence calibration failure: {'; '.join(failures)}.",
         )
 
     def _check_context_leakage(self, brief: StrategicBriefV4) -> QualityCheckResult:
