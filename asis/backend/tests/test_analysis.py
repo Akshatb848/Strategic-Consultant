@@ -611,7 +611,7 @@ async def test_bain_ai_platform_brief_preserves_prompt_facts_and_named_competito
     )
     payload = V4SynthesisAgent().local_result(_synthesis_state(BAIN_AI_PLATFORM_QUERY, context))
     brief = StrategicBriefV4.model_validate(payload)
-    report = await QualityGate().validate(brief)
+    report = await QualityGate().validate(brief, scope="export")
     failed_checks = {check.id for check in report.checks if not check.passed}
     payload_text = str(payload).lower()
 
@@ -677,7 +677,7 @@ async def test_quality_gate_blocks_prompt_drift_from_stale_report_context():
         "Digital Challenger": {"price": 8},
     }
 
-    report = await QualityGate().validate(StrategicBriefV4.model_validate(payload))
+    report = await QualityGate().validate(StrategicBriefV4.model_validate(payload), scope="export")
     failed_checks = {check.id for check in report.checks if not check.passed}
 
     assert "prompt_fidelity" in failed_checks
@@ -729,7 +729,7 @@ async def test_quality_gate_blocks_acquisition_recommendation_with_generic_pathw
         }
     ]
 
-    report = await QualityGate().validate(StrategicBriefV4.model_validate(payload))
+    report = await QualityGate().validate(StrategicBriefV4.model_validate(payload), scope="export")
     failed_checks = {check.id for check in report.checks if not check.passed}
 
     assert "recommendation_pathway_alignment" in failed_checks
@@ -751,7 +751,7 @@ async def test_quality_gate_blocks_financial_scenario_mismatch():
     payload["financial_analysis"]["scenario_analysis"]["scenarios"][0]["name"] = "Base"
     payload["financial_analysis"]["scenario_analysis"]["scenarios"][0]["revenue_year_3_usd_mn"] = 0.3
 
-    report = await QualityGate().validate(StrategicBriefV4.model_validate(payload))
+    report = await QualityGate().validate(StrategicBriefV4.model_validate(payload), scope="export")
     failed_checks = {check.id for check in report.checks if not check.passed}
 
     assert "financial_scenario_consistency" in failed_checks
@@ -777,11 +777,33 @@ async def test_quality_gate_blocks_repeated_generic_financial_ladder():
         row["payback_basis"] = "generic scaffold"
     payload["financial_analysis"]["scenario_analysis"]["scenarios"] = generic_rows
 
-    report = await QualityGate().validate(StrategicBriefV4.model_validate(payload))
+    report = await QualityGate().validate(StrategicBriefV4.model_validate(payload), scope="export")
     failed_checks = {check.id for check in report.checks if not check.passed}
 
     assert "scenario_duplicate_guard" in failed_checks
     assert report.overall_grade == "FAIL"
+
+
+@pytest.mark.anyio
+async def test_quality_gate_pipeline_scope_surfaces_but_does_not_block_export_grade_failures():
+    context = extract_problem_context(
+        BAIN_AI_PLATFORM_QUERY,
+        {"company_name": "Bain & Company", "sector": "Technology Consulting"},
+    )
+    payload = V4SynthesisAgent().local_result(_synthesis_state(BAIN_AI_PLATFORM_QUERY, context))
+    payload["financial_analysis"]["scenario_analysis"]["scenarios"] = [
+        {"name": "Conservative", "revenue_year_3_usd_mn": 22.5, "ebitda_margin_pct": 13.6, "roi_multiple": 1.32, "irr_pct": 21.8, "payback_months": 37},
+        {"name": "Base", "revenue_year_3_usd_mn": 32.0, "ebitda_margin_pct": 17.6, "roi_multiple": 1.82, "irr_pct": 31.0, "payback_months": 31},
+        {"name": "Aggressive", "revenue_year_3_usd_mn": 40.6, "ebitda_margin_pct": 22.6, "roi_multiple": 2.42, "irr_pct": 39.4, "payback_months": 25},
+    ]
+
+    report = await QualityGate().validate(StrategicBriefV4.model_validate(payload), scope="pipeline")
+    failed = {check.id: check for check in report.checks if not check.passed}
+
+    assert "scenario_duplicate_guard" in failed
+    assert failed["scenario_duplicate_guard"].level == "WARN"
+    assert not QualityGate.has_block_failures(report)
+    assert report.overall_grade != "FAIL"
 
 
 @pytest.mark.anyio
@@ -799,7 +821,7 @@ async def test_quality_gate_blocks_framework_placeholders_and_macro_only_sources
     payload["framework_outputs"]["bcg_matrix"]["structured_data"]["business_units"][0]["name"] = "Core Business"
     payload["framework_outputs"]["blue_ocean"]["structured_data"]["competitor_curves"] = {"Incumbent Leader": {"price": 5}}
 
-    report = await QualityGate().validate(StrategicBriefV4.model_validate(payload))
+    report = await QualityGate().validate(StrategicBriefV4.model_validate(payload), scope="export")
     failed_checks = {check.id for check in report.checks if not check.passed}
 
     assert "source_role_relevance" in failed_checks
@@ -820,7 +842,7 @@ async def test_quality_gate_blocks_duplicate_semantic_keys():
     payload["market_analysis"]["pestle_analysis"] = {"status": "original"}
     payload["market_analysis"]["PESTLE_Analysis"] = {"status": "duplicate"}
 
-    report = await QualityGate().validate(StrategicBriefV4.model_validate(payload))
+    report = await QualityGate().validate(StrategicBriefV4.model_validate(payload), scope="export")
     failed_checks = {check.id for check in report.checks if not check.passed}
 
     assert "duplicate_semantic_keys" in failed_checks
@@ -839,7 +861,7 @@ async def test_quality_gate_blocks_incomplete_framework_outputs():
     payload = V4SynthesisAgent().local_result(_synthesis_state(query, context))
     payload["framework_outputs"]["bcg_matrix"]["structured_data"]["business_units"] = []
 
-    report = await QualityGate().validate(StrategicBriefV4.model_validate(payload))
+    report = await QualityGate().validate(StrategicBriefV4.model_validate(payload), scope="export")
     failed_checks = {check.id for check in report.checks if not check.passed}
 
     assert "framework_structural_depth" in failed_checks
@@ -858,7 +880,7 @@ async def test_quality_gate_blocks_unverifiable_citations():
     payload = V4SynthesisAgent().local_result(_synthesis_state(query, context))
     payload["framework_outputs"]["pestle"]["citations"][0]["url"] = "https://example.com/source"
 
-    report = await QualityGate().validate(StrategicBriefV4.model_validate(payload))
+    report = await QualityGate().validate(StrategicBriefV4.model_validate(payload), scope="export")
     failed_checks = {check.id for check in report.checks if not check.passed}
 
     assert "citation_verifiability" in failed_checks
@@ -878,7 +900,7 @@ async def test_quality_gate_blocks_financial_input_range_errors():
     payload["financial_analysis"]["bottom_up_revenue_model"]["sector_build"][0]["addressable_clients"] = 4
     payload["financial_analysis"]["bottom_up_revenue_model"]["sector_build"][0]["target_clients"] = 9
 
-    report = await QualityGate().validate(StrategicBriefV4.model_validate(payload))
+    report = await QualityGate().validate(StrategicBriefV4.model_validate(payload), scope="export")
     failed_checks = {check.id for check in report.checks if not check.passed}
 
     assert "financial_input_ranges" in failed_checks
@@ -900,7 +922,7 @@ async def test_quality_gate_blocks_flat_confidence_scores():
     for output in payload["framework_outputs"].values():
         output["confidence_score"] = 0.75
 
-    report = await QualityGate().validate(StrategicBriefV4.model_validate(payload))
+    report = await QualityGate().validate(StrategicBriefV4.model_validate(payload), scope="export")
     failed_checks = {check.id for check in report.checks if not check.passed}
 
     assert "confidence_calibration" in failed_checks

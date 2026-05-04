@@ -151,6 +151,7 @@ class V4EnterpriseWorkflow:
                     {
                         "analysis_id": analysis.id,
                         "message": public_message,
+                        "current_agent": analysis.current_agent,
                         "timestamp_ms": now_ms(),
                     },
                 )
@@ -332,7 +333,7 @@ class V4EnterpriseWorkflow:
                 dependencies,
             )
             brief = StrategicBriefV4.model_validate(result["synthesis_output"])
-            quality_report = asyncio.run(self.quality_gate.validate(brief, retry_count=attempts))
+            quality_report = asyncio.run(self.quality_gate.validate(brief, retry_count=attempts, scope="pipeline"))
             final_quality_report = quality_report
             quality_report_payload = quality_report.model_dump(mode="json")
             synthesis_output = brief.model_dump(mode="json")

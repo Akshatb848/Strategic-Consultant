@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from statistics import mean
-from typing import Any
+from typing import Any, Literal
 
 from asis.backend.graph.context import extract_query_facts
 from asis.backend.schemas.v4 import QualityCheckResult, QualityReport, StrategicBriefV4
@@ -21,8 +21,9 @@ def _looks_like_url(value: str) -> bool:
 class QualityGate:
     """
     Runs the v4 output checks required before a StrategicBriefV4 is treated as
-    production-ready. BLOCK failures are intended to trigger synthesis retries;
-    WARN failures are surfaced in the quality report and UI.
+    production-ready. Pipeline validation surfaces quality issues without
+    blocking a completed live LLM run; export validation keeps BLOCK failures
+    strict so weak board-facing PDFs are rejected before download.
     """
 
     REQUIRED_FRAMEWORKS = {
@@ -36,7 +37,12 @@ class QualityGate:
         "balanced_scorecard",
     }
 
-    async def validate(self, brief: StrategicBriefV4, retry_count: int = 0) -> QualityReport:
+    async def validate(
+        self,
+        brief: StrategicBriefV4,
+        retry_count: int = 0,
+        scope: Literal["pipeline", "export"] = "pipeline",
+    ) -> QualityReport:
         checks = [
             self._check_decision_prefix(brief),
             self._check_decision_length(brief),
@@ -69,6 +75,11 @@ class QualityGate:
             self._check_context_leakage(brief),
             self._check_duplicate_semantic_keys(brief),
         ]
+        if scope == "pipeline":
+            checks = [
+                check.model_copy(update={"level": "WARN"}) if check.level == "BLOCK" else check
+                for check in checks
+            ]
         flags = [check.notes for check in checks if not check.passed and check.notes]
         citation_density_score = self._citation_density_score(brief)
         mece_score = brief.mece_score

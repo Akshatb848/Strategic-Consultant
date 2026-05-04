@@ -93,7 +93,7 @@ def _quality_block_response(report: models.Report, validation: dict, db: Session
 def _validated_export_brief(report: models.Report, db: Session) -> dict:
     brief = _brief_or_422(report)
     strategic_brief = StrategicBriefV4.model_validate(brief)
-    quality_report = asyncio.run(QualityGate().validate(strategic_brief))
+    quality_report = asyncio.run(QualityGate().validate(strategic_brief, scope="export"))
     validation = _export_validation_payload(quality_report)
     if QualityGate.has_block_failures(quality_report):
         _quality_block_response(report, validation, db)
