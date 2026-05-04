@@ -28,6 +28,7 @@ const HOP_BY_HOP = new Set([
   "transfer-encoding",
   "upgrade",
   "host",
+  "content-length",
 ]);
 
 function buildUpstreamHeaders(req: NextRequest): Headers {
