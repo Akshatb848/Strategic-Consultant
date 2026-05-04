@@ -1,7 +1,10 @@
 /** @type {import('next').NextConfig} */
+const path = require('path');
+
 const nextConfig = {
   reactStrictMode: true,
   output: 'standalone',
+  outputFileTracingRoot: path.join(__dirname),
   env: {
     // NEXT_PUBLIC_API_URL is the base URL the browser uses for API calls.
     // In production on GCP this is set to http://<VM_IP>:3001 so that all

@@ -59,7 +59,7 @@ async function loadBriefFromBackend(analysisId: string, authHeader: string) {
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: { analysisId: string } }
+  { params }: { params: Promise<{ analysisId: string }> }
 ) {
   const authHeader = request.headers.get("authorization") || "";
   const internalToken = process.env.INTERNAL_REPORT_TOKEN || process.env.JWT_SECRET || "";
@@ -77,7 +77,7 @@ export async function POST(
     body = {};
   }
 
-  const analysisId = params.analysisId;
+  const { analysisId } = await params;
   let brief = body.brief;
   let appendix = body.appendix || {};
   const maxPages = Math.max(1, Number(body.pdf_max_pages || process.env.PDF_MAX_PAGES || 60));

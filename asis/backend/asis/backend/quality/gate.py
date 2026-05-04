@@ -43,9 +43,11 @@ class QualityGate:
             self._check_citation_density(brief),
             self._check_citation_url_format(brief),
             self._check_citation_verifiability(brief),
+            self._check_source_role_relevance(brief),
             self._check_framework_completeness(brief),
             self._check_framework_structural_depth(brief),
             self._check_framework_distinctiveness(brief),
+            self._check_framework_placeholder_specificity(brief),
             self._check_collaboration_trace(brief),
             self._check_context_specificity(brief),
             self._check_prompt_fidelity(brief),
@@ -60,6 +62,8 @@ class QualityGate:
             self._check_financial_scenario_consistency(brief),
             self._check_financial_input_ranges(brief),
             self._check_bottom_up_formula_integrity(brief),
+            self._check_numeric_evidence_contract(brief),
+            self._check_scenario_duplicate_guard(brief),
             self._check_red_team_materiality(brief),
             self._check_confidence_calibration(brief),
             self._check_context_leakage(brief),
@@ -203,6 +207,66 @@ class QualityGate:
             notes=None if passed else (
                 f"Generic framework presentation detected: duplicate narratives {duplicates[:3]} generic titles {generic_titles[:5]}."
             ),
+        )
+
+    def _check_framework_placeholder_specificity(self, brief: StrategicBriefV4) -> QualityCheckResult:
+        """Block framework rows that are present but still generic, placeholder-like, or detached from named competitors."""
+        facts = extract_query_facts(str(brief.report_metadata.query or ""))
+        named_competitors = facts.get("named_competitors") or []
+        material_context = bool(named_competitors or facts.get("investment_range_usd_mn") or facts.get("strategic_themes"))
+        placeholder_values = {"", "-", "n/a", "na", "none", "not available", "tbd"}
+        generic_labels = {
+            "core business",
+            "new market entry",
+            "digital partnerships",
+            "incumbent leader",
+            "digital challenger",
+            "global specialist",
+        }
+        failures: list[str] = []
+
+        seven_s = (brief.framework_outputs.get("mckinsey_7s").structured_data if brief.framework_outputs.get("mckinsey_7s") else {}) or {}
+        for dimension in ("strategy", "structure", "systems", "staff", "style", "skills", "shared_values"):
+            record = seven_s.get(dimension) or {}
+            evidence_text = " ".join(
+                str(record.get(key) or "")
+                for key in ("finding", "rationale", "implication", "current_state", "desired_state", "gap")
+            ).strip()
+            if evidence_text.lower() in placeholder_values or len(evidence_text.split()) < 8:
+                failures.append(f"mckinsey_7s.{dimension} is placeholder or too thin")
+
+        bcg_units = ((brief.framework_outputs.get("bcg_matrix").structured_data if brief.framework_outputs.get("bcg_matrix") else {}) or {}).get("business_units") or []
+        generic_bcg = [
+            str(unit.get("name", "")).strip()
+            for unit in bcg_units
+            if isinstance(unit, dict) and str(unit.get("name", "")).strip().lower() in generic_labels
+        ]
+        if material_context and generic_bcg:
+            failures.append(f"bcg_matrix uses generic units: {', '.join(generic_bcg)}")
+
+        blue = (brief.framework_outputs.get("blue_ocean").structured_data if brief.framework_outputs.get("blue_ocean") else {}) or {}
+        competitor_curves = blue.get("competitor_curves") if isinstance(blue, dict) else {}
+        if isinstance(competitor_curves, dict):
+            generic_competitors = [name for name in competitor_curves if str(name).strip().lower() in generic_labels]
+            if named_competitors and generic_competitors:
+                failures.append(f"blue_ocean uses generic competitors: {', '.join(generic_competitors)}")
+            competitor_text = " ".join(str(name).lower() for name in competitor_curves)
+            missing = [name for name in named_competitors if name.lower() not in competitor_text]
+            if named_competitors and missing:
+                failures.append(f"blue_ocean missing named competitors: {', '.join(missing)}")
+
+        porter = (brief.framework_outputs.get("porters_five_forces").structured_data if brief.framework_outputs.get("porters_five_forces") else {}) or {}
+        porter_text = self._flatten_text(porter).lower()
+        if named_competitors and not any(name.lower() in porter_text for name in named_competitors):
+            failures.append("porters_five_forces does not benchmark named competitors")
+
+        passed = not failures
+        return QualityCheckResult(
+            id="framework_placeholder_specificity",
+            description="Framework rows must contain problem-specific findings and named competitors where the prompt supplies them",
+            level="BLOCK",
+            passed=passed,
+            notes=None if passed else f"Framework specificity failures: {'; '.join(failures[:6])}.",
         )
 
     def _check_collaboration_trace(self, brief: StrategicBriefV4) -> QualityCheckResult:
@@ -398,6 +462,41 @@ class QualityGate:
             level="BLOCK",
             passed=passed,
             notes=None if passed else f"Unverifiable citations detected: {'; '.join(unverifiable[:6])}.",
+        )
+
+    def _check_source_role_relevance(self, brief: StrategicBriefV4) -> QualityCheckResult:
+        """Material reports need sources relevant to market, competitor, and financial claims."""
+        facts = extract_query_facts(str(brief.report_metadata.query or ""))
+        investment = facts.get("investment_range_usd_mn") or {}
+        investment_mid = self._coerce_float(investment.get("mid") if isinstance(investment, dict) else None) or 0
+        named_competitors = facts.get("named_competitors") or []
+        material_decision = bool(investment_mid >= 250 or named_competitors or facts.get("strategic_themes"))
+        if not material_decision:
+            return QualityCheckResult(
+                id="source_role_relevance",
+                description="Material reports must include source roles beyond macro context",
+                level="BLOCK",
+                passed=True,
+                notes=None,
+            )
+
+        citations = self._all_citations(brief)
+        roles = {role for citation in citations for role in self._citation_roles(citation, named_competitors)}
+        failures: list[str] = []
+        if "macro" in roles and not roles.intersection({"sector", "competitor", "regulatory", "financial"}):
+            failures.append("only macro sources are present")
+        if not roles.intersection({"sector", "financial"}):
+            failures.append("no sector or financial source supports market/economic claims")
+        if named_competitors and "competitor" not in roles:
+            failures.append("named competitor claims lack competitor-relevant sources")
+
+        passed = not failures
+        return QualityCheckResult(
+            id="source_role_relevance",
+            description="Large or competitor-explicit reports must include sector, financial, and competitor-relevant source coverage",
+            level="BLOCK",
+            passed=passed,
+            notes=None if passed else f"Source role relevance failure: {'; '.join(failures)}. Roles found: {', '.join(sorted(roles)) or 'none'}.",
         )
 
     def _check_cross_agent_consistency(self, brief: StrategicBriefV4) -> QualityCheckResult:
@@ -654,6 +753,90 @@ class QualityGate:
             notes=None if passed else f"Bottom-up formula failures: {'; '.join(failures[:6])}.",
         )
 
+    def _check_numeric_evidence_contract(self, brief: StrategicBriefV4) -> QualityCheckResult:
+        """Major numbers must carry a formula or an explicit source/assumption basis."""
+        financial_analysis = brief.financial_analysis or {}
+        bottom_up = financial_analysis.get("bottom_up_revenue_model") or {}
+        scenarios = (financial_analysis.get("scenario_analysis") or {}).get("scenarios") or []
+        evidence_contract = brief.evidence_contract or {}
+        failures: list[str] = []
+
+        for index, row in enumerate(bottom_up.get("sector_build") or []):
+            if not isinstance(row, dict):
+                continue
+            if not row.get("formula_basis"):
+                failures.append(f"bottom-up row {index + 1}: missing formula_basis")
+            if not row.get("source_or_assumption"):
+                failures.append(f"bottom-up row {index + 1}: missing source_or_assumption")
+
+        for index, scenario in enumerate(scenarios):
+            if not isinstance(scenario, dict):
+                continue
+            for key in ("formula_basis", "source_or_assumption", "investment_basis", "payback_basis"):
+                if not scenario.get(key):
+                    failures.append(f"scenario {index + 1}: missing {key}")
+
+        numeric_assumptions = evidence_contract.get("numeric_assumptions") if isinstance(evidence_contract, dict) else None
+        if not isinstance(numeric_assumptions, list) or len(numeric_assumptions) < 3:
+            failures.append("evidence_contract.numeric_assumptions has fewer than 3 auditable entries")
+
+        passed = not failures
+        return QualityCheckResult(
+            id="numeric_evidence_contract",
+            description="Financial rows and scenarios must expose formula basis, source or assumption basis, and auditable numeric assumptions",
+            level="BLOCK",
+            passed=passed,
+            notes=None if passed else f"Numeric evidence contract failures: {'; '.join(failures[:8])}.",
+        )
+
+    def _check_scenario_duplicate_guard(self, brief: StrategicBriefV4) -> QualityCheckResult:
+        """Block known default financial ladders that caused generic PDFs across unrelated prompts."""
+        scenarios = ((brief.financial_analysis or {}).get("scenario_analysis") or {}).get("scenarios") or []
+        irr_signature = tuple(
+            round(self._coerce_float(item.get("irr_pct") if isinstance(item, dict) else None) or -999, 1)
+            for item in scenarios
+        )
+        payback_signature = tuple(
+            int(round(self._coerce_float(item.get("payback_months") if isinstance(item, dict) else None) or -999))
+            for item in scenarios
+        )
+        roi_signature = tuple(
+            round(self._coerce_float(item.get("roi_multiple") if isinstance(item, dict) else None) or -999, 2)
+            for item in scenarios
+        )
+
+        known_generic_irr = {
+            (21.8, 31.0, 39.4),
+            (21.8, 31.0, 39.0),
+            (22.0, 31.0, 39.0),
+        }
+        known_generic_payback = {
+            (33, 27, 22),
+            (37, 31, 25),
+            (34, 28, 22),
+            (36, 30, 24),
+        }
+        known_generic_roi = {
+            (1.37, 1.87, 2.37),
+            (1.32, 1.82, 2.42),
+            (1.5, 2.1, 2.8),
+            (1.4, 1.9, 2.5),
+        }
+        failures: list[str] = []
+        if irr_signature in known_generic_irr:
+            failures.append(f"IRR ladder {irr_signature} matches a known generic scaffold")
+        if payback_signature in known_generic_payback and roi_signature in known_generic_roi:
+            failures.append(f"payback/ROI ladder {payback_signature}/{roi_signature} matches a default scaffold")
+
+        passed = not failures
+        return QualityCheckResult(
+            id="scenario_duplicate_guard",
+            description="Scenario ROI, IRR, and payback ladders must be derived from the prompt-specific investment and cash-flow model",
+            level="BLOCK",
+            passed=passed,
+            notes=None if passed else f"Scenario duplicate guard failures: {'; '.join(failures)}.",
+        )
+
     def _check_red_team_materiality(self, brief: StrategicBriefV4) -> QualityCheckResult:
         facts = extract_query_facts(str(brief.report_metadata.query or ""))
         investment = facts.get("investment_range_usd_mn") or {}
@@ -829,6 +1012,35 @@ class QualityGate:
         if value is None:
             return ""
         return str(value)
+
+    def _all_citations(self, brief: StrategicBriefV4) -> list[Any]:
+        citations: list[Any] = list(brief.citations or [])
+        for output in (brief.framework_outputs or {}).values():
+            citations.extend(output.citations or [])
+        return citations
+
+    def _citation_roles(self, citation: Any, named_competitors: list[str] | None = None) -> set[str]:
+        source = str(getattr(citation, "source", "") or getattr(citation, "publisher", "") or "")
+        title = str(getattr(citation, "title", "") or "")
+        excerpt = str(getattr(citation, "excerpt", "") or "")
+        text = f"{source} {title} {excerpt}".lower()
+        roles: set[str] = set()
+        if any(token in text for token in ("imf", "world bank", "economic outlook", "economic prospects", "economic survey")):
+            roles.add("macro")
+        if any(token in text for token in ("market", "sector", "technology", "services", "automotive", "fintech", "nasscom", "ibef", "dun & bradstreet", "dnb")):
+            roles.add("sector")
+        if any(token in text for token in ("roi", "irr", "margin", "capital", "investment", "financial", "supplier study")):
+            roles.add("financial")
+        if any(token in text for token in ("regulation", "regulatory", "act", "nist", "meity", "rbi", "cma", "commission", "ai risk")):
+            roles.add("regulatory")
+        for competitor in named_competitors or []:
+            competitor_tokens = [part for part in re.split(r"[^a-z0-9]+", competitor.lower()) if len(part) >= 3]
+            if competitor.lower() in text or any(token in text for token in competitor_tokens):
+                roles.add("competitor")
+        if any(token in text for token in ("mckinsey", "bain", "bcg", "boston consulting group", "deloitte", "pwc", "ey", "kpmg")):
+            roles.add("competitor")
+            roles.add("sector")
+        return roles
 
     def _semantic_duplicate_paths(self, value: Any, path: str = "$") -> list[str]:
         duplicates: list[str] = []

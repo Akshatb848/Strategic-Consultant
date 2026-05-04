@@ -13,23 +13,33 @@
   },
   "jest": {
     "testEnvironment": "jsdom",
-    "setupFilesAfterEnv": ["<rootDir>/jest.setup.ts"],
+    "setupFilesAfterEnv": [
+      "<rootDir>/jest.setup.ts"
+    ],
     "moduleNameMapper": {
       "^@/(.*)$": "<rootDir>/$1",
       "\\.(css|less|scss|sass)$": "identity-obj-proxy"
     },
     "transform": {
-      "^.+\\.(t|j)sx?$": ["@swc/jest", {
-        "jsc": {
-          "transform": {
-            "react": {
-              "runtime": "automatic"
+      "^.+\\.(t|j)sx?$": [
+        "@swc/jest",
+        {
+          "jsc": {
+            "transform": {
+              "react": {
+                "runtime": "automatic"
+              }
             }
           }
         }
-      }]
+      ]
     },
-    "testMatch": ["**/__tests__/**/*.(test|spec).(ts|tsx)"],
+    "testMatch": [
+      "**/__tests__/**/*.(test|spec).(ts|tsx)"
+    ],
+    "modulePathIgnorePatterns": [
+      "<rootDir>/.next/"
+    ],
     "collectCoverageFrom": [
       "components/**/*.{ts,tsx}",
       "!components/**/*.d.ts"
@@ -40,13 +50,13 @@
     "@nivo/radar": "^0.87.0",
     "@nivo/scatterplot": "^0.87.0",
     "@radix-ui/react-dialog": "^1.1.0",
-    "@radix-ui/react-tooltip": "^1.1.0",
-    "@radix-ui/react-tabs": "^1.1.0",
-    "@radix-ui/react-select": "^2.1.0",
     "@radix-ui/react-progress": "^1.1.0",
+    "@radix-ui/react-select": "^2.1.0",
+    "@radix-ui/react-tabs": "^1.1.0",
+    "@radix-ui/react-tooltip": "^1.1.0",
     "@tsparticles/react": "^3.0.0",
     "@tsparticles/slim": "^3.7.0",
-    "axios": "^1.7.0",
+    "axios": "^1.16.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "dagre": "^0.8.5",
@@ -54,12 +64,12 @@
     "framer-motion": "^11.18.2",
     "html2canvas": "^1.4.1",
     "lucide-react": "^0.469.0",
-    "next": "14.2.18",
-    "puppeteer": "^22.15.0",
+    "next": "^15.5.15",
+    "puppeteer": "^24.42.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "reactflow": "^11.11.4",
     "react-router-dom": "^6.28.0",
+    "reactflow": "^11.11.4",
     "recharts": "^2.13.3",
     "tailwind-merge": "^2.6.0"
   },
@@ -70,18 +80,21 @@
     "@testing-library/react": "^16.0.0",
     "@testing-library/user-event": "^14.5.2",
     "@types/dagre": "^0.7.53",
-    "@types/jest": "^29.5.13",
+    "@types/jest": "^30.0.0",
     "@types/node": "^22.10.5",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
     "autoprefixer": "^10.4.20",
     "eslint": "^8.57.1",
-    "eslint-config-next": "14.2.18",
+    "eslint-config-next": "^15.5.15",
     "identity-obj-proxy": "^3.0.0",
-    "jest": "^29.7.0",
-    "jest-environment-jsdom": "^29.7.0",
-    "postcss": "^8.4.49",
+    "jest": "^30.3.0",
+    "jest-environment-jsdom": "^30.3.0",
+    "postcss": "8.5.14",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.7.3"
+  },
+  "overrides": {
+    "postcss": "8.5.14"
   }
 }

@@ -52,7 +52,7 @@ function buildDownstreamHeaders(upstreamHeaders: Headers): Headers {
 
 async function proxy(
   req: NextRequest,
-  { params }: { params: { path: string[] } }
+  { params }: { params: Promise<{ path: string[] }> }
 ): Promise<NextResponse> {
   const path = (await params).path.join("/");
   const search = req.nextUrl.search;

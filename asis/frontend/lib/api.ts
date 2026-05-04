@@ -269,6 +269,8 @@ export interface StrategicBriefV4 {
   roadmap: RoadmapItem[];
   citations: JsonMap[];
   analysis_meta?: AnalysisMeta;
+  evidence_contract?: JsonMap;
+  export_validation?: JsonMap;
 }
 
 export interface DecisionPayload {
@@ -279,7 +281,7 @@ export interface DecisionPayload {
 }
 
 export interface PdfStatus {
-  status: "generating" | "ready" | "error";
+  status: "generating" | "ready" | "error" | "blocked";
   progress: number;
   error?: string | null;
 }

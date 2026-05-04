@@ -318,8 +318,17 @@ function ReportsContent() {
                             <s>{report.original_recommendation || "PROCEED"}</s> → {recommendation || "HOLD"}
                           </span>
                         ) : null}
-                        {report.pdf_status ? <span>PDF {report.pdf_status}</span> : null}
+                        {report.pdf_status ? (
+                          <span className={report.pdf_status === "blocked" ? "text-amber-200" : ""}>
+                            PDF {report.pdf_status}
+                          </span>
+                        ) : null}
                       </div>
+                      {report.pdf_status === "blocked" && report.pdf_error ? (
+                        <div className="mt-4 rounded-2xl border border-amber-300/25 bg-amber-300/10 px-4 py-3 text-xs leading-6 text-amber-100">
+                          Export blocked by enterprise quality gate. {summarizePdfError(report.pdf_error)}
+                        </div>
+                      ) : null}
                     </div>
 
                     <div className="grid w-full max-w-sm gap-3 sm:grid-cols-2 xl:grid-cols-1">
@@ -372,6 +381,18 @@ function StatCard({
       </div>
     </article>
   );
+}
+
+function summarizePdfError(error: string): string {
+  try {
+    const parsed = JSON.parse(error) as { checks?: Array<{ id?: string; notes?: string | null }> };
+    const firstCheck = parsed.checks?.find((check) => check.notes || check.id);
+    if (firstCheck?.notes) return firstCheck.notes;
+    if (firstCheck?.id) return `Failed check: ${firstCheck.id}.`;
+  } catch {
+    // Fall through to a short raw message when older deployments stored plain text.
+  }
+  return error.length > 180 ? `${error.slice(0, 177)}...` : error;
 }
 
 function MetricCard({

@@ -60,6 +60,12 @@ BAIN_AI_PLATFORM_QUERY = (
     "will ensure sustained market leadership?"
 )
 
+PWC_PARTNER_ROLLOUT_QUERY = (
+    "Should PwC invest $180M-$320M over the next 3-4 years to build a partner-led "
+    "AI compliance and managed-risk platform across Europe, and how should it "
+    "differentiate against Accenture and Deloitte?"
+)
+
 
 @pytest.mark.anyio
 async def test_analysis_lifecycle_and_report_generation(client):
@@ -618,6 +624,33 @@ async def test_bain_ai_platform_brief_preserves_prompt_facts_and_named_competito
     assert "proprietary data depth" in payload_text
     assert payload["red_team"]["major_count"] >= 1
     assert payload["financial_analysis"]["bottom_up_revenue_model"]["investment_range_usd_mn"]["mid"] == 625.0
+    assert len(payload["evidence_contract"]["numeric_assumptions"]) >= 3
+
+
+@pytest.mark.anyio
+async def test_materially_different_prompts_do_not_share_financial_or_framework_scaffolds():
+    bain_context = extract_problem_context(
+        BAIN_AI_PLATFORM_QUERY,
+        {"company_name": "Bain & Company", "sector": "Technology Consulting"},
+    )
+    pwc_context = extract_problem_context(
+        PWC_PARTNER_ROLLOUT_QUERY,
+        {"company_name": "PwC", "sector": "Professional Services"},
+    )
+    bain_payload = V4SynthesisAgent().local_result(_synthesis_state(BAIN_AI_PLATFORM_QUERY, bain_context))
+    pwc_payload = V4SynthesisAgent().local_result(_synthesis_state(PWC_PARTNER_ROLLOUT_QUERY, pwc_context))
+
+    bain_scenarios = bain_payload["financial_analysis"]["scenario_analysis"]["scenarios"]
+    pwc_scenarios = pwc_payload["financial_analysis"]["scenario_analysis"]["scenarios"]
+    bain_signature = [(row["roi_multiple"], row["irr_pct"], row["payback_months"]) for row in bain_scenarios]
+    pwc_signature = [(row["roi_multiple"], row["irr_pct"], row["payback_months"]) for row in pwc_scenarios]
+    bain_bcg_units = [row["name"] for row in bain_payload["framework_outputs"]["bcg_matrix"]["structured_data"]["business_units"]]
+    pwc_bcg_units = [row["name"] for row in pwc_payload["framework_outputs"]["bcg_matrix"]["structured_data"]["business_units"]]
+
+    assert bain_signature != pwc_signature
+    assert bain_bcg_units != pwc_bcg_units
+    assert "McKinsey & Company" in str(bain_payload["framework_outputs"]["blue_ocean"]["structured_data"])
+    assert "Accenture" in str(pwc_payload["framework_outputs"]["blue_ocean"]["structured_data"])
 
 
 @pytest.mark.anyio
@@ -722,6 +755,55 @@ async def test_quality_gate_blocks_financial_scenario_mismatch():
     failed_checks = {check.id for check in report.checks if not check.passed}
 
     assert "financial_scenario_consistency" in failed_checks
+    assert report.overall_grade == "FAIL"
+
+
+@pytest.mark.anyio
+async def test_quality_gate_blocks_repeated_generic_financial_ladder():
+    context = extract_problem_context(
+        BAIN_AI_PLATFORM_QUERY,
+        {"company_name": "Bain & Company", "sector": "Technology Consulting"},
+    )
+    payload = V4SynthesisAgent().local_result(_synthesis_state(BAIN_AI_PLATFORM_QUERY, context))
+    generic_rows = [
+        {"name": "Conservative", "revenue_year_3_usd_mn": 22.5, "ebitda_margin_pct": 13.6, "roi_multiple": 1.32, "irr_pct": 21.8, "payback_months": 37},
+        {"name": "Base", "revenue_year_3_usd_mn": 32.0, "ebitda_margin_pct": 17.6, "roi_multiple": 1.82, "irr_pct": 31.0, "payback_months": 31},
+        {"name": "Aggressive", "revenue_year_3_usd_mn": 40.6, "ebitda_margin_pct": 22.6, "roi_multiple": 2.42, "irr_pct": 39.4, "payback_months": 25},
+    ]
+    for row in generic_rows:
+        row["formula_basis"] = "generic scaffold"
+        row["source_or_assumption"] = "generic scaffold"
+        row["investment_basis"] = "generic scaffold"
+        row["payback_basis"] = "generic scaffold"
+    payload["financial_analysis"]["scenario_analysis"]["scenarios"] = generic_rows
+
+    report = await QualityGate().validate(StrategicBriefV4.model_validate(payload))
+    failed_checks = {check.id for check in report.checks if not check.passed}
+
+    assert "scenario_duplicate_guard" in failed_checks
+    assert report.overall_grade == "FAIL"
+
+
+@pytest.mark.anyio
+async def test_quality_gate_blocks_framework_placeholders_and_macro_only_sources():
+    context = extract_problem_context(
+        BAIN_AI_PLATFORM_QUERY,
+        {"company_name": "Bain & Company", "sector": "Technology Consulting"},
+    )
+    payload = V4SynthesisAgent().local_result(_synthesis_state(BAIN_AI_PLATFORM_QUERY, context))
+    macro_only = payload["citations"][:2]
+    payload["citations"] = macro_only
+    for output in payload["framework_outputs"].values():
+        output["citations"] = macro_only
+    payload["framework_outputs"]["mckinsey_7s"]["structured_data"]["strategy"] = {"score": 7, "finding": "-"}
+    payload["framework_outputs"]["bcg_matrix"]["structured_data"]["business_units"][0]["name"] = "Core Business"
+    payload["framework_outputs"]["blue_ocean"]["structured_data"]["competitor_curves"] = {"Incumbent Leader": {"price": 5}}
+
+    report = await QualityGate().validate(StrategicBriefV4.model_validate(payload))
+    failed_checks = {check.id for check in report.checks if not check.passed}
+
+    assert "source_role_relevance" in failed_checks
+    assert "framework_placeholder_specificity" in failed_checks
     assert report.overall_grade == "FAIL"
 
 

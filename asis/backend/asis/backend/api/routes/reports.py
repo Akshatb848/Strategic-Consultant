@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import json
 from datetime import datetime
 
 import httpx
@@ -11,6 +13,7 @@ from asis.backend.api.dependencies import get_current_user
 from asis.backend.config.settings import get_settings
 from asis.backend.db import models
 from asis.backend.db.database import get_db
+from asis.backend.quality.gate import QualityGate
 from asis.backend.schemas.reports import EvaluationResponse, ReportResponse
 from asis.backend.schemas.v4 import (
     CollaborationTraceResponse,
@@ -44,6 +47,64 @@ def _brief_or_422(report: models.Report) -> dict:
         return StrategicBriefV4.model_validate(brief).model_dump(mode="json")
     except Exception as exc:
         raise HTTPException(status_code=422, detail=f"REPORT_NOT_V4: {exc}") from exc
+
+
+def _export_validation_payload(quality_report) -> dict:
+    checks = [
+        {
+            "id": check.id,
+            "description": check.description,
+            "level": check.level,
+            "passed": check.passed,
+            "notes": check.notes,
+        }
+        for check in quality_report.checks
+    ]
+    return {
+        "gate": "ASIS_ENTERPRISE_EXPORT_GATE_V2",
+        "validated_at": datetime.utcnow().isoformat(),
+        "overall_grade": quality_report.overall_grade,
+        "checks": checks,
+        "quality_flags": quality_report.quality_flags,
+    }
+
+
+def _quality_block_response(report: models.Report, validation: dict, db: Session) -> None:
+    failures = [
+        check
+        for check in validation.get("checks", [])
+        if check.get("level") == "BLOCK" and not check.get("passed")
+    ]
+    detail = {
+        "code": "REPORT_QUALITY_BLOCKED",
+        "message": "Report failed enterprise quality validation.",
+        "checks": failures,
+    }
+    report.pdf_status = "blocked"
+    report.pdf_progress = 100
+    report.pdf_error = json.dumps(detail)[:4000]
+    current_brief = dict(report.strategic_brief or {})
+    current_brief["export_validation"] = validation
+    report.strategic_brief = current_brief
+    db.commit()
+    raise HTTPException(status_code=422, detail=detail)
+
+
+def _validated_export_brief(report: models.Report, db: Session) -> dict:
+    brief = _brief_or_422(report)
+    strategic_brief = StrategicBriefV4.model_validate(brief)
+    quality_report = asyncio.run(QualityGate().validate(strategic_brief))
+    validation = _export_validation_payload(quality_report)
+    if QualityGate.has_block_failures(quality_report):
+        _quality_block_response(report, validation, db)
+    brief["quality_report"] = quality_report.model_dump(mode="json")
+    brief["export_validation"] = validation
+    current_brief = dict(report.strategic_brief or {})
+    current_brief["quality_report"] = brief["quality_report"]
+    current_brief["export_validation"] = validation
+    report.strategic_brief = current_brief
+    db.commit()
+    return brief
 
 
 def _supporting_frameworks(brief: dict) -> list[str]:
@@ -145,7 +206,7 @@ def generate_pdf(
     report = _report_for_analysis(analysis_id, user.id, db)
     if not report:
         raise HTTPException(status_code=404, detail="REPORT_NOT_FOUND")
-    brief = _brief_or_422(report)
+    brief = _validated_export_brief(report, db)
     report.pdf_status = "generating"
     report.pdf_progress = 15
     report.pdf_error = None

@@ -394,16 +394,18 @@ function bottomUpRevenueHtml(brief: StrategicBriefV4): string {
   const sectorBuild = asRecordArray(bottomUp.sector_build);
   if (sectorBuild.length === 0) return tableFromRecord(bottomUp);
   return reportTable(
-    ["Segment", "Target clients", "ACV", "Win rate", "Sales cycle", "Year 3 revenue"],
+    ["Segment", "Target clients", "ACV", "Win rate", "Expansion", "Scale", "Year 3 revenue", "Formula / basis"],
     sectorBuild.map((entry) => [
       firstPresent(entry.sector, entry.segment, entry.customer_segment),
       firstPresent(entry.target_clients, entry.client_count, entry.addressable_clients),
       formatUsdMn(firstPresent(entry.average_contract_value_usd_mn, entry.acv_usd_mn, entry.average_contract_value)),
       formatPercent(firstPresent(entry.win_rate, entry.conversion_rate)),
-      formatMonths(firstPresent(entry.sales_cycle_months, entry.sales_cycle)),
+      `${text(firstPresent(entry.account_expansion_multiplier, entry.expansion_multiplier), "1.0")}x`,
+      `${text(firstPresent(entry.scale_multiplier, entry.scaling_multiplier), "1.0")}x`,
       formatUsdMn(firstPresent(entry.year_3_revenue_usd_mn, entry.base_year_3_revenue_usd_mn, entry.revenue_year_3_usd_mn)),
+      firstPresent(entry.formula_basis, entry.source_or_assumption, "Formula basis not supplied"),
     ]),
-    [1, 2, 3, 4, 5]
+    [1, 2, 3, 4, 5, 6]
   );
 }
 
@@ -411,7 +413,7 @@ function scenarioHtml(brief: StrategicBriefV4): string {
   const scenarioAnalysis = asRecord(brief.financial_analysis?.scenario_analysis);
   const scenarios = asRecordArray(scenarioAnalysis.scenarios);
   return reportTable(
-    ["Scenario", "Year 3 revenue", "EBITDA margin", "ROI", "IRR", "Payback"],
+    ["Scenario", "Year 3 revenue", "EBITDA margin", "ROI", "IRR", "Payback", "Investment basis", "Formula / assumption"],
     scenarios.map((scenario) => [
       firstPresent(scenario.name, scenario.scenario),
       formatUsdMn(firstPresent(scenario.revenue_year_3_usd_mn, scenario.year_3_revenue_usd_mn)),
@@ -419,6 +421,8 @@ function scenarioHtml(brief: StrategicBriefV4): string {
       `${text(firstPresent(scenario.roi_multiple, scenario.roi), "-")}x`,
       formatPercent(firstPresent(scenario.irr_pct, scenario.irr), 1),
       formatMonths(scenario.payback_months),
+      firstPresent(scenario.investment_basis, scenario.payback_basis, "Investment basis not supplied"),
+      firstPresent(scenario.formula_basis, scenario.source_or_assumption, compactValue(scenario.assumptions)),
     ]),
     [1, 2, 3, 4, 5]
   );
@@ -470,9 +474,15 @@ function frameworkBody(key: string, output: FrameworkOutput, brief: StrategicBri
     case "mckinsey_7s": {
       const rows = ["strategy", "structure", "systems", "staff", "style", "skills", "shared_values"].map((dimension) => {
         const dimensionRecord = asRecord(structured[dimension]);
-        return [dimension.replace(/_/g, " "), firstPresent(dimensionRecord.score, dimensionRecord.rating), firstPresent(dimensionRecord.finding, dimensionRecord.rationale, dimensionRecord.implication)];
+        return [
+          dimension.replace(/_/g, " "),
+          firstPresent(dimensionRecord.score, dimensionRecord.rating),
+          firstPresent(dimensionRecord.current_state, dimensionRecord.finding, dimensionRecord.rationale),
+          firstPresent(dimensionRecord.desired_state, dimensionRecord.target_state),
+          firstPresent(dimensionRecord.gap, dimensionRecord.implication),
+        ];
       });
-      return `${renderMckinseySvg(brief)}${reportTable(["Element", "Score", "Finding"], rows, [1])}`;
+      return `${renderMckinseySvg(brief)}${reportTable(["Element", "Score", "Current state", "Desired state", "Gap"], rows, [1])}`;
     }
     case "blue_ocean": {
       const errcRows = ["eliminate", "reduce", "raise", "create"].map((dimension) => [
@@ -543,7 +553,25 @@ function redTeamHtml(brief: StrategicBriefV4): string {
   if (invalidated.length === 0) {
     return `<div class="empty-state">No red-team invalidations were returned for this analysis.</div>`;
   }
-  return tableFromRecords(invalidated, ["severity", "original_claim", "invalidation_reason", "evidence", "source_agent"]);
+  return tableFromRecords(invalidated, ["severity", "original_claim", "challenge", "invalidation_reason", "required_evidence", "evidence", "source_agent"]);
+}
+
+function redTeamCounts(brief: StrategicBriefV4): { fatal: number; major: number } {
+  const redTeam = asRecord(brief.red_team);
+  const invalidated = asRecordArray(redTeam.invalidated_claims);
+  const counted = invalidated.reduce<{ fatal: number; major: number }>(
+    (totals, item) => {
+      const severity = text(item.severity, "").toUpperCase();
+      if (severity === "FATAL") totals.fatal += 1;
+      if (severity === "MAJOR") totals.major += 1;
+      return totals;
+    },
+    { fatal: 0, major: 0 }
+  );
+  return {
+    fatal: counted.fatal || Number(asNumber(redTeam.fatal_count) ?? asNumber(asRecord(brief.analysis_meta).fatal_invalidation_count) ?? 0),
+    major: counted.major || Number(asNumber(redTeam.major_count) ?? asNumber(asRecord(brief.analysis_meta).major_invalidation_count) ?? 0),
+  };
 }
 
 function citationsHtml(brief: StrategicBriefV4): string {
@@ -576,6 +604,33 @@ function agentLogHtml(appendix: JsonRecord): string {
   return tableFromRecords(logs, ["agent", "model_used", "tokens_in", "tokens_out", "latency_ms"]);
 }
 
+function exportValidationHtml(brief: StrategicBriefV4): string {
+  const validation = asRecord(brief.export_validation);
+  const evidence = asRecord(brief.evidence_contract);
+  const checks = asRecordArray(validation.checks);
+  const sourceRoles = asRecordArray(evidence.source_roles);
+  const failedBlocks = checks.filter((check) => check.level === "BLOCK" && check.passed === false);
+  const validationRows = checks.length > 0
+    ? checks.map((check) => [
+        check.id,
+        check.level,
+        check.passed === true ? "Passed" : "Failed",
+        firstPresent(check.notes, check.description),
+      ])
+    : [["Export validation", "INFO", "Not attached", "This PDF was generated before export validation metadata was attached."]];
+  const sourceRows = sourceRoles.map((source) => [
+    firstPresent(source.source, source.title),
+    compactValue(source.roles),
+    source.url,
+  ]);
+  return `
+    ${failedBlocks.length > 0 ? `<div class="priority-box"><h3>Export validation warning</h3><p>${failedBlocks.length} blocking issue(s) were recorded in the export validation metadata.</p></div>` : ""}
+    ${reportTable(["Check", "Level", "Status", "Notes"], validationRows)}
+    <h3>Source role coverage</h3>
+    ${sourceRows.length > 0 ? reportTable(["Source", "Roles", "URL"], sourceRows) : `<div class="empty-state">Source role coverage was not attached to this report.</div>`}
+  `;
+}
+
 export function buildPdfHtml({
   brief,
   appendix,
@@ -601,6 +656,7 @@ export function buildPdfHtml({
   const qualityGrade = text(brief.quality_report?.overall_grade, "B");
   const recommendation = text(firstPresent(brief.recommendation, brief.decision_statement), "Recommendation pending");
   const frameworkEntries = orderedFrameworkEntries(brief);
+  const redTeamSummary = redTeamCounts(brief);
   let exhibitNumber = 0;
   const nextExhibit = () => {
     exhibitNumber += 1;
@@ -990,7 +1046,7 @@ export function buildPdfHtml({
               ["Confidence", `${confidence}%`],
               ["Evidence base", (brief.decision_evidence || []).join("; ")],
               ["Quality grade", qualityGrade],
-              ["Red-team challenges", `${text(meta.fatal_invalidation_count, "0")} fatal; ${text(meta.major_invalidation_count, "0")} major`],
+              ["Red-team challenges", `${redTeamSummary.fatal} fatal; ${redTeamSummary.major} major`],
             ]
           )
         )}
@@ -1071,6 +1127,8 @@ export function buildPdfHtml({
         ${collaborationHtml(brief)}
         <h3>Agent execution log</h3>
         ${agentLogHtml(appendix)}
+        <h3>Export validation and evidence contract</h3>
+        ${exportValidationHtml(brief)}
         <p class="appendix-note">Methodology: ASIS uses an eight-stage specialist workflow covering orchestration, market intelligence, risk assessment, competitor analysis, geo-intelligence, financial reasoning, strategic options, and synthesis. Outputs are persisted as structured report data and require executive review before material decisions.</p>
         <p class="appendix-note">${escapeHtml(text(brief.report_metadata?.disclaimer, "This document is decision-support material and is not legal, tax, investment, or accounting advice."))}</p>
       </section>
