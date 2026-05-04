@@ -4,6 +4,7 @@ import re
 from statistics import mean
 from typing import Any
 
+from asis.backend.graph.context import extract_query_facts
 from asis.backend.schemas.v4 import QualityCheckResult, QualityReport, StrategicBriefV4
 
 _URL_PATTERN = re.compile(
@@ -47,6 +48,8 @@ class QualityGate:
             self._check_framework_distinctiveness(brief),
             self._check_collaboration_trace(brief),
             self._check_context_specificity(brief),
+            self._check_prompt_fidelity(brief),
+            self._check_named_competitor_coverage(brief),
             self._check_bottom_up_economics(brief),
             self._check_execution_specificity(brief),
             self._check_mece_score(brief),
@@ -56,6 +59,8 @@ class QualityGate:
             self._check_recommendation_pathway_alignment(brief),
             self._check_financial_scenario_consistency(brief),
             self._check_financial_input_ranges(brief),
+            self._check_bottom_up_formula_integrity(brief),
+            self._check_red_team_materiality(brief),
             self._check_confidence_calibration(brief),
             self._check_context_leakage(brief),
             self._check_duplicate_semantic_keys(brief),
@@ -219,6 +224,88 @@ class QualityGate:
             level="WARN",
             passed=passed,
             notes=None if passed else "The strategic question is underspecified, which reduces board-readiness and recommendation precision.",
+        )
+
+    def _check_prompt_fidelity(self, brief: StrategicBriefV4) -> QualityCheckResult:
+        """The final report must preserve the original board-question facts."""
+        query = str(brief.report_metadata.query or "")
+        facts = extract_query_facts(query)
+        payload_dict = brief.model_dump(mode="json")
+        if isinstance(payload_dict.get("report_metadata"), dict):
+            payload_dict["report_metadata"]["query"] = ""
+        payload = self._flatten_text(payload_dict).lower()
+        failures: list[str] = []
+
+        investment = facts.get("investment_range_usd_mn") or {}
+        if investment:
+            low = str(int(float(investment["min"])))
+            high = str(int(float(investment["max"])))
+            if low not in payload or high not in payload:
+                failures.append(f"investment range ${low}M-${high}M missing from final brief")
+
+        horizon = facts.get("time_horizon_years") or {}
+        if horizon:
+            low = str(int(float(horizon["min"])))
+            high = str(int(float(horizon["max"])))
+            if low not in payload or high not in payload:
+                failures.append(f"time horizon {low}-{high} years missing from final brief")
+
+        for geography in facts.get("geographies") or []:
+            if geography.lower() not in payload:
+                failures.append(f"geography missing from final brief: {geography}")
+
+        theme_labels = {
+            "proprietary_ai_platform": ("proprietary", "ai", "platform"),
+            "data_ecosystem": ("data", "ecosystem"),
+            "mna_services": ("m&a", "service"),
+            "technology_services": ("technology", "service"),
+            "market_leadership": ("leadership",),
+        }
+        for theme in facts.get("strategic_themes") or []:
+            required_terms = theme_labels.get(theme, ())
+            if required_terms and not all(term in payload for term in required_terms):
+                failures.append(f"strategic theme missing from final brief: {theme}")
+
+        passed = not failures
+        return QualityCheckResult(
+            id="prompt_fidelity",
+            description="The final strategic brief must preserve investment range, timeframe, geography, and strategic themes from the original prompt",
+            level="BLOCK",
+            passed=passed,
+            notes=None if passed else f"Prompt fidelity failures: {'; '.join(failures[:6])}.",
+        )
+
+    def _check_named_competitor_coverage(self, brief: StrategicBriefV4) -> QualityCheckResult:
+        query = str(brief.report_metadata.query or "")
+        competitors = extract_query_facts(query).get("named_competitors") or []
+        if not competitors:
+            return QualityCheckResult(
+                id="named_competitor_coverage",
+                description="Named competitors in the prompt must be explicitly benchmarked in competitor frameworks",
+                level="BLOCK",
+                passed=True,
+                notes=None,
+            )
+
+        competitor_payload = " ".join(
+            [
+                self._flatten_text((brief.market_analysis or {}).get("competitor_profiles") or []),
+                self._flatten_text((brief.framework_outputs.get("porters_five_forces").structured_data if brief.framework_outputs.get("porters_five_forces") else {}) or {}),
+                self._flatten_text((brief.framework_outputs.get("blue_ocean").structured_data if brief.framework_outputs.get("blue_ocean") else {}) or {}),
+            ]
+        ).lower()
+        missing = [name for name in competitors if name.lower() not in competitor_payload]
+        generic_names = {"incumbent leader", "digital challenger", "global specialist"}
+        generic_only = any(name in competitor_payload for name in generic_names) and not all(
+            name.lower() in competitor_payload for name in competitors
+        )
+        passed = not missing and not generic_only
+        return QualityCheckResult(
+            id="named_competitor_coverage",
+            description="Named competitors in the prompt must appear in competitor profiles, Porter's forces, and Blue Ocean benchmarking",
+            level="BLOCK",
+            passed=passed,
+            notes=None if passed else f"Named competitor coverage failure: missing {', '.join(missing)}; generic-only={generic_only}.",
         )
 
     def _check_bottom_up_economics(self, brief: StrategicBriefV4) -> QualityCheckResult:
@@ -529,6 +616,66 @@ class QualityGate:
             level="BLOCK",
             passed=passed,
             notes=None if passed else f"Financial input integrity failures: {'; '.join(failures[:6])}.",
+        )
+
+    def _check_bottom_up_formula_integrity(self, brief: StrategicBriefV4) -> QualityCheckResult:
+        """Displayed revenue rows must reconcile to the explicit formula, not unexplained synthetic totals."""
+        bottom_up = ((brief.financial_analysis or {}).get("bottom_up_revenue_model") or {})
+        sector_rows = bottom_up.get("sector_build") or []
+        failures: list[str] = []
+        for index, row in enumerate(sector_rows):
+            if not isinstance(row, dict):
+                continue
+            target = self._coerce_float(row.get("target_clients"))
+            win_rate = self._coerce_float(row.get("win_rate"))
+            acv = self._coerce_float(row.get("average_contract_value_usd_mn"))
+            expansion = self._coerce_float(row.get("account_expansion_multiplier"))
+            scale = self._coerce_float(row.get("scale_multiplier"))
+            revenue = self._coerce_float(row.get("year_3_revenue_usd_mn") or row.get("base_year_3_revenue_usd_mn"))
+            if None in (target, win_rate, acv, expansion, scale, revenue):
+                failures.append(f"row {index + 1}: missing explicit target x win-rate x ACV x expansion formula fields")
+                continue
+            expected = target * win_rate * acv * expansion * scale
+            if expected <= 0:
+                failures.append(f"row {index + 1}: expected revenue formula is non-positive")
+                continue
+            ratio = revenue / expected
+            if not 0.9 <= ratio <= 1.1:
+                failures.append(f"row {index + 1}: Year 3 revenue ${revenue:.1f}M does not reconcile to formula ${expected:.1f}M")
+            if expansion > 4.0:
+                failures.append(f"row {index + 1}: account expansion multiplier {expansion:.1f}x is too aggressive without separate proof")
+
+        passed = not failures
+        return QualityCheckResult(
+            id="bottom_up_formula_integrity",
+            description="Bottom-up revenue rows must reconcile to target clients, win rate, ACV, account expansion, and scale multiplier",
+            level="BLOCK",
+            passed=passed,
+            notes=None if passed else f"Bottom-up formula failures: {'; '.join(failures[:6])}.",
+        )
+
+    def _check_red_team_materiality(self, brief: StrategicBriefV4) -> QualityCheckResult:
+        facts = extract_query_facts(str(brief.report_metadata.query or ""))
+        investment = facts.get("investment_range_usd_mn") or {}
+        investment_mid = self._coerce_float(investment.get("mid") if isinstance(investment, dict) else None) or 0
+        if investment_mid < 250 and not facts.get("named_competitors"):
+            return QualityCheckResult(
+                id="red_team_materiality",
+                description="Large or competitor-explicit decisions must include adversarial red-team challenges",
+                level="BLOCK",
+                passed=True,
+                notes=None,
+            )
+        red_team = brief.red_team or {}
+        challenges = red_team.get("invalidated_claims") or red_team.get("challenges") or []
+        has_major = any(str(item.get("severity", "")).upper() in {"MAJOR", "FATAL"} for item in challenges if isinstance(item, dict))
+        passed = bool(challenges) and has_major
+        return QualityCheckResult(
+            id="red_team_materiality",
+            description="Large or competitor-explicit decisions must include major/fatal red-team challenges before export",
+            level="BLOCK",
+            passed=passed,
+            notes=None if passed else "Material decision has no visible major/fatal red-team challenge.",
         )
 
     def _check_confidence_calibration(self, brief: StrategicBriefV4) -> QualityCheckResult:

@@ -20,6 +20,7 @@ from asis.backend.agents.v4_support import (
     framework_key_finding,
 )
 from asis.backend.config.settings import get_settings
+from asis.backend.graph.context import extract_query_facts
 from asis.backend.schemas.v4 import AgentName, FrameworkName, StrategicBriefV4
 
 
@@ -333,6 +334,7 @@ CRITICAL RULES:
                 "and preferred strategic pathway."
             ),
             "query": state.get("query"),
+            "immutable_query_facts": extract_query_facts(state.get("query") or ""),
             "company_context": state.get("extracted_context") or state.get("company_context"),
             "quality_failures": state.get("quality_failures") or [],
             "quality_retry_count": state.get("quality_retry_count") or 0,
@@ -392,6 +394,7 @@ CRITICAL RULES:
         payload = {
             "task": "Return a minimal JSON patch that fixes validation and consistency failures without changing structured financial totals or option tables.",
             "query": state.get("query"),
+            "immutable_query_facts": extract_query_facts(state.get("query") or ""),
             "company_context": state.get("extracted_context") or state.get("company_context"),
             "validation_error": validation_error,
             "required_fields": [
@@ -420,6 +423,15 @@ CRITICAL RULES:
         company = context.get("company_name") or "The company"
         geography = context.get("geography") or "the target market"
         query = state.get("query") or ""
+        query_facts = extract_query_facts(query)
+        context = {**context}
+        if query_facts.get("geographies"):
+            context["geographies"] = query_facts["geographies"]
+            context["geography"] = " and ".join(query_facts["geographies"])
+            geography = context["geography"]
+        for fact_key in ("named_competitors", "investment_range_usd_mn", "time_horizon_years", "strategic_themes"):
+            if query_facts.get(fact_key) and not context.get(fact_key):
+                context[fact_key] = query_facts[fact_key]
         market = state.get("market_intel_output") or {}
         risk = state.get("risk_assessment_output") or {}
         competitor = state.get("competitor_analysis_output") or {}
@@ -531,6 +543,15 @@ CRITICAL RULES:
             3,
         )
         label = decision_label(overall_confidence)
+        base_case_for_label = self._scenario_by_name(scenario_analysis, scenario_analysis.get("recommended_case", "Base"))
+        base_roi_for_label = self._extract_numeric(base_case_for_label.get("roi_multiple"), 1.5)
+        base_payback_for_label = self._extract_numeric(base_case_for_label.get("payback_months"), 28.0)
+        horizon_years_for_label = (bottom_up_revenue_model.get("time_horizon_years") or {}).get("max") if isinstance(bottom_up_revenue_model.get("time_horizon_years"), dict) else None
+        horizon_months_for_label = self._extract_numeric(horizon_years_for_label, 5.0) * 12
+        if base_roi_for_label < 0.85:
+            label = "DO NOT PROCEED"
+        elif base_roi_for_label < 1.15 or base_payback_for_label > horizon_months_for_label:
+            label = "CONDITIONAL PROCEED"
         decision_evidence = self._top_decision_evidence(framework_outputs)
         decision_statement = self._decision_statement(
             label=label,
@@ -609,7 +630,7 @@ CRITICAL RULES:
                 "source": citations[0],
             },
             "trends": market.get("market_growth_themes") or market.get("market_signals") or [],
-            "competitor_profiles": competitor.get("competitor_profiles") or [],
+            "competitor_profiles": competitor.get("competitor_profiles") or self._named_competitor_profiles(context.get("named_competitors") or []),
             "capability_fit_matrix": capability_fit_matrix,
             "strategic_pathways": strategic_pathways,
         }
@@ -648,6 +669,12 @@ CRITICAL RULES:
             "confidentiality_level": "STRICTLY CONFIDENTIAL",
             "disclaimer": "This report is decision-support material and should be reviewed by qualified human experts before implementation.",
         }
+        red_team = self._build_red_team_challenges(
+            query=query,
+            context=context,
+            scenario_analysis=scenario_analysis,
+            strategic_pathways=strategic_pathways,
+        )
 
         return {
             "decision_statement": decision_statement,
@@ -674,7 +701,7 @@ CRITICAL RULES:
             "market_analysis": market_analysis,
             "financial_analysis": financial_analysis,
             "risk_analysis": risk_analysis,
-            "red_team": {"summary": "Legacy red-team workflow is not part of the v4 framework-driven enterprise brief."},
+            "red_team": red_team,
             "verification": verification,
             "roadmap": roadmap_items,
             "citations": citations,
@@ -872,6 +899,35 @@ CRITICAL RULES:
         }
 
         profile = dict(profiles.get(decision_type, profiles["enter"]))
+        themes = set((extract_query_facts(query).get("strategic_themes") or []) + list(context.get("strategic_themes") or []))
+        if decision_type == "invest" and {"proprietary_ai_platform", "data_ecosystem"}.intersection(themes):
+            profile.update(
+                {
+                    "board_action": "invest in proprietary AI platforms and data ecosystems through milestone-based capital deployment",
+                    "default_recommendation": "a staged proprietary AI platform and data ecosystem build-out",
+                    "condition": "subject to source-backed ROI gates, adoption proof, and data-governance readiness",
+                    "program_label": "AI platform and data ecosystem investment program",
+                    "strategic_path": "proprietary AI-enabled differentiation",
+                    "capability_focus": "platform productisation and data ecosystem control",
+                    "objective_phrase": "create defensible AI-enabled services differentiation without funding generic technology spend",
+                    "market_capture": "Share capture through proprietary M&A workflows, data assets, and recurring platform-enabled services.",
+                    "next_step": "Approve the first funding gate for platform architecture, data rights, and lighthouse-client proof.",
+                    "board_narrative": f"{company} should advance only through a gated AI-platform strategy that proves proprietary data advantage, client adoption, and measurable margin or revenue uplift before scaling across {target_label}.",
+                    "conditions_and_contingencies": [
+                        "Release funding only after lighthouse-client adoption and margin-uplift evidence is validated.",
+                        "Secure data rights, governance, and model-risk controls before broad platform deployment.",
+                        "Benchmark differentiation explicitly against named strategy and technology-service competitors.",
+                    ],
+                    "key_success_factors": [
+                        "Proprietary data rights and reusable workflow IP",
+                        "Named-account adoption in M&A and technology services",
+                        "Productised delivery model rather than bespoke tooling",
+                        "Governed AI and data ecosystem controls",
+                        "Clear advantage versus named competitors",
+                    ],
+                    "complexity_penalty": 0.07,
+                }
+            )
         if recommendation:
             profile["default_recommendation"] = str(recommendation).strip().lower()
         return profile
@@ -879,9 +935,18 @@ CRITICAL RULES:
     @staticmethod
     def _normalize_decision_type(raw_decision_type: str, query: str) -> str:
         text = f"{raw_decision_type} {query}".lower()
-        if any(token in text for token in ("minority stake", "take a stake", "acquire", "acquisition", "m&a", "buyout", "takeover")):
+        service_context = any(
+            token in text
+            for token in (
+                "m&a services",
+                "m&a and technology services",
+                "post-merger integration services",
+                "post merger integration services",
+            )
+        )
+        if re.search(r"\b(should|whether to)\b.{0,100}\b(acquire|buy|purchase|take a stake|minority stake|takeover)\b", text):
             return "acquire"
-        if any(token in text for token in ("merger", "merge", "post-merger", "post merger")):
+        if not service_context and re.search(r"\b(should|whether to)\b.{0,100}\b(merge|merger)\b", text):
             return "merge"
         if any(token in text for token in ("restructure", "turnaround", "cost-out", "cost out")):
             return "restructure"
@@ -889,7 +954,7 @@ CRITICAL RULES:
             return "divest"
         if any(token in text for token in ("exit", "withdraw")):
             return "exit"
-        if any(token in text for token in ("invest", "investment", "allocate")):
+        if any(token in text for token in ("invest", "investment", "allocate", "fund", "proprietary ai", "data ecosystem")):
             return "invest"
         if any(token in text for token in ("enter", "launch", "expand", "market entry", "new market")):
             return "enter"
@@ -931,6 +996,13 @@ CRITICAL RULES:
                 numeric = float(match.group(0))
                 return numeric / 100 if "%" in value or (numeric > 1.0 and numeric <= 100.0) else numeric
         return default
+
+    @staticmethod
+    def _non_placeholder(value, default: str) -> str:
+        text = str(value or "").strip()
+        if not text or text.lower() in {"-", "n/a", "na", "none", "not specified", "current state not fully specified."}:
+            return default
+        return text
 
     def _absolute_percent(self, value, default: float) -> float:
         if value is None:
@@ -1032,12 +1104,15 @@ CRITICAL RULES:
         return calibrated
 
     def _build_framework_outputs(self, *, state, context, citations, market, risk, competitor, geo, financial, strategic, profile) -> dict[str, dict]:
-        competitor_profiles = competitor.get("competitor_profiles") or []
+        competitor_profiles = competitor.get("competitor_profiles") or self._named_competitor_profiles(
+            context.get("named_competitors") or extract_query_facts(state.get("query") or "").get("named_competitors") or []
+        )
         program_label = str(profile["program_label"])
         strategic_path = str(profile["strategic_path"])
         capability_focus = str(profile["capability_focus"])
         objective_phrase = str(profile["objective_phrase"])
         scorecard_label = f"{program_label} scorecard"
+        themes = set(context.get("strategic_themes") or extract_query_facts(state.get("query") or "").get("strategic_themes") or [])
 
         pestle_structured = {
             "political": {
@@ -1112,6 +1187,13 @@ CRITICAL RULES:
         ansoff_structured["recommendation_rationale"] = ansoff_structured.get("recommendation_rationale", strategic.get("option_rationale") or f"{strategic_path.capitalize()} best balances upside, feasibility, and risk.")
         ansoff_structured["action_title"] = f"{strategic_path.capitalize()} offers the clearest path because it preserves upside without overextending the operating model."
 
+        financial_units = financial.get("business_units") or []
+        if not financial_units and {"proprietary_ai_platform", "data_ecosystem"}.intersection(themes):
+            financial_units = [
+                {"name": "AI-enabled M&A platform", "market_growth_rate": 18, "relative_market_share": 0.8, "category": "question_mark", "strategic_implication": "Fund through milestones until adoption and workflow reuse are proven."},
+                {"name": "Data ecosystem and benchmarks", "market_growth_rate": 16, "relative_market_share": 1.1, "category": "star", "strategic_implication": "Protect proprietary data rights because they create the strongest moat."},
+                {"name": "Core advisory engine", "market_growth_rate": 7, "relative_market_share": 2.3, "category": "cash_cow", "strategic_implication": "Use premium advisory cash flows to fund the platform without weakening margins."},
+            ]
         bcg_structured = {
             "business_units": [
                 {
@@ -1119,7 +1201,7 @@ CRITICAL RULES:
                     "revenue_usd_mn": unit.get("revenue_usd_mn", self._business_unit_revenue(unit.get("category"))),
                     "citations": citations[:5],
                 }
-                for unit in (financial.get("business_units") or [])
+                for unit in financial_units
             ],
             "portfolio_recommendation": f"Use core cash-generating assets to fund the {program_label} in staged tranches, while requiring each commitment to earn further investment.",
             "action_title": f"The portfolio can fund the {program_label}, but capital should be released in stages until the core value thesis is proven.",
@@ -1139,20 +1221,54 @@ CRITICAL RULES:
             current = dict(seven_s_structured.get(dimension) or {})
             seven_s_structured[dimension] = {
                 "score": current.get("score", 6),
-                "current_state": current.get("current_state", "Current state not fully specified."),
-                "desired_state": current.get("desired_state", desired_state),
-                "gap": current.get("gap", "Gap requires focused capability build-out."),
+                "current_state": self._non_placeholder(
+                    current.get("current_state"),
+                    f"{context.get('company_name') or 'The company'} has partial alignment but not enough platform, data, and operating-model depth for the full ambition.",
+                ),
+                "desired_state": self._non_placeholder(current.get("desired_state"), desired_state),
+                "gap": self._non_placeholder(
+                    current.get("gap"),
+                    f"{dimension.replace('_', ' ').title()} must be strengthened before the {program_label} can scale without becoming generic.",
+                ),
             }
         seven_s_structured["alignment_score"] = seven_s_structured.get("alignment_score", strategic.get("mckinsey_7s_fit_score") or 0.64)
         seven_s_structured["critical_gaps"] = seven_s_structured.get("critical_gaps", ["leadership capacity", "systems localisation", "field execution authority"])
         seven_s_structured["action_title"] = f"Organisation alignment is supportive in principle, but systems, talent, and decision rights must strengthen before the {program_label} can scale."
 
         blue_ocean_structured = dict(strategic.get("framework_outputs", {}).get("blue_ocean", {}).get("structured_data") or {})
-        blue_ocean_structured.setdefault("factors", ["price", "service quality", "compliance assurance", "partner ecosystem", "speed to launch", "trust"])
-        blue_ocean_structured.setdefault("company_curve", {"price": 6, "service quality": 8, "compliance assurance": 9, "partner ecosystem": 7, "speed to launch": 6, "trust": 9})
+        if {"proprietary_ai_platform", "data_ecosystem"}.intersection(themes):
+            blue_factors = ["proprietary data depth", "AI workflow automation", "M&A delivery speed", "governance assurance", "ecosystem interoperability", "premium advisory credibility"]
+            company_curve = {
+                "proprietary data depth": 8,
+                "AI workflow automation": 8,
+                "M&A delivery speed": 7,
+                "governance assurance": 8,
+                "ecosystem interoperability": 7,
+                "premium advisory credibility": 9,
+            }
+        else:
+            blue_factors = ["price", "service quality", "compliance assurance", "partner ecosystem", "speed to launch", "trust"]
+            company_curve = {"price": 6, "service quality": 8, "compliance assurance": 9, "partner ecosystem": 7, "speed to launch": 6, "trust": 9}
+        blue_ocean_structured.setdefault("factors", blue_factors)
+        blue_ocean_structured.setdefault("company_curve", company_curve)
+        competitor_names = [str(item.get("name")) for item in competitor_profiles if item.get("name")]
+        competitor_curves = {}
+        for index, name in enumerate(competitor_names[:3]):
+            if {"proprietary_ai_platform", "data_ecosystem"}.intersection(themes):
+                competitor_curves[name] = {
+                    "proprietary data depth": 7 - min(index, 2),
+                    "AI workflow automation": 8 if "McKinsey" in name or "Boston" in name else 6,
+                    "M&A delivery speed": 8 if "McKinsey" in name else 7,
+                    "governance assurance": 7,
+                    "ecosystem interoperability": 6 + min(index, 1),
+                    "premium advisory credibility": 9 if "McKinsey" in name or "Boston" in name else 7,
+                }
+            else:
+                competitor_curves[name] = {"price": 5 + index, "service quality": 8 - min(index, 2), "compliance assurance": 7, "partner ecosystem": 8 - min(index, 2), "speed to launch": 5 + index, "trust": 8 - min(index, 2)}
         blue_ocean_structured.setdefault(
             "competitor_curves",
-            {
+            competitor_curves
+            or {
                 "Incumbent Leader": {"price": 5, "service quality": 7, "compliance assurance": 8, "partner ecosystem": 9, "speed to launch": 4, "trust": 8},
                 "Digital Challenger": {"price": 8, "service quality": 6, "compliance assurance": 5, "partner ecosystem": 5, "speed to launch": 9, "trust": 5},
                 "Global Specialist": {"price": 4, "service quality": 9, "compliance assurance": 8, "partner ecosystem": 6, "speed to launch": 5, "trust": 7},
@@ -1160,8 +1276,17 @@ CRITICAL RULES:
         )
         for key in ("eliminate", "reduce", "raise", "create"):
             blue_ocean_structured.setdefault(key, strategic.get("blue_ocean_factors", {}).get(key) or [])
-        blue_ocean_structured.setdefault("blue_ocean_shift", f"Compete on trust, governance, and execution quality rather than on price alone while pursuing {strategic_path}.")
-        blue_ocean_structured["action_title"] = f"Differentiation should come from trust, governance, and execution quality rather than from joining a commodity price race during {program_label} delivery."
+        default_shift = (
+            f"Compete on proprietary data depth, AI workflow automation, and governed delivery rather than generic technology implementation while pursuing {strategic_path}."
+            if {"proprietary_ai_platform", "data_ecosystem"}.intersection(themes)
+            else f"Compete on trust, governance, and execution quality rather than on price alone while pursuing {strategic_path}."
+        )
+        blue_ocean_structured.setdefault("blue_ocean_shift", default_shift)
+        blue_ocean_structured["action_title"] = (
+            f"Differentiation should come from proprietary AI workflows and controlled data ecosystems rather than from generic technology spend during {program_label} delivery."
+            if {"proprietary_ai_platform", "data_ecosystem"}.intersection(themes)
+            else f"Differentiation should come from trust, governance, and execution quality rather than from joining a commodity price race during {program_label} delivery."
+        )
 
         swot_structured = {
             "strengths": [
@@ -1387,13 +1512,21 @@ CRITICAL RULES:
             self._absolute_percent(financial.get("financial_projections", {}).get("year_5", {}).get("irr"), 31.0),
         )
         payback_months = int(base_case.get("payback_months") or 28)
-        attractiveness = framework_outputs["porters_five_forces"]["structured_data"]["overall_attractiveness"]
-        condition = str(profile["condition"])
         critical_gaps = len(capability_fit_matrix.get("critical_gaps") or [])
-        pathway_label = str(primary_pathway.get("name") or recommendation).lower()
+        pathway_label = str(primary_pathway.get("name") or recommendation or profile["strategic_path"]).lower()
+        gate = "evidence gates" if "platform" in pathway_label or "data" in pathway_label else "execution gates"
+        decision_marker = {
+            "enter": "market-entry",
+            "acquire": "acquisition",
+            "merge": "merger",
+            "restructure": "restructuring",
+            "invest": "investment",
+            "exit": "exit",
+            "divest": "divestment",
+        }.get(str(profile.get("decision_type") or ""), str(profile.get("strategic_path") or "strategy"))
         return (
-            f"{label} — {str(profile['board_action']).capitalize()} through {pathway_label}, {condition}, "
-            f"because the base case supports {round(year_5_irr)}% IRR, {payback_months}-month payback, and only {critical_gaps} critical capability gaps remain."
+            f"{label} — pursue {decision_marker} via {pathway_label} in {geography}, gated by {gate}, "
+            f"with base-case {round(year_5_irr)}% IRR, {payback_months}-month stage-one payback, and {critical_gaps} critical gaps."
         )
 
     def _build_executive_summary(
@@ -1501,6 +1634,106 @@ CRITICAL RULES:
             {"exhibit_number": 15, "exhibit_title": "A four-phase roadmap converts the recommendation into sequenced action while preserving optionality and governance.", "framework": "Implementation Roadmap", "agent_author": AgentName.SYNTHESIS.value, "source_note": source_note, "chart_type": "gantt"},
         ]
         return sorted(exhibits + extra_exhibits, key=lambda item: item["exhibit_number"])
+
+    def _build_red_team_challenges(
+        self,
+        *,
+        query: str,
+        context: dict,
+        scenario_analysis: dict[str, object],
+        strategic_pathways: dict[str, object],
+    ) -> dict[str, object]:
+        """Surface adversarial checks for large strategic commitments."""
+        facts = extract_query_facts(query)
+        investment = facts.get("investment_range_usd_mn") or context.get("investment_range_usd_mn") or {}
+        investment_mid = self._extract_numeric(investment.get("mid") if isinstance(investment, dict) else None, 0.0)
+        base_case = self._scenario_by_name(scenario_analysis, scenario_analysis.get("recommended_case", "Base"))
+        roi = self._extract_numeric(base_case.get("roi_multiple"), 1.4)
+        payback = self._extract_numeric(base_case.get("payback_months"), 30.0)
+        primary_path = self._primary_pathway(strategic_pathways)
+        challenges: list[dict[str, str]] = []
+        if investment_mid >= 250:
+            challenges.append(
+                {
+                    "severity": "MAJOR",
+                    "original_claim": f"The proposed ${investment_mid:.0f}M capital envelope can create differentiated strategic advantage.",
+                    "challenge": "The investment thesis is credible only if platform adoption, reusable data rights, and margin uplift are measured separately from ordinary advisory growth.",
+                    "required_evidence": "Named lighthouse clients, revenue attribution method, data-rights inventory, and tranche-level payback proof before scaling.",
+                }
+            )
+        if roi < 1.15 or payback > 60:
+            challenges.append(
+                {
+                    "severity": "FATAL" if roi < 0.85 else "MAJOR",
+                    "original_claim": "The capital case supports board approval.",
+                    "challenge": f"Base-case ROI of {roi:.2f}x and payback of {payback:.0f} months do not justify an unconditional proceed decision.",
+                    "required_evidence": "Revised cash-flow bridge, sensitivity table, and quantified downside triggers.",
+                }
+            )
+        if facts.get("named_competitors"):
+            challenges.append(
+                {
+                    "severity": "MAJOR",
+                    "original_claim": "The strategy can differentiate against the named competitor set.",
+                    "challenge": "Named competitors can copy generic AI tooling; differentiation must rest on proprietary data, workflow IP, governance, and embedded client adoption.",
+                    "required_evidence": f"Side-by-side proof versus {', '.join(facts['named_competitors'])}.",
+                }
+            )
+        if not challenges:
+            challenges.append(
+                {
+                    "severity": "MINOR",
+                    "original_claim": "The recommendation is directionally supportable.",
+                    "challenge": "Execution should still be gated because the brief relies on public-source evidence and management-provided assumptions.",
+                    "required_evidence": "Management validation of assumptions and updated market evidence before implementation.",
+                }
+            )
+        fatal_count = sum(1 for item in challenges if item["severity"] == "FATAL")
+        major_count = sum(1 for item in challenges if item["severity"] == "MAJOR")
+        return {
+            "summary": "Red-team review challenges the most material assumptions before the board treats the recommendation as executable.",
+            "primary_pathway_challenged": primary_path.get("name"),
+            "fatal_count": fatal_count,
+            "major_count": major_count,
+            "invalidated_claims": challenges,
+            "verdict": "Proceed only with explicit evidence gates." if major_count or fatal_count else "No fatal challenges identified, but assumptions still require management validation.",
+        }
+
+    def _named_competitor_profiles(self, names: list[str]) -> list[dict[str, object]]:
+        profiles: list[dict[str, object]] = []
+        for name in names[:4]:
+            lower = str(name).lower()
+            if "mckinsey" in lower:
+                profiles.append(
+                    {
+                        "name": "McKinsey & Company",
+                        "market_share": "Named benchmark",
+                        "key_strengths": ["CEO access", "McKinsey Digital and QuantumBlack depth", "scaled knowledge assets"],
+                        "key_weaknesses": ["premium economics", "client concerns on reusable IP ownership"],
+                        "strategic_posture": "Defend enterprise AI transformation leadership",
+                    }
+                )
+            elif "boston" in lower or lower == "bcg":
+                profiles.append(
+                    {
+                        "name": "Boston Consulting Group",
+                        "market_share": "Named benchmark",
+                        "key_strengths": ["BCG X digital build capability", "venture and product-building muscle", "analytics talent depth"],
+                        "key_weaknesses": ["coordination complexity across advisory and build teams"],
+                        "strategic_posture": "Attack AI-enabled transformation and digital venture work",
+                    }
+                )
+            else:
+                profiles.append(
+                    {
+                        "name": name,
+                        "market_share": "Named benchmark",
+                        "key_strengths": ["client access", "specialist capability", "brand credibility"],
+                        "key_weaknesses": ["uncertain differentiation versus proprietary platform strategy"],
+                        "strategic_posture": "Defend high-value transformation work",
+                    }
+                )
+        return profiles
 
     def _top_decision_evidence(self, framework_outputs: dict[str, dict]) -> list[str]:
         ordered = sorted(
@@ -2009,10 +2242,22 @@ CRITICAL RULES:
 
         unscaled_total = sum(item["base_year_3_revenue_usd_mn"] for item in sector_plan) or 1.0
         scale_multiplier = max(0.72, min(1.38, (year_3_anchor / unscaled_total) * context_scale))
+        if context.get("investment_range_usd_mn"):
+            scale_multiplier = max(1.0, min(1.45, scale_multiplier + 0.22))
 
         sector_build = []
         for item in sector_plan:
-            year_3_revenue = round(item["base_year_3_revenue_usd_mn"] * scale_multiplier, 1)
+            conversion_revenue = round(
+                item["target_clients"] * item["win_rate"] * item["average_contract_value_usd_mn"],
+                2,
+            )
+            account_expansion_multiplier = item.get("account_expansion_multiplier")
+            if account_expansion_multiplier is None:
+                account_expansion_multiplier = max(
+                    1.15,
+                    min(4.0, item["base_year_3_revenue_usd_mn"] / max(conversion_revenue, 0.1)),
+                )
+            year_3_revenue = round(conversion_revenue * account_expansion_multiplier * scale_multiplier, 1)
             year_1_revenue = round(max(0.6, year_3_revenue * (year_1_anchor / max(year_3_anchor, 1.0))), 1)
             year_2_revenue = round((year_1_revenue * 1.55) + (year_3_revenue * 0.08), 1)
             sector_build.append(
@@ -2023,6 +2268,9 @@ CRITICAL RULES:
                     "target_clients": item["target_clients"],
                     "win_rate": round(item["win_rate"], 2),
                     "average_contract_value_usd_mn": round(item["average_contract_value_usd_mn"], 2),
+                    "converted_revenue_usd_mn": conversion_revenue,
+                    "account_expansion_multiplier": round(account_expansion_multiplier, 2),
+                    "scale_multiplier": round(scale_multiplier, 2),
                     "year_1_revenue_usd_mn": year_1_revenue,
                     "year_2_revenue_usd_mn": year_2_revenue,
                     "year_3_revenue_usd_mn": year_3_revenue,
@@ -2040,6 +2288,8 @@ CRITICAL RULES:
             "pricing_model": pricing_model,
             "sector_build": sector_build,
             "key_assumptions": self._commercial_assumptions(query=query, profile=profile, pricing_model=pricing_model),
+            "investment_range_usd_mn": context.get("investment_range_usd_mn"),
+            "time_horizon_years": context.get("time_horizon_years"),
             "total_year_1_revenue_usd_mn": total_year_1,
             "total_year_2_revenue_usd_mn": total_year_2,
             "total_year_3_revenue_usd_mn": total_year_3,
@@ -2055,6 +2305,10 @@ CRITICAL RULES:
     ) -> dict[str, object]:
         total_year_3 = self._extract_numeric(bottom_up_revenue_model.get("total_year_3_revenue_usd_mn"), 38.0)
         total_year_1 = self._extract_numeric(bottom_up_revenue_model.get("total_year_1_revenue_usd_mn"), 12.0)
+        investment_range = bottom_up_revenue_model.get("investment_range_usd_mn") or {}
+        investment_mid = self._extract_numeric(investment_range.get("mid") if isinstance(investment_range, dict) else None, 0.0)
+        horizon = bottom_up_revenue_model.get("time_horizon_years") or {}
+        horizon_mid = self._extract_numeric(horizon.get("mid") if isinstance(horizon, dict) else None, 5.0)
         top_risk = max((item["inherent_score"] for item in normalized_risks), default=10)
         risk_drag = max(0.0, (top_risk - 10) / 50)
         decision_type = str(profile.get("decision_type") or "enter")
@@ -2084,15 +2338,27 @@ CRITICAL RULES:
             revenue_year_3 = round(total_year_3 * revenue_multiple, 1)
             revenue_year_1 = round(total_year_1 * max(0.74, revenue_multiple * 0.92), 1)
             ebitda_margin_pct = round(max(8.0, margin - (risk_drag * 12)), 1)
+            if investment_mid > 0:
+                annual_cash_flow = revenue_year_3 * (ebitda_margin_pct / 100)
+                terminal_value = annual_cash_flow * (3.0 if "platform" in str(profile.get("program_label", "")).lower() else 1.5)
+                cumulative_cash_flow = (annual_cash_flow * max(3.0, horizon_mid)) + terminal_value
+                roi_multiple = max(0.35, min(2.8, cumulative_cash_flow / investment_mid))
+                stage_one_capital = min(investment_mid * 0.3, 250.0)
+                payback = max(payback, int(round(stage_one_capital / max(annual_cash_flow, 1.0) * 12)))
+                irr_pct = max(4.0, min(32.0, (roi_multiple - 1.0) * 18 + 12))
+            else:
+                irr_pct = round(max(12.0, irr_anchor * revenue_multiple), 1)
             scenarios.append(
                 {
                     "name": name,
                     "revenue_year_1_usd_mn": revenue_year_1,
                     "revenue_year_3_usd_mn": revenue_year_3,
                     "ebitda_margin_pct": ebitda_margin_pct,
-                    "roi_multiple": round(max(1.0, roi_multiple - (risk_drag * 0.4)), 2),
-                    "irr_pct": round(max(12.0, irr_anchor * revenue_multiple), 1),
+                    "roi_multiple": round(max(0.35, roi_multiple - (risk_drag * 0.4)), 2),
+                    "irr_pct": round(irr_pct, 1),
                     "payback_months": int(round(payback + (risk_drag * 6))),
+                    "investment_usd_mn": investment_mid or None,
+                    "payback_basis": "stage-one tranche" if investment_mid else "program cash payback",
                     "assumptions": self._scenario_assumptions(name=name, profile=profile),
                 }
             )
@@ -2141,10 +2407,41 @@ CRITICAL RULES:
         critical_gap_count = len(capability_fit_matrix.get("critical_gaps") or [])
         top_risk = max((item["inherent_score"] for item in normalized_risks), default=10)
         base_case = self._scenario_by_name(scenario_analysis, scenario_analysis.get("recommended_case", "Base"))
-        roi_multiple = self._safe_float(base_case.get("roi_multiple"), 1.9)
+        roi_multiple = self._extract_numeric(base_case.get("roi_multiple"), 1.9)
         downside_penalty = (top_risk / 25) + (critical_gap_count * 0.06)
 
-        if decision_type in {"acquire", "merge"}:
+        themes = set(context.get("strategic_themes") or extract_query_facts(query).get("strategic_themes") or [])
+        if decision_type == "invest" and {"proprietary_ai_platform", "data_ecosystem"}.intersection(themes):
+            options = [
+                self._pathway_option(
+                    "Proprietary AI platform plus data ecosystem",
+                    "Creates the strongest differentiation by owning repeatable M&A workflows, benchmarks, and governed data assets.",
+                    0.82 - (downside_penalty * 0.45) + (roi_multiple / 28),
+                    "High",
+                    "Medium",
+                    "Medium",
+                    "Use when lighthouse clients validate adoption, data rights, and margin uplift before each funding gate.",
+                ),
+                self._pathway_option(
+                    "Partnered AI stack with selective IP ownership",
+                    "Reduces capital intensity but risks weaker moat if partners own the most important workflow and data layers.",
+                    0.75 - (downside_penalty * 0.45),
+                    "Medium",
+                    "High",
+                    "Medium",
+                    "Use if proprietary build milestones miss adoption or cost thresholds.",
+                ),
+                self._pathway_option(
+                    "Traditional advisory scaling",
+                    "Protects near-term margins but leaves the firm exposed to competitors with stronger reusable AI assets.",
+                    0.58 - (downside_penalty * 0.35),
+                    "Low",
+                    "High",
+                    "High",
+                    "Use only as a defensive fallback, not as the leadership strategy.",
+                ),
+            ]
+        elif decision_type in {"acquire", "merge"}:
             options = [
                 self._pathway_option(
                     "Full acquisition",
@@ -2381,8 +2678,13 @@ CRITICAL RULES:
                 "Cross-sell or partner leverage accelerates ahead of plan.",
                 "Execution gates are met without material rework.",
             ]
+        program_label = str(profile["program_label"])
+        if program_label.startswith("AI "):
+            scenario_label = program_label
+        else:
+            scenario_label = program_label.capitalize()
         return [
-            f"{profile['program_label'].capitalize()} milestones are met on the planned cadence.",
+            f"{scenario_label} milestones are met on the planned cadence.",
             "Core assumptions on conversion, pricing, and delivery productivity broadly hold.",
             "No critical risk invalidates the preferred route in the first 12 months.",
         ]
@@ -2396,9 +2698,19 @@ CRITICAL RULES:
         ]
         if any(keyword in query.lower() for keyword in ("ai governance", "dpdp", "privacy", "compliance", "model risk")):
             assumptions.append("Recurring governance, audit, or monitoring attach rates are required to avoid a pure consulting margin profile.")
+        if any(keyword in query.lower() for keyword in ("proprietary ai", "ai platform", "data ecosystem", "m&a and technology services", "technology services")):
+            assumptions.extend(
+                [
+                    "Platform spend is funded in tranches; every tranche requires adoption, reuse, and margin-uplift evidence.",
+                    "Revenue attribution separates proprietary-platform pull-through from ordinary advisory growth.",
+                    "Data rights and governance controls are prerequisites for scaling the ecosystem across regions.",
+                ]
+            )
         return assumptions
 
     def _pricing_model(self, *, query: str, profile: dict[str, object]) -> str:
+        if any(keyword in query.lower() for keyword in ("proprietary ai", "ai platform", "data ecosystem", "m&a and technology services", "technology services")):
+            return "Premium advisory plus proprietary platform subscription plus data-enabled managed services"
         if any(keyword in query.lower() for keyword in ("ai governance", "dpdp", "privacy", "compliance", "model risk")):
             return "Advisory plus platform subscription plus recurring assurance retainer"
         if str(profile.get("decision_type") or "") == "restructure":
@@ -2413,10 +2725,14 @@ CRITICAL RULES:
     def _context_scale_factor(self, context: dict) -> float:
         revenue_hint = self._extract_numeric(context.get("annual_revenue") or context.get("annual_revenue_usd_mn"), 500.0)
         employee_hint = self._extract_numeric(context.get("employees"), 2500.0)
+        investment_range = context.get("investment_range_usd_mn") or {}
+        investment_mid = self._extract_numeric(investment_range.get("mid") if isinstance(investment_range, dict) else None, 0.0)
         scale = 0.85
         scale += min(0.25, revenue_hint / 3000)
         scale += min(0.15, employee_hint / 12000)
-        return round(max(0.8, min(1.3, scale)), 3)
+        if investment_mid:
+            scale += min(0.25, investment_mid / 2500)
+        return round(max(0.8, min(1.45, scale)), 3)
 
     def _extract_numeric(self, value, default: float) -> float:
         if value is None:
@@ -2437,6 +2753,14 @@ CRITICAL RULES:
         sector = str(context.get("sector") or "").lower()
         query_lower = query.lower()
         decision_type = str(profile.get("decision_type") or "enter")
+
+        if any(keyword in query_lower for keyword in ("proprietary ai", "ai platform", "data ecosystem", "m&a and technology services", "technology services")):
+            return [
+                {"sector": "AI-enabled M&A transformation platforms", "priority": "Primary", "addressable_clients": 70, "target_clients": 28, "win_rate": 0.32, "average_contract_value_usd_mn": 8.0, "sales_cycle_months": 10, "base_year_3_revenue_usd_mn": 186.0, "account_expansion_multiplier": 2.6},
+                {"sector": "Proprietary data ecosystem subscriptions", "priority": "Primary", "addressable_clients": 120, "target_clients": 45, "win_rate": 0.26, "average_contract_value_usd_mn": 4.5, "sales_cycle_months": 8, "base_year_3_revenue_usd_mn": 126.0, "account_expansion_multiplier": 2.4},
+                {"sector": "Post-merger integration automation", "priority": "Primary", "addressable_clients": 60, "target_clients": 24, "win_rate": 0.30, "average_contract_value_usd_mn": 7.0, "sales_cycle_months": 9, "base_year_3_revenue_usd_mn": 116.0, "account_expansion_multiplier": 2.3},
+                {"sector": "Technology transformation retainers", "priority": "Secondary", "addressable_clients": 140, "target_clients": 36, "win_rate": 0.22, "average_contract_value_usd_mn": 5.5, "sales_cycle_months": 7, "base_year_3_revenue_usd_mn": 87.0, "account_expansion_multiplier": 2.0},
+            ]
 
         if any(keyword in query_lower for keyword in ("ai governance", "dpdp", "privacy", "compliance", "model risk")):
             if decision_type in {"acquire", "merge"}:
@@ -2494,6 +2818,14 @@ CRITICAL RULES:
 
     def _capability_blueprint(self, *, query: str, context: dict, profile: dict[str, object]) -> list[dict[str, str]]:
         query_lower = query.lower()
+        if any(keyword in query_lower for keyword in ("proprietary ai", "ai platform", "data ecosystem", "m&a and technology services", "technology services")):
+            return [
+                {"capability": "Proprietary AI workflow platform", "current_state": "Medium", "target_state": "Strong", "gap": "Reusable M&A and technology-service workflows must move from expert playbooks into product-grade platform assets.", "priority": "Critical", "build_fit": "Strong", "acquisition_fit": "Moderate", "integration_risk": "Medium", "recommended_action": "Build the core workflow IP internally while using partners only for non-differentiating infrastructure."},
+                {"capability": "Client and transaction data ecosystem", "current_state": "Medium", "target_state": "Strong", "gap": "The differentiating moat depends on permissioned benchmarks, clean data rights, and reusable post-merger integration datasets.", "priority": "Critical", "build_fit": "Strong", "acquisition_fit": "Low", "integration_risk": "High", "recommended_action": "Create a governed data-rights model before funding broad platform scale."},
+                {"capability": "AI governance and model-risk controls", "current_state": "Medium", "target_state": "Strong", "gap": "Enterprise buyers will require explainability, privacy, and auditability before accepting platform-led advice.", "priority": "Critical", "build_fit": "Strong", "acquisition_fit": "Moderate", "integration_risk": "Medium", "recommended_action": "Embed governance controls in the first platform release, not as an appendix."},
+                {"capability": "Productised M&A delivery model", "current_state": "Low", "target_state": "Strong", "gap": "Consulting delivery must shift from bespoke teams to reusable workflow modules without eroding premium client intimacy.", "priority": "High", "build_fit": "Strong", "acquisition_fit": "Moderate", "integration_risk": "Medium", "recommended_action": "Pilot with named M&A use cases and require measurable cycle-time reduction."},
+                {"capability": "Ecosystem interoperability", "current_state": "Medium", "target_state": "Strong", "gap": "Hyperscaler, ERP, data-room, and client-system integrations are needed to keep the platform embedded in client workflows.", "priority": "High", "build_fit": "Moderate", "acquisition_fit": "Moderate", "integration_risk": "Medium", "recommended_action": "Partner for infrastructure while retaining the proprietary data and decision layers."},
+            ]
         if any(keyword in query_lower for keyword in ("ai governance", "dpdp", "privacy", "compliance", "model risk")):
             return [
                 {"capability": "AI audit tooling", "current_state": "Medium", "target_state": "Strong", "gap": "A repeatable audit layer is needed to convert advisory work into scalable delivery.", "priority": "Critical", "build_fit": "Moderate", "acquisition_fit": "Strong", "integration_risk": "Medium", "recommended_action": "Acquire or partner for product depth while building delivery playbooks internally."},

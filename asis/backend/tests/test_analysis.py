@@ -11,6 +11,7 @@ from asis.backend.agents.synthesis_v4 import V4SynthesisAgent
 from asis.backend.graph.pipeline import v4_workflow
 from asis.backend.config.settings import get_settings
 from asis.backend.quality.gate import QualityGate
+from asis.backend.graph.context import extract_problem_context, extract_query_facts
 from asis.backend.schemas.v4 import AgentName, FrameworkName, StrategicBriefV4
 from conftest import register_user
 
@@ -49,6 +50,15 @@ def _synthesis_state(query: str, company_context: dict) -> dict:
         "quality_failures": [],
         "quality_retry_count": 0,
     }
+
+
+BAIN_AI_PLATFORM_QUERY = (
+    "Should Bain & Company allocate $400M-$850M over the next 4-6 years to "
+    "differentiate its M&A and technology services from competitors like "
+    "McKinsey & Company and Boston Consulting Group through proprietary AI "
+    "platforms and data ecosystems across the US and Europe, and what strategy "
+    "will ensure sustained market leadership?"
+)
 
 
 @pytest.mark.anyio
@@ -572,6 +582,74 @@ def test_synthesis_agent_repairs_partial_live_output_without_fallback(monkeypatc
         }
     finally:
         get_settings.cache_clear()
+
+
+def test_bain_ai_platform_prompt_context_is_extracted_without_acquisition_drift():
+    facts = extract_query_facts(BAIN_AI_PLATFORM_QUERY)
+    context = extract_problem_context(BAIN_AI_PLATFORM_QUERY, {})
+
+    assert context["company_name"] == "Bain & Company"
+    assert context["decision_type"] == "invest"
+    assert context["geography"] == "United States and Europe"
+    assert facts["investment_range_usd_mn"] == {"min": 400.0, "max": 850.0, "mid": 625.0, "currency": "USD"}
+    assert facts["time_horizon_years"] == {"min": 4.0, "max": 6.0, "mid": 5.0}
+    assert facts["named_competitors"] == ["McKinsey & Company", "Boston Consulting Group"]
+    assert {"proprietary_ai_platform", "data_ecosystem", "mna_services"}.issubset(set(facts["strategic_themes"]))
+
+
+@pytest.mark.anyio
+async def test_bain_ai_platform_brief_preserves_prompt_facts_and_named_competitors():
+    context = extract_problem_context(
+        BAIN_AI_PLATFORM_QUERY,
+        {"company_name": "Bain & Company", "sector": "Technology Consulting"},
+    )
+    payload = V4SynthesisAgent().local_result(_synthesis_state(BAIN_AI_PLATFORM_QUERY, context))
+    brief = StrategicBriefV4.model_validate(payload)
+    report = await QualityGate().validate(brief)
+    failed_checks = {check.id for check in report.checks if not check.passed}
+    payload_text = str(payload).lower()
+
+    assert "prompt_fidelity" not in failed_checks
+    assert "named_competitor_coverage" not in failed_checks
+    assert "bottom_up_formula_integrity" not in failed_checks
+    assert "red_team_materiality" not in failed_checks
+    assert "mckinsey & company" in payload_text
+    assert "boston consulting group" in payload_text
+    assert "proprietary data depth" in payload_text
+    assert payload["red_team"]["major_count"] >= 1
+    assert payload["financial_analysis"]["bottom_up_revenue_model"]["investment_range_usd_mn"]["mid"] == 625.0
+
+
+@pytest.mark.anyio
+async def test_quality_gate_blocks_prompt_drift_from_stale_report_context():
+    stale_query = (
+        "Should Bain & Company invest $250M-$550M over the next 3-5 years to expand "
+        "Global Capability Centers in India?"
+    )
+    stale_context = {
+        "company_name": "Bain & Company",
+        "sector": "Technology Consulting",
+        "geography": "India",
+        "decision_type": "invest",
+    }
+    payload = V4SynthesisAgent().local_result(_synthesis_state(stale_query, stale_context))
+    payload["report_metadata"]["query"] = BAIN_AI_PLATFORM_QUERY
+    payload["context"]["geography"] = "India"
+    payload["market_analysis"]["competitor_profiles"] = [
+        {"name": "Incumbent Leader"},
+        {"name": "Digital Challenger"},
+    ]
+    payload["framework_outputs"]["blue_ocean"]["structured_data"]["competitor_curves"] = {
+        "Incumbent Leader": {"price": 5},
+        "Digital Challenger": {"price": 8},
+    }
+
+    report = await QualityGate().validate(StrategicBriefV4.model_validate(payload))
+    failed_checks = {check.id for check in report.checks if not check.passed}
+
+    assert "prompt_fidelity" in failed_checks
+    assert "named_competitor_coverage" in failed_checks
+    assert report.overall_grade == "FAIL"
 
 
 def test_synthesis_acquisition_profile_keeps_recommended_pathway_aligned():
