@@ -500,4 +500,8 @@ function ProfileField({
       <input
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="w-full rounded-[18px] bo
+        className="w-full rounded-[18px] border border-white/8 bg-white/[0.04] px-4 py-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-cyan-300/40"
+      />
+    </label>
+  );
+}

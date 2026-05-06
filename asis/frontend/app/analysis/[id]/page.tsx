@@ -533,4 +533,11 @@ function V4AnalysisLoadingView({
                   </div>
                   <div className="mt-2 text-xs text-slate-500">{log?.duration_ms != null ? `${log.duration_ms} ms` : "Waiting"}</div>
                 </div>
-              );
+              );
+            })}
+          </div>
+        </section>
+      </div>
+    </div>
+  );
+}
