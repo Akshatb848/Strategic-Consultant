@@ -1,3 +1,5 @@
+import { Prisma } from '@prisma/client';
+
 import { prisma } from '../lib/database';
 import { log } from '../lib/logger';
 import { emitPipelineEvent, emitAnalysisComplete } from '../lib/socketio';
@@ -82,9 +84,22 @@ async function saveAgentResult(analysisId: string, agentId: string, result: Agen
       inputTokens: result.tokenUsage.input,
       outputTokens: result.tokenUsage.output,
       durationMs: result.durationMs,
-      parsedOutput: result.data,
+      parsedOutput: result.data as Prisma.InputJsonValue,
     }
   });
+}
+
+function deriveRecommendedOption(threeOptions: unknown): string | null {
+  if (!Array.isArray(threeOptions)) return null;
+  const recommended = threeOptions.find((option) => {
+    if (!option || typeof option !== 'object') return false;
+    return Boolean((option as Record<string, unknown>).recommended);
+  }) as Record<string, unknown> | undefined;
+
+  if (!recommended) return null;
+  const option = typeof recommended.option === 'string' ? recommended.option : '';
+  const label = typeof recommended.label === 'string' ? recommended.label : '';
+  return option && label ? `${option} — ${label}` : option || label || null;
 }
 
 export async function runPipeline(analysisId: string): Promise<void> {
@@ -118,6 +133,7 @@ export async function runPipeline(analysisId: string): Promise<void> {
   };
 
   try {
+    let anyAgentUsedFallback = false;
     await prisma.analysis.update({ where: { id: analysisId }, data: { status: 'running' } });
 
     // Load organizational memory context from past analyses
@@ -135,6 +151,7 @@ export async function runPipeline(analysisId: string): Promise<void> {
     });
     state.strategistData = strategistResult.data as any;
     state.agentConfidences.strategist = strategistResult.confidenceScore;
+    anyAgentUsedFallback ||= strategistResult.selfCorrected;
     await saveAgentResult(analysisId, 'strategist', strategistResult);
     emitPipelineEvent(analysisId, { agent: 'strategist', status: 'completed', confidence: strategistResult.confidenceScore });
 
@@ -153,6 +170,7 @@ export async function runPipeline(analysisId: string): Promise<void> {
     state.marketIntelData = marketIntelResult.data as any;
     state.agentConfidences.quant = quantResult.confidenceScore;
     state.agentConfidences.market_intel = marketIntelResult.confidenceScore;
+    anyAgentUsedFallback ||= quantResult.selfCorrected || marketIntelResult.selfCorrected;
     await Promise.all([saveAgentResult(analysisId, 'quant', quantResult), saveAgentResult(analysisId, 'market_intel', marketIntelResult)]);
     emitPipelineEvent(analysisId, { agent: 'quant', status: 'completed', confidence: quantResult.confidenceScore });
     emitPipelineEvent(analysisId, { agent: 'market_intel', status: 'completed', confidence: marketIntelResult.confidenceScore });
@@ -168,6 +186,7 @@ export async function runPipeline(analysisId: string): Promise<void> {
     });
     state.riskData = riskResult.data as any;
     state.agentConfidences.risk = riskResult.confidenceScore;
+    anyAgentUsedFallback ||= riskResult.selfCorrected;
     await saveAgentResult(analysisId, 'risk', riskResult);
     emitPipelineEvent(analysisId, { agent: 'risk', status: 'completed', confidence: riskResult.confidenceScore });
 
@@ -193,6 +212,7 @@ export async function runPipeline(analysisId: string): Promise<void> {
     state.ethicistData = ethicistResult.data as any;
     state.agentConfidences.red_team = redTeamResult.confidenceScore;
     state.agentConfidences.ethicist = ethicistResult.confidenceScore;
+    anyAgentUsedFallback ||= redTeamResult.selfCorrected || ethicistResult.selfCorrected;
     await Promise.all([saveAgentResult(analysisId, 'red_team', redTeamResult), saveAgentResult(analysisId, 'ethicist', ethicistResult)]);
     emitPipelineEvent(analysisId, { agent: 'red_team', status: 'completed', confidence: redTeamResult.confidenceScore });
     emitPipelineEvent(analysisId, { agent: 'ethicist', status: 'completed', confidence: ethicistResult.confidenceScore });
@@ -209,6 +229,7 @@ export async function runPipeline(analysisId: string): Promise<void> {
     state.coveData = coveResult.data as any;
     state.agentConfidences.cove = coveResult.confidenceScore;
     state.logicConsistencyPassed = state.coveData?.logic_consistent ?? true;
+    anyAgentUsedFallback ||= coveResult.selfCorrected;
     await saveAgentResult(analysisId, 'cove', coveResult);
 
     // Calculate overall confidence from CoVe
@@ -239,10 +260,19 @@ export async function runPipeline(analysisId: string): Promise<void> {
     (synthesisResult.data as any).overall_confidence = overallConfidence;
     state.synthesisData = synthesisResult.data as any;
     state.agentConfidences.synthesis = overallConfidence;
+    anyAgentUsedFallback ||= synthesisResult.selfCorrected;
     await saveAgentResult(analysisId, 'synthesis', synthesisResult);
     emitPipelineEvent(analysisId, { agent: 'synthesis', status: 'completed', confidence: overallConfidence });
 
-    // ── Complete ────────────────────────────────────────────────────────────
+    const synthesisData = state.synthesisData as any;
+    const redTeamData = state.redTeamData as any;
+    const fatalInvalidationCount = (redTeamData?.invalidated_claims || []).filter((c: any) => c.severity === 'Fatal').length;
+    const majorInvalidationCount = (redTeamData?.invalidated_claims || []).filter((c: any) => c.severity === 'Major').length;
+    const redTeamResponse = synthesisData?.red_team_response || null;
+    const recommendationDowngraded = redTeamResponse?.recommendation_changed ?? false;
+    const originalRecommendation = redTeamResponse?.original_recommendation ?? null;
+
+    // Complete pipeline with all new fields
     const durationSeconds = (Date.now() - startTime) / 1000;
     await prisma.analysis.update({
       where: { id: analysisId },
@@ -250,18 +280,38 @@ export async function runPipeline(analysisId: string): Promise<void> {
         status: 'completed',
         currentAgent: null,
         overallConfidence,
-        decisionRecommendation: state.synthesisData?.decision_recommendation || 'CONDITIONAL_HOLD',
-        executiveSummary: state.synthesisData?.executive_summary,
-        boardNarrative: state.synthesisData?.board_narrative,
+        decisionRecommendation: synthesisData?.decision_recommendation || 'CONDITIONAL_HOLD',
+        executiveSummary: synthesisData?.executive_summary,
+        boardNarrative: synthesisData?.board_narrative,
         durationSeconds,
         completedAt: new Date(),
         logicConsistencyPassed: state.logicConsistencyPassed,
-        redTeamChallengeCount: (state.redTeamData as any)?.invalidated_claims?.length || 0,
+        redTeamChallengeCount: (redTeamData)?.invalidated_claims?.length || 0,
         selfCorrectionCount: state.selfCorrectionCount,
-      },
+        // New M&A + quality fields
+        fatalInvalidationCount,
+        majorInvalidationCount,
+        recommendationDowngraded,
+        originalRecommendation,
+        threeOptionsData: synthesisData?.three_options ?? null,
+        buildVsBuyVerdict: synthesisData?.build_vs_buy_verdict ?? null,
+        recommendedOption: deriveRecommendedOption(synthesisData?.three_options),
+        hasBlockingWarnings: fatalInvalidationCount > 0,
+        confidenceBreakdown: {
+          strategist: state.agentConfidences.strategist || null,
+          quant: state.agentConfidences.quant || null,
+          market_intel: state.agentConfidences.market_intel || null,
+          risk: state.agentConfidences.risk || null,
+          red_team: state.agentConfidences.red_team || null,
+          ethicist: state.agentConfidences.ethicist || null,
+          cove: state.agentConfidences.cove || null,
+          overall: overallConfidence,
+          used_fallback: anyAgentUsedFallback,
+        },
+      } as any,
     });
 
-    emitAnalysisComplete(analysisId, { overallConfidence, decisionRecommendation: state.synthesisData?.decision_recommendation || 'CONDITIONAL_HOLD', durationSeconds });
+    emitAnalysisComplete(analysisId, { overallConfidence, decisionRecommendation: synthesisData?.decision_recommendation || 'CONDITIONAL_HOLD', durationSeconds });
     log.info(`[PIPELINE] Completed ${analysisId} in ${durationSeconds.toFixed(1)}s — confidence: ${overallConfidence}`);
 
   } catch (error) {

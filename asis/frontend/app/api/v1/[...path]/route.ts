@@ -28,12 +28,22 @@ const HOP_BY_HOP = new Set([
   "transfer-encoding",
   "upgrade",
   "host",
+  "content-length",
+]);
+
+const FORWARDED_REQUEST_HEADERS = new Set([
+  "accept",
+  "authorization",
+  "content-type",
+  "cookie",
+  "x-request-id",
 ]);
 
 function buildUpstreamHeaders(req: NextRequest): Headers {
   const headers = new Headers();
   req.headers.forEach((value, key) => {
-    if (!HOP_BY_HOP.has(key.toLowerCase())) {
+    const normalizedKey = key.toLowerCase();
+    if (!HOP_BY_HOP.has(normalizedKey) && FORWARDED_REQUEST_HEADERS.has(normalizedKey)) {
       headers.set(key, value);
     }
   });
@@ -52,7 +62,7 @@ function buildDownstreamHeaders(upstreamHeaders: Headers): Headers {
 
 async function proxy(
   req: NextRequest,
-  { params }: { params: { path: string[] } }
+  { params }: { params: Promise<{ path: string[] }> }
 ): Promise<NextResponse> {
   const path = (await params).path.join("/");
   const search = req.nextUrl.search;
@@ -61,16 +71,17 @@ async function proxy(
   const isSSE =
     req.headers.get("accept")?.includes("text/event-stream") ?? false;
 
-  const init: RequestInit = {
+  const hasBody = ["POST", "PUT", "PATCH"].includes(req.method);
+  const init: RequestInit & { duplex?: "half" } = {
     method: req.method,
     headers: buildUpstreamHeaders(req),
-    // Body is only relevant for mutating methods.
-    ...(["POST", "PUT", "PATCH"].includes(req.method)
-      ? { body: await req.arrayBuffer() }
-      : {}),
     // Required for streaming responses in Node.js 20+.
     ...(isSSE ? { cache: "no-store" } : {}),
   };
+  if (hasBody) {
+    init.body = Buffer.from(await req.arrayBuffer());
+    init.duplex = "half";
+  }
 
   let upstream: Response;
   try {

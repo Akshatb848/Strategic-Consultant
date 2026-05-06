@@ -108,17 +108,18 @@ def _resolve_user_organisation_id(user: models.User, db: Session) -> str | None:
 
 
 def _to_summary(analysis: models.Analysis) -> AnalysisSummary:
+    _status = _safe_text(analysis.status) or "queued"
     return AnalysisSummary(
         id=analysis.id,
         query=_safe_text(analysis.query) or "Strategic analysis",
         company_context=_safe_dict(analysis.company_context),
         extracted_context=_safe_dict(analysis.extracted_context),
-        status=_safe_text(analysis.status) or "queued",
+        status=_status,
         current_agent=_safe_text(analysis.current_agent),
         pipeline_version=_safe_text(analysis.pipeline_version) or "4.0.0",
         used_fallback=bool(getattr(analysis, "used_fallback", False)),
         overall_confidence=_safe_float(analysis.overall_confidence),
-        decision_recommendation=analysis.decision_recommendation,
+        decision_recommendation=None if _status in ("failed", "cancelled") else analysis.decision_recommendation,
         executive_summary=_coerce_executive_summary(analysis),
         error_message=_safe_text(analysis.error_message),
         duration_seconds=_safe_float(analysis.duration_seconds),
@@ -129,20 +130,22 @@ def _to_summary(analysis: models.Analysis) -> AnalysisSummary:
 
 
 def _to_detail(analysis: models.Analysis) -> AnalysisDetail:
+    _status = _safe_text(analysis.status) or "queued"
     return AnalysisDetail(
         id=analysis.id,
         query=_safe_text(analysis.query) or "Strategic analysis",
         company_context=_safe_dict(analysis.company_context),
         extracted_context=_safe_dict(analysis.extracted_context),
-        status=_safe_text(analysis.status) or "queued",
+        status=_status,
         current_agent=_safe_text(analysis.current_agent),
         pipeline_version=_safe_text(analysis.pipeline_version) or "4.0.0",
         used_fallback=bool(getattr(analysis, "used_fallback", False)),
         overall_confidence=_safe_float(analysis.overall_confidence),
-        decision_recommendation=analysis.decision_recommendation,
+        decision_recommendation=None if _status in ("failed", "cancelled") else analysis.decision_recommendation,
         executive_summary=_coerce_executive_summary(analysis),
         error_message=_safe_text(analysis.error_message),
         duration_seconds=_safe_float(analysis.duration_seconds),
+        total_cost_usd=_safe_float(analysis.total_cost_usd),
         created_at=analysis.created_at,
         completed_at=analysis.completed_at,
         strategic_brief=analysis.strategic_brief,
@@ -414,3 +417,4 @@ def cancel_analysis_endpoint(
         {"analysis_id": analysis_id, "message": "Analysis cancelled by user."},
     )
     return {"message": "Analysis cancelled.", "analysis_id": analysis_id}
+                                                   

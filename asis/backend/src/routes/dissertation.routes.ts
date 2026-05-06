@@ -6,6 +6,10 @@ import { log } from '../lib/logger';
 
 const router = Router();
 
+function singleParam(value: string | string[] | undefined): string {
+  return Array.isArray(value) ? value[0] ?? '' : value ?? '';
+}
+
 const DISSERTATION_SYSTEM_PROMPT = `You are a senior academic research advisor with expertise in AI, strategic management, and human-computer interaction.
 
 Your task: Generate a comprehensive dissertation/research framework for studying the AI system described.
@@ -60,8 +64,9 @@ const dissertationStore = new Map<string, Record<string, unknown>>();
 router.post('/scaffold/:analysisId', requireAuth, async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user.id as string;
+    const analysisId = singleParam(req.params.analysisId);
     const analysis = await prisma.analysis.findFirst({
-      where: { id: req.params.analysisId, userId },
+      where: { id: analysisId, userId },
       select: { id: true, problemStatement: true, synthesisData: true, overallConfidence: true, decisionRecommendation: true },
     });
 
@@ -168,9 +173,9 @@ Generate research questions that can lead to a PhD-level contribution in AI, str
       fallback
     );
 
-    dissertationStore.set(req.params.analysisId, result.data);
-    log.info('Dissertation scaffold generated', { analysisId: req.params.analysisId });
-    res.json({ dissertation: result.data, analysis_id: req.params.analysisId });
+    dissertationStore.set(analysisId, result.data);
+    log.info('Dissertation scaffold generated', { analysisId });
+    res.json({ dissertation: result.data, analysis_id: analysisId });
   } catch (err) {
     log.error('Dissertation scaffold error', { error: String(err) });
     res.status(500).json({ code: 'INTERNAL_ERROR', message: 'Failed to generate dissertation scaffold' });
@@ -178,7 +183,7 @@ Generate research questions that can lead to a PhD-level contribution in AI, str
 });
 
 router.get('/status/:analysisId', requireAuth, async (req: Request, res: Response) => {
-  const cached = dissertationStore.get(req.params.analysisId);
+  const cached = dissertationStore.get(singleParam(req.params.analysisId));
   if (cached) {
     res.json({ status: 'ready', dissertation: cached });
   } else {

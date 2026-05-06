@@ -1,0 +1,766 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ASIS v4.1 Software Requirements Specification</title>
+  <style>
+    :root {
+      --ink: #0f172a;
+      --muted: #475569;
+      --line: #cbd5e1;
+      --panel: #eef2ff;
+      --panel-2: #eff6ff;
+      --accent: #0f766e;
+      --accent-2: #1d4ed8;
+      --warn: #92400e;
+      --bg: #ffffff;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: "Segoe UI", Arial, Helvetica, sans-serif;
+      line-height: 1.5;
+    }
+
+    body {
+      padding: 32px 40px 56px;
+    }
+
+    .cover {
+      min-height: 92vh;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      page-break-after: always;
+    }
+
+    .eyebrow {
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      font-size: 12px;
+      color: var(--accent);
+      font-weight: 700;
+    }
+
+    h1 {
+      font-size: 36px;
+      line-height: 1.15;
+      margin: 18px 0 10px;
+    }
+
+    h2 {
+      font-size: 24px;
+      margin: 28px 0 10px;
+      border-bottom: 2px solid var(--line);
+      padding-bottom: 6px;
+    }
+
+    h3 {
+      font-size: 18px;
+      margin: 20px 0 8px;
+    }
+
+    h4 {
+      font-size: 15px;
+      margin: 14px 0 6px;
+      color: var(--accent-2);
+    }
+
+    p, li, td, th {
+      font-size: 13px;
+    }
+
+    .subtitle {
+      color: var(--muted);
+      font-size: 16px;
+      max-width: 760px;
+    }
+
+    .meta-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px 22px;
+      margin-top: 28px;
+      max-width: 760px;
+    }
+
+    .meta-card {
+      border: 1px solid var(--line);
+      background: linear-gradient(180deg, var(--panel), #fff);
+      padding: 14px 16px;
+      border-radius: 12px;
+    }
+
+    .meta-card strong {
+      display: block;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+
+    .summary-box,
+    .note,
+    .warning {
+      border-left: 4px solid var(--accent);
+      background: var(--panel-2);
+      padding: 12px 14px;
+      margin: 16px 0;
+    }
+
+    .warning {
+      border-left-color: var(--warn);
+      background: #fff7ed;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 12px 0 20px;
+    }
+
+    th, td {
+      border: 1px solid var(--line);
+      padding: 8px 10px;
+      vertical-align: top;
+      text-align: left;
+    }
+
+    th {
+      background: #f8fafc;
+      font-weight: 700;
+    }
+
+    ul, ol {
+      margin: 8px 0 14px 20px;
+      padding: 0;
+    }
+
+    .toc li {
+      margin: 4px 0;
+    }
+
+    .small {
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .two-col {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 20px;
+    }
+
+    .mono {
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 12px;
+      background: #f8fafc;
+      padding: 2px 5px;
+      border-radius: 4px;
+    }
+
+    .pill {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: #dcfce7;
+      color: #166534;
+      font-size: 11px;
+      font-weight: 700;
+      margin-right: 6px;
+    }
+
+    .pill.warn {
+      background: #ffedd5;
+      color: #9a3412;
+    }
+
+    .pill.info {
+      background: #dbeafe;
+      color: #1d4ed8;
+    }
+
+    .footer {
+      margin-top: 36px;
+      padding-top: 12px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    @page {
+      size: A4;
+      margin: 18mm 14mm 18mm;
+    }
+
+    @media print {
+      body {
+        padding: 0;
+      }
+      .cover {
+        min-height: auto;
+      }
+    }
+  </style>
+</head>
+<body>
+  <section class="cover">
+    <div>
+      <div class="eyebrow">Software Requirements Specification</div>
+      <h1>ASIS v4.1<br />Autonomous Strategic Intelligence System</h1>
+      <p class="subtitle">
+        Production-hardened specification for the current ASIS implementation: an enterprise strategic intelligence platform
+        that generates board-ready briefs through an 8-agent orchestration pipeline, live LLM routing, quality gating,
+        provenance capture, and PDF report delivery.
+      </p>
+
+      <div class="meta-grid">
+        <div class="meta-card">
+          <strong>Document Version</strong>
+          SRS 1.0 for ASIS v4.1 implementation snapshot
+        </div>
+        <div class="meta-card">
+          <strong>Prepared On</strong>
+          21 April 2026
+        </div>
+        <div class="meta-card">
+          <strong>Repository</strong>
+          Strategic-Consultant / active stack in <span class="mono">asis/frontend</span> and <span class="mono">asis/backend</span>
+        </div>
+        <div class="meta-card">
+          <strong>Target Deployment</strong>
+          GCP single-VM deployment at frontend port 3001 and backend port 8000
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="summary-box">
+        <strong>Scope.</strong> This document specifies the functional, non-functional, interface, data, deployment, and validation
+        requirements for the current ASIS version that has been actively hardened for live LLM execution, 8-agent orchestration,
+        analysis generation, dashboard/reporting UX, and enterprise-style export.
+      </div>
+      <div class="footer">
+        Confidentiality: Internal product specification for ASIS implementation, validation, and enterprise deployment readiness.
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Table of Contents</h2>
+    <ol class="toc">
+      <li>Purpose and Scope</li>
+      <li>Product Overview</li>
+      <li>System Context and Architecture</li>
+      <li>User Classes and Primary Journeys</li>
+      <li>Functional Requirements</li>
+      <li>Data Requirements</li>
+      <li>Interface Requirements</li>
+      <li>Non-Functional Requirements</li>
+      <li>Deployment and Operations Requirements</li>
+      <li>Verification and Acceptance Criteria</li>
+      <li>Open Risks and Enterprise Readiness Notes</li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>1. Purpose and Scope</h2>
+    <p>
+      ASIS is an enterprise strategic intelligence system that accepts a strategic question, contextual metadata, and optional
+      user profile memory; orchestrates an 8-agent analysis workflow; validates the resulting strategic brief against a structured
+      schema and quality gate; and presents the result through an interactive web application and PDF export flow.
+    </p>
+    <p>
+      This SRS covers the current production-oriented implementation state, including the live LLM path, no-silent-fallback behavior,
+      dashboard and analysis interfaces, event streaming, report generation, authentication, persistence model, and deployment path.
+    </p>
+    <div class="warning">
+      <strong>Enterprise note.</strong> This version is materially hardened for controlled enterprise deployment validation. Full enterprise certification
+      still depends on environment-level controls such as HTTPS/TLS, OAuth provider setup, secret rotation, and live post-deploy verification.
+    </div>
+  </section>
+
+  <section>
+    <h2>2. Product Overview</h2>
+    <div class="two-col">
+      <div>
+        <h3>2.1 Product goals</h3>
+        <ul>
+          <li>Produce decision-first strategic briefs for board and executive audiences.</li>
+          <li>Run a multi-agent analytical workflow rather than a single-model monologue.</li>
+          <li>Make framework usage, provenance, confidence, and quality visible to the user.</li>
+          <li>Support enterprise user journeys from onboarding to analysis completion to PDF reporting.</li>
+          <li>Operate in live LLM mode in production without silently degrading to static fallback outputs.</li>
+        </ul>
+      </div>
+      <div>
+        <h3>2.2 Product boundaries</h3>
+        <ul>
+          <li>The active application surface is the <span class="mono">asis/</span> stack, not the legacy root TypeScript prototype.</li>
+          <li>PDF export is supported through the frontend PDF render route and Puppeteer-based generation.</li>
+          <li>Social OAuth is implemented in code but requires provider credentials and callback configuration to be fully live.</li>
+          <li>Optional external enrichment keys are supported but not mandatory for the core multi-agent analysis path.</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3>2.3 Technology baseline</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Layer</th>
+          <th>Current implementation</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Frontend</td>
+          <td>Next.js 14 App Router, React 18, TypeScript, Tailwind-style utility styling, charting and React Flow visualisation.</td>
+        </tr>
+        <tr>
+          <td>Backend</td>
+          <td>FastAPI, Pydantic v2, SQLAlchemy, LangGraph-inspired state orchestration, Celery-compatible task dispatch patterns.</td>
+        </tr>
+        <tr>
+          <td>Persistence</td>
+          <td>SQLite on the GCP free-tier path; SQLAlchemy models support promotion to managed relational storage.</td>
+        </tr>
+        <tr>
+          <td>LLM routing</td>
+          <td>LiteLLM proxy when configured, otherwise direct Groq OpenAI-compatible API routing for live JSON generation.</td>
+        </tr>
+        <tr>
+          <td>Report export</td>
+          <td>Frontend PDF route with Puppeteer render path and backend report orchestration.</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>3. System Context and Architecture</h2>
+    <h3>3.1 Logical architecture</h3>
+    <p>
+      The system is composed of a browser-based presentation layer, a Next.js application layer for UI and same-origin proxying,
+      a FastAPI backend for analysis orchestration and persistence, a relational database for durable records, and one or more LLM
+      providers accessed via LiteLLM or direct Groq API routing.
+    </p>
+
+    <h3>3.2 Agent orchestration model</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Step</th>
+          <th>Agent</th>
+          <th>Responsibility</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>1</td><td>Orchestrator</td><td>Normalizes the board question, decomposes context, and routes specialist work.</td></tr>
+        <tr><td>2</td><td>Market Intel</td><td>Market sizing, trend synthesis, demand signals, and external structure.</td></tr>
+        <tr><td>3</td><td>Risk Assessment</td><td>Downside analysis, execution and enterprise risk framing, execution realism.</td></tr>
+        <tr><td>4</td><td>Competitor Analysis</td><td>Competitive positioning, rivals, comparable moves, pressure mapping.</td></tr>
+        <tr><td>5</td><td>Geo Intel</td><td>Geopolitical, regulatory, trade, and CAGE-distance considerations.</td></tr>
+        <tr><td>6</td><td>Financial Reasoning</td><td>Scenario modeling, commercial logic, bottom-up economics, investment framing.</td></tr>
+        <tr><td>7</td><td>Strategic Options</td><td>Option design, recommendation logic, pathway comparison, option scoring.</td></tr>
+        <tr><td>8</td><td>Synthesis</td><td>Validates and enriches the strategic brief scaffold into a final board-ready response.</td></tr>
+      </tbody>
+    </table>
+
+    <h3>3.3 LLM routing requirements</h3>
+    <ul>
+      <li>Production mode shall prioritize live provider responses for all agents.</li>
+      <li>Production mode shall set <span class="mono">ALLOW_LLM_FALLBACK=false</span> to prevent silent template-mode degradation.</li>
+      <li>When LiteLLM proxy credentials are absent and <span class="mono">GROQ_API_KEY</span> is present, the system shall route directly to Groq.</li>
+      <li>Synthesis shall use a compact patch prompt and a second smaller repair prompt before raising a live-provider failure.</li>
+      <li>Any production live-provider failure shall surface explicitly rather than being disguised as a completed analysis.</li>
+    </ul>
+
+    <h3>3.4 Validated brief contract</h3>
+    <p>
+      The final output must validate against <span class="mono">StrategicBriefV4</span>, including required framework outputs,
+      executive summary shape, decision statement prefix rules, implementation roadmap, quality report, citations, and confidence normalization.
+    </p>
+  </section>
+
+  <section>
+    <h2>4. User Classes and Primary Journeys</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>User class</th>
+          <th>Description</th>
+          <th>Primary journeys</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Analyst / Associate</td>
+          <td>Primary analysis initiator and report consumer.</td>
+          <td>Login, create analysis, monitor progress, review frameworks, export PDF, revisit prior reports.</td>
+        </tr>
+        <tr>
+          <td>Manager / Principal</td>
+          <td>Review and challenge user of strategic outputs.</td>
+          <td>Inspect decision banner, confidence, red-team content, pathway options, and enterprise PDF.</td>
+        </tr>
+        <tr>
+          <td>Admin / Platform operator</td>
+          <td>Maintains secrets, deployment, and provider configuration.</td>
+          <td>Set environment variables, deploy to GCP, inspect provider health, verify fallback state, rotate secrets.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>4.1 Main user flows</h3>
+    <ol>
+      <li>User authenticates with email/password or configured OAuth provider.</li>
+      <li>User opens dashboard and starts a new strategic analysis.</li>
+      <li>User submits strategic question and structured metadata.</li>
+      <li>Backend creates an analysis record, streams status and progress events, and executes the 8-agent pipeline.</li>
+      <li>User monitors live progress through the analysis running screen and agent collaboration view.</li>
+      <li>On completion, user reviews the strategic brief, confidence, quality, rigour panel, frameworks, provenance, and roadmap.</li>
+      <li>User exports or downloads the report PDF and accesses archived reports through the reports page.</li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>5. Functional Requirements</h2>
+    <h3>5.1 Authentication and session management</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Requirement</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>FR-001</td><td>The system shall support user registration, login, logout, and refresh-token session continuation.</td></tr>
+        <tr><td>FR-002</td><td>The system shall support Google and GitHub OAuth login when provider credentials are configured.</td></tr>
+        <tr><td>FR-003</td><td>The frontend shall expose provider availability truthfully rather than showing unavailable providers as usable.</td></tr>
+        <tr><td>FR-004</td><td>All authenticated analysis and report endpoints shall enforce user ownership checks.</td></tr>
+      </tbody>
+    </table>
+
+    <h3>5.2 Analysis creation and orchestration</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Requirement</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>FR-005</td><td>The system shall capture the strategic question, organization, industry, geography, and decision type as analysis context.</td></tr>
+        <tr><td>FR-006</td><td>The backend shall create an analysis record before pipeline execution and persist lifecycle timestamps and status.</td></tr>
+        <tr><td>FR-007</td><td>The pipeline shall execute all 8 agents in sequence and persist agent logs and event traces.</td></tr>
+        <tr><td>FR-008</td><td>The synthesis stage shall validate the final brief shape before marking an analysis completed.</td></tr>
+        <tr><td>FR-009</td><td>The backend shall sanitize non-JSON-safe payloads before persistence to avoid analysis stalls at completion time.</td></tr>
+        <tr><td>FR-010</td><td>The system shall expose analysis events for live progress rendering via the analysis events endpoint.</td></tr>
+      </tbody>
+    </table>
+
+    <h3>5.3 Live LLM behavior</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Requirement</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>FR-011</td><td>The system shall use live model outputs in production when a valid provider configuration is present.</td></tr>
+        <tr><td>FR-012</td><td>The system shall fail loudly if production live-provider output is unavailable and silent fallback is disabled.</td></tr>
+        <tr><td>FR-013</td><td>The system shall mark analyses and agent logs with <span class="mono">used_fallback</span> when fallback is intentionally used.</td></tr>
+        <tr><td>FR-014</td><td>The synthesis agent shall use compact live prompts and a smaller repair retry path before surfacing a provider failure.</td></tr>
+      </tbody>
+    </table>
+
+    <h3>5.4 Strategic brief presentation</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Requirement</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>FR-015</td><td>The analysis detail view shall display decision banner, confidence, executive summary, framework views, roadmap, and collaboration graph.</td></tr>
+        <tr><td>FR-016</td><td>The analysis detail view shall surface fallback warnings when any part of the analysis used fallback mode.</td></tr>
+        <tr><td>FR-017</td><td>The UI shall remain stable for reading once an analysis is completed, without repeated auto-scroll, graph churn, or destructive refresh behavior.</td></tr>
+        <tr><td>FR-018</td><td>The reports page shall provide report archive, confidence, status, and download access for completed analyses.</td></tr>
+        <tr><td>FR-019</td><td>The PDF export route shall generate a board-ready report from the validated strategic brief and report metadata.</td></tr>
+      </tbody>
+    </table>
+
+    <h3>5.5 Quality and decision support</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Requirement</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>FR-020</td><td>The system shall produce a quality report with grade, checks, and normalized scores for MECE, consistency, context specificity, financial grounding, and execution specificity.</td></tr>
+        <tr><td>FR-021</td><td>The system shall normalize decision and overall confidence values to the unit interval before persistence and rendering.</td></tr>
+        <tr><td>FR-022</td><td>The system shall maintain framework completeness across the required eight strategic frameworks in the final brief.</td></tr>
+        <tr><td>FR-023</td><td>The system shall persist citations, exhibit metadata, and collaboration events to support provenance and explainability.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>6. Data Requirements</h2>
+    <h3>6.1 Core entities</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Entity</th>
+          <th>Purpose</th>
+          <th>Key fields</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Organisation</td>
+          <td>Tenant/account grouping for users and analyses.</td>
+          <td>ID, name, domain, plan, timestamps.</td>
+        </tr>
+        <tr>
+          <td>User</td>
+          <td>Application user with auth state and profile context.</td>
+          <td>Email, password hash, OAuth IDs, organization, plan, analysis count, last login.</td>
+        </tr>
+        <tr>
+          <td>Analysis</td>
+          <td>Primary analysis lifecycle record.</td>
+          <td>Query, context, status, pipeline version, used_fallback, confidence, strategic_brief, error message, duration.</td>
+        </tr>
+        <tr>
+          <td>AgentLog</td>
+          <td>Per-agent execution trace and cost/usage record.</td>
+          <td>Agent ID, event type, model used, confidence, tokens, cost, duration, used_fallback, parsed_output.</td>
+        </tr>
+        <tr>
+          <td>AnalysisEvent</td>
+          <td>Fine-grained UI progress/event stream.</td>
+          <td>Event name, payload, timestamp.</td>
+        </tr>
+        <tr>
+          <td>Report</td>
+          <td>Durable report artifact and PDF status tracker.</td>
+          <td>Strategic brief JSON, evaluation JSON, PDF URL/status/progress/error.</td>
+        </tr>
+        <tr>
+          <td>MemoryRecord</td>
+          <td>User-scoped profile or memory context.</td>
+          <td>Scope, key, value, timestamps.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>6.2 Strategic brief schema requirements</h3>
+    <ul>
+      <li>The final brief shall include eight framework outputs keyed by their canonical framework names.</li>
+      <li>The decision statement shall begin with <span class="mono">PROCEED</span>, <span class="mono">CONDITIONAL PROCEED</span>, or <span class="mono">DO NOT PROCEED</span>.</li>
+      <li>The brief shall include executive summary, quality report, implementation roadmap, exhibit registry, citations, balanced scorecard, and contextual analysis sections.</li>
+      <li>The brief shall support enriched financial, market, risk, and strategic pathway structures introduced in the current hardened version.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>7. Interface Requirements</h2>
+    <h3>7.1 External interfaces</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Interface</th>
+          <th>Purpose</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>REST API</td><td>Authentication, analysis lifecycle, reports, memory, health, metrics.</td></tr>
+        <tr><td>OAuth providers</td><td>Google and GitHub authentication callbacks and user profile retrieval.</td></tr>
+        <tr><td>LLM providers</td><td>LiteLLM proxy or direct Groq API for JSON strategic agent outputs.</td></tr>
+        <tr><td>PDF renderer</td><td>Puppeteer-based HTML-to-PDF report generation path.</td></tr>
+      </tbody>
+    </table>
+
+    <h3>7.2 Internal interfaces</h3>
+    <ul>
+      <li>Next.js same-origin API proxy route for browser-safe backend access under <span class="mono">/api/v1/...</span>.</li>
+      <li>Backend analysis event persistence and frontend polling/stream consumption for live progress views.</li>
+      <li>Shared JSON schema contract between backend strategic brief generation and frontend visualization panels.</li>
+    </ul>
+
+    <h3>7.3 User interface requirements</h3>
+    <ul>
+      <li>The dashboard shall present recent analyses, launch entry points, and premium product framing.</li>
+      <li>The new-analysis page shall support query drafting, context fields, and quality guidance.</li>
+      <li>The live-analysis page shall display per-agent status, progress, and failure messages without exposing raw backend stack traces.</li>
+      <li>The analysis detail page shall provide board-style reading experience with decision-first hierarchy and expandable evidence.</li>
+      <li>The reports page shall act as an archive and retrieval interface for completed reports and downloads.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>8. Non-Functional Requirements</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Requirement</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>NFR-001</td><td>The system shall preserve user-specific data boundaries through authenticated route protection and ownership checks.</td></tr>
+        <tr><td>NFR-002</td><td>The system shall reject obviously weak JWT secrets in production mode.</td></tr>
+        <tr><td>NFR-003</td><td>The system shall expose truthful provider availability and fallback state to avoid misleading enterprise users.</td></tr>
+        <tr><td>NFR-004</td><td>The system shall support same-origin frontend/backend interaction to reduce browser CORS failures in deployed environments.</td></tr>
+        <tr><td>NFR-005</td><td>The system shall tolerate malformed or legacy persisted records without taking down dashboards or report listings.</td></tr>
+        <tr><td>NFR-006</td><td>The system shall complete frontend production build and TypeScript validation without errors.</td></tr>
+        <tr><td>NFR-007</td><td>The backend test suite shall cover agent wiring, analysis lifecycle, fallback semantics, and synthesis recovery paths.</td></tr>
+        <tr><td>NFR-008</td><td>The production system should run behind HTTPS/TLS before full enterprise rollout.</td></tr>
+        <tr><td>NFR-009</td><td>The system should provide operational observability through health, metrics, logs, token/cost tracking, and provider-level error visibility.</td></tr>
+        <tr><td>NFR-010</td><td>The system should support responsive behavior for desktop and smaller viewport widths without loss of core functionality.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>9. Deployment and Operations Requirements</h2>
+    <h3>9.1 Environment requirements</h3>
+    <ul>
+      <li><span class="mono">GROQ_API_KEY</span> must be present or a working LiteLLM proxy must be configured for live production analysis.</li>
+      <li><span class="mono">ASIS_DEMO_MODE</span> must be <span class="mono">false</span> in production.</li>
+      <li><span class="mono">ALLOW_LLM_FALLBACK</span> must be <span class="mono">false</span> in production to prevent silent template-mode responses.</li>
+      <li><span class="mono">NEXT_PUBLIC_API_URL</span> shall point to the frontend same-origin surface for browser traffic on the GCP single-VM path.</li>
+      <li>OAuth requires Google/GitHub client IDs, secrets, and callback URLs before it can be considered live-ready.</li>
+    </ul>
+
+    <h3>9.2 GCP free-tier deployment assumptions</h3>
+    <ul>
+      <li>The current deployment path uses a single VM and a free-tier oriented compose file.</li>
+      <li>SQLite is used as the durable store on that VM.</li>
+      <li>Inline analysis execution and lightweight background semantics are preferred over a full distributed worker stack.</li>
+      <li>Redis-dependent paths shall degrade safely when Redis is not provisioned on the free-tier VM.</li>
+    </ul>
+
+    <h3>9.3 Operational quality checks</h3>
+    <ul>
+      <li>Post-deploy health check shall validate backend <span class="mono">/v1/health</span> and frontend <span class="mono">/api/health</span>.</li>
+      <li>Post-deploy smoke test shall validate login, dashboard, new analysis creation, analysis completion, reports listing, and PDF generation.</li>
+      <li>Provider health verification shall confirm analyses complete without fallback banner when live LLM credentials are configured.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>10. Verification and Acceptance Criteria</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Area</th>
+          <th>Acceptance criteria</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Backend integrity</td>
+          <td>Backend tests pass, including agent wiring, fallback semantics, synthesis compact retry path, and analysis lifecycle/report generation.</td>
+        </tr>
+        <tr>
+          <td>Frontend integrity</td>
+          <td>Frontend build passes and type-check passes for the active Next.js application.</td>
+        </tr>
+        <tr>
+          <td>Live analysis</td>
+          <td>An analysis can be created, all eight agents run, synthesis completes, and the user is taken to a finished strategic brief.</td>
+        </tr>
+        <tr>
+          <td>No silent fallback</td>
+          <td>Production analysis shall either use live providers or surface a provider failure explicitly; it shall not silently return template results.</td>
+        </tr>
+        <tr>
+          <td>Reporting</td>
+          <td>Completed analyses appear on reports page and PDF export returns a valid document.</td>
+        </tr>
+        <tr>
+          <td>Auth</td>
+          <td>Email/password auth must be operational; OAuth must either be fully functional or truthfully unavailable until configured.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="summary-box">
+      <strong>Current validation baseline.</strong> The current implementation has been locally validated through backend test execution,
+      frontend production build, and frontend type-check for the active <span class="mono">asis/</span> stack. Live deployment verification remains
+      the gating step for full production sign-off.
+    </div>
+  </section>
+
+  <section>
+    <h2>11. Open Risks and Enterprise Readiness Notes</h2>
+    <ul>
+      <li><span class="pill warn">Open</span> HTTPS/TLS is still an infrastructure requirement for full enterprise rollout.</li>
+      <li><span class="pill warn">Open</span> OAuth requires live provider console setup and callback verification to be production-complete.</li>
+      <li><span class="pill info">Current state</span> Live multi-agent orchestration is now designed to fail loudly instead of silently falling back when provider configuration is broken.</li>
+      <li><span class="pill info">Current state</span> Synthesis has been hardened with compact prompt retry behavior because it is the heaviest stage in the pipeline.</li>
+      <li><span class="pill info">Current state</span> Dashboard, analysis, and reports flows have been hardened against malformed legacy data and same-origin API issues.</li>
+    </ul>
+
+    <h3>11.1 Recommended next controls before enterprise sign-off</h3>
+    <ol>
+      <li>Complete live post-deploy smoke testing on the current GCP VM after the latest backend/frontend commits are deployed.</li>
+      <li>Rotate exposed provider keys and keep active secrets only in GitHub Actions secrets or runtime environment configuration.</li>
+      <li>Add TLS termination and production domain routing.</li>
+      <li>Complete live OAuth testing for Google and GitHub if enterprise SSO is required for launch.</li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>12. Appendix: Current API Surface</h2>
+    <div class="two-col">
+      <div>
+        <h3>Authentication</h3>
+        <ul>
+          <li>POST <span class="mono">/api/v1/auth/register</span></li>
+          <li>POST <span class="mono">/api/v1/auth/login</span></li>
+          <li>POST <span class="mono">/api/v1/auth/refresh</span></li>
+          <li>POST <span class="mono">/api/v1/auth/logout</span></li>
+          <li>GET <span class="mono">/api/v1/auth/me</span></li>
+          <li>GET <span class="mono">/api/v1/auth/providers</span></li>
+          <li>GET <span class="mono">/api/v1/auth/google</span></li>
+          <li>GET <span class="mono">/api/v1/auth/github</span></li>
+        </ul>
+      </div>
+      <div>
+        <h3>Analysis and reports</h3>
+        <ul>
+          <li>POST <span class="mono">/api/v1/analysis</span></li>
+          <li>GET <span class="mono">/api/v1/analysis</span></li>
+          <li>GET <span class="mono">/api/v1/analysis/{id}</span></li>
+          <li>GET <span class="mono">/api/v1/analysis/{id}/events</span></li>
+          <li>GET <span class="mono">/api/v1/reports</span></li>
+          <li>GET <span class="mono">/api/v1/reports/{id}</span></li>
+          <li>POST <span class="mono">/api/v1/reports/{analysis_id}/pdf</span></li>
+          <li>GET <span class="mono">/api/v1/reports/{analysis_id}/pdf/status</span></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="footer">
+      End of document · ASIS v4.1 Software Requirements Specification · Generated from the current implementation snapshot on 21 April 2026.
+    </div>
+  </section>
+</body>
+</html>

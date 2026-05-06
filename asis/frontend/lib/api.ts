@@ -4,6 +4,7 @@ import axios, { type AxiosError, type InternalAxiosRequestConfig } from "axios";
 import { getClientApiBase } from "@/lib/runtime-urls";
 
 const API_BASE = getClientApiBase();
+type JsonMap = Record<string, unknown>;
 
 let accessToken: string | null = null;
 let refreshPromise: Promise<string | null> | null = null;
@@ -131,12 +132,14 @@ export interface AgentCollaborationEvent {
   contribution_summary: string;
 }
 
+export type ReportTheme = "mckinsey" | "bain" | "bcg" | "neutral";
+
 export interface FrameworkOutput {
   framework_name: string;
   agent_author: string;
-  structured_data: Record<string, any>;
+  structured_data: JsonMap;
   narrative: string;
-  citations: Array<Record<string, any>>;
+  citations: JsonMap[];
   confidence_score: number;
   exhibit_number: number;
   exhibit_title: string;
@@ -224,6 +227,18 @@ export interface ReportMetadata {
   disclaimer: string;
 }
 
+export interface AnalysisMeta {
+  fatal_invalidation_count: number;
+  major_invalidation_count: number;
+  recommendation_downgraded: boolean;
+  original_recommendation?: string | null;
+  three_options?: Array<Record<string, unknown>> | null;
+  build_vs_buy_verdict?: string | null;
+  recommended_option?: string | null;
+  confidence_breakdown?: Record<string, unknown> | null;
+  has_blocking_warnings?: boolean;
+}
+
 export interface StrategicBriefV4 {
   decision_statement: string;
   decision_confidence: number;
@@ -245,14 +260,17 @@ export interface StrategicBriefV4 {
   recommendation: string;
   overall_confidence: number;
   frameworks_applied: string[];
-  context: Record<string, any>;
-  market_analysis: Record<string, any>;
-  financial_analysis: Record<string, any>;
-  risk_analysis: Record<string, any>;
-  red_team: Record<string, any>;
-  verification: Record<string, any>;
+  context: JsonMap;
+  market_analysis: JsonMap;
+  financial_analysis: JsonMap;
+  risk_analysis: JsonMap;
+  red_team: JsonMap;
+  verification: JsonMap;
   roadmap: RoadmapItem[];
-  citations: Array<Record<string, any>>;
+  citations: JsonMap[];
+  analysis_meta?: AnalysisMeta;
+  evidence_contract?: JsonMap;
+  export_validation?: JsonMap;
 }
 
 export interface DecisionPayload {
@@ -263,17 +281,18 @@ export interface DecisionPayload {
 }
 
 export interface PdfStatus {
-  status: "generating" | "ready" | "error";
+  status: "generating" | "ready" | "error" | "blocked";
   progress: number;
   error?: string | null;
 }
 
 export interface Analysis {
   id: string;
+  analysis_id?: string;
   query: string;
   company_context: Record<string, unknown>;
   extracted_context: Record<string, unknown>;
-  status: "queued" | "running" | "completed" | "failed";
+  status: "queued" | "running" | "completed" | "failed" | "cancelled";
   current_agent?: string | null;
   pipeline_version: string;
   used_fallback?: boolean;
@@ -286,22 +305,33 @@ export interface Analysis {
   total_cost_usd?: number | null;
   created_at: string;
   completed_at?: string | null;
-  strategic_brief?: Record<string, any> | StrategicBriefV4 | null;
+  strategic_brief?: JsonMap | StrategicBriefV4 | null;
   logic_consistency_passed?: boolean | null;
   self_correction_count?: number;
+  fatal_invalidation_count?: number;
+  major_invalidation_count?: number;
+  recommendation_downgraded?: boolean;
+  original_recommendation?: string | null;
+  three_options?: Array<Record<string, unknown>> | null;
+  build_vs_buy_verdict?: string | null;
+  recommended_option?: string | null;
+  confidence_breakdown?: Record<string, unknown> | null;
+  has_blocking_warnings?: boolean;
   agent_logs?: AgentLog[];
   report_id?: string | null;
-}
-
-export interface Report {
-  id: string;
-  analysis_id: string;
-  user_id: string;
-  strategic_brief: Record<string, any> | StrategicBriefV4;
-  evaluation?: Record<string, any> | null;
+  report_version?: number;
   pdf_url?: string | null;
   pdf_status?: string | null;
   pdf_progress?: number | null;
+  updated_at?: string;
+  user_id?: string;
+}
+
+export interface Report extends Analysis {
+  analysis_id: string;
+  user_id: string;
+  strategic_brief: JsonMap | StrategicBriefV4;
+  evaluation?: JsonMap | null;
   pdf_error?: string | null;
   pdf_generated_at?: string | null;
   report_version: number;
@@ -313,7 +343,7 @@ export interface MemoryEntry {
   id: string;
   scope: string;
   key: string;
-  value: Record<string, any>;
+  value: Record<string, unknown>;
   created_at: string;
   updated_at: string;
 }
@@ -350,13 +380,14 @@ export const reportsAPI = {
   frameworks: (analysisId: string) => api.get(`/api/v1/reports/${analysisId}/frameworks`),
   collaboration: (analysisId: string) => api.get(`/api/v1/reports/${analysisId}/collaboration`),
   decision: (analysisId: string) => api.get(`/api/v1/reports/${analysisId}/decision`),
-  pdf: (analysisId: string) => api.post(`/api/v1/reports/${analysisId}/pdf`, {}, { responseType: "blob" }),
+  pdf: (analysisId: string, theme?: ReportTheme) =>
+    api.post(`/api/v1/reports/${analysisId}/pdf`, theme ? { theme } : {}, { responseType: "blob" }),
   pdfStatus: (analysisId: string) => api.get(`/api/v1/reports/${analysisId}/pdf/status`),
   remove: (id: string) => api.delete(`/api/v1/reports/${id}`),
 };
 
 export const memoryAPI = {
   list: () => api.get("/api/v1/memory"),
-  upsert: (payload: { scope: string; key: string; value: Record<string, any> }) => api.post("/api/v1/memory", payload),
+  upsert: (payload: { scope: string; key: string; value: JsonMap }) => api.post("/api/v1/memory", payload),
   clear: () => api.delete("/api/v1/memory"),
 };

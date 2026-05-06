@@ -151,6 +151,7 @@ class V4EnterpriseWorkflow:
                     {
                         "analysis_id": analysis.id,
                         "message": public_message,
+                        "current_agent": analysis.current_agent,
                         "timestamp_ms": now_ms(),
                     },
                 )
@@ -321,6 +322,7 @@ class V4EnterpriseWorkflow:
         active_state = dict(state)
         attempts = int(state.get("quality_retry_count") or 0)
         quality_report_payload: dict | None = None
+        final_quality_report = None
 
         while True:
             result = self._run_visible_agent(
@@ -331,7 +333,8 @@ class V4EnterpriseWorkflow:
                 dependencies,
             )
             brief = StrategicBriefV4.model_validate(result["synthesis_output"])
-            quality_report = asyncio.run(self.quality_gate.validate(brief, retry_count=attempts))
+            quality_report = asyncio.run(self.quality_gate.validate(brief, retry_count=attempts, scope="pipeline"))
+            final_quality_report = quality_report
             quality_report_payload = quality_report.model_dump(mode="json")
             synthesis_output = brief.model_dump(mode="json")
             synthesis_output["quality_report"] = quality_report_payload
@@ -353,6 +356,17 @@ class V4EnterpriseWorkflow:
                     if check.level == "BLOCK" and not check.passed
                 ],
             }
+
+        if final_quality_report and self.quality_gate.has_block_failures(final_quality_report):
+            failed_checks = [
+                check.notes or check.id
+                for check in final_quality_report.checks
+                if check.level == "BLOCK" and not check.passed
+            ]
+            raise RuntimeError(
+                "ASIS could not validate the final strategic brief after quality retries: "
+                + "; ".join(failed_checks[:4])
+            )
 
         publish_analysis_event(
             state["analysis_id"],

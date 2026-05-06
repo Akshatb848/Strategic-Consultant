@@ -23,3 +23,7 @@ asis_v4.db
 *.db-journal
 prisma/*.db
 prisma/*.db-journal
+# ── Deployed environment files (secrets injected via CI/CD) ──────────────────
+asis/backend/.env
+asis/backend/.env.local
+asis/frontend/.env.local

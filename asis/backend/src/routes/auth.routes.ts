@@ -1,7 +1,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import passport from 'passport';
+import passport, { type Profile as PassportProfile } from 'passport';
 import { Strategy as GoogleStrategy } from 'passport-google-oauth20';
 import { Strategy as GitHubStrategy } from 'passport-github2';
 import { prisma } from '../lib/database';
@@ -12,13 +12,14 @@ const router = Router();
 
 let googleConfigured = !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
 let githubConfigured = !!(process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET);
+type OAuthDone = (error: Error | null, user?: Express.User | false) => void;
 
 if (googleConfigured) {
   passport.use(new GoogleStrategy({
     clientID: process.env.GOOGLE_CLIENT_ID!,
     clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
     callbackURL: process.env.GOOGLE_CALLBACK_URL!,
-  }, async (_accessToken, _refreshToken, profile, done) => {
+  }, async (_accessToken: string, _refreshToken: string, profile: PassportProfile, done: OAuthDone) => {
     try {
       let user = await prisma.user.findFirst({ where: { OR: [{ googleId: profile.id }, { email: profile.emails?.[0]?.value || '' }] } });
       if (!user && profile.emails?.[0]?.value) {
@@ -33,7 +34,7 @@ if (googleConfigured) {
           }
         });
       }
-      done(null, user);
+      done(null, user ?? false);
     } catch (err) { done(err as Error); }
   }));
 }
@@ -44,7 +45,7 @@ if (githubConfigured) {
     clientSecret: process.env.GITHUB_CLIENT_SECRET!,
     callbackURL: process.env.GITHUB_CALLBACK_URL!,
     scope: ['user:email'],
-  }, async (_accessToken, _refreshToken, profile, done) => {
+  }, async (_accessToken: string, _refreshToken: string, profile: PassportProfile, done: OAuthDone) => {
     try {
       const email = profile.emails?.[0]?.value;
       let user = await prisma.user.findFirst({ where: { OR: [{ githubId: profile.id }, { email: email || '' }] } });
@@ -61,7 +62,7 @@ if (githubConfigured) {
           }
         });
       }
-      done(null, user);
+      done(null, user ?? false);
     } catch (err) { done(err as Error); }
   }));
 }

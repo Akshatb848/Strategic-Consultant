@@ -255,7 +255,11 @@ function AnalysisDetailContent() {
   const displayQuality = qualityReport || brief.quality_report;
   const supportingFrameworkKeys = uniqueSupportingFrameworks(collaborationEvents, displayFrameworks);
   const supportingFrameworkLabels = supportingFrameworkKeys.map((framework) => frameworkDisplayName(framework));
-  const context = brief.context || analysis.extracted_context || analysis.company_context || {};
+  const context = (brief.context || analysis.extracted_context || analysis.company_context || {}) as Record<string, unknown>;
+  const geographyLabel =
+    typeof context.geography === "string" && context.geography.trim().length > 0
+      ? context.geography
+      : "Target market";
 
   const handleShare = async () => {
     const url = `${window.location.origin}/analysis/${analysis.id}`;
@@ -283,25 +287,26 @@ function AnalysisDetailContent() {
               <div className="space-y-2">
                 <div className="flex flex-wrap gap-3 text-xs uppercase tracking-[0.18em] text-slate-500">
                   <span>{brief.report_metadata.company_name}</span>
-                  <span>{context.geography || "Target market"}</span>
+                  <span>{geographyLabel}</span>
                   <span>{new Date(analysis.created_at).toLocaleDateString()}</span>
                 </div>
                 <h1 className="text-xl font-semibold text-slate-50">{sectionActionTitles.decision || truncate(analysis.query, 110)}</h1>
-                <div className="text-sm text-slate-400">{truncate(analysis.query, 140)}</div>
+                <p className="max-w-3xl text-sm leading-7 text-slate-400">
+                  Executive narrative, framework evidence, and exportable report pack generated from the active ASIS pipeline.
+                </p>
               </div>
-
-              <div className="grid gap-3 lg:grid-cols-[minmax(220px,260px),auto]">
-                <QualityBadge quality={displayQuality} />
-                <div className="flex flex-wrap items-start justify-end gap-2">
-                  <button type="button" onClick={handleShare} className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-slate-200">
-                    <Share2 size={14} />Share
-                  </button>
-                  <button type="button" onClick={() => window.print()} className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-slate-200">
-                    <Printer size={14} />Print
-                  </button>
-                  <Link href="/new-analysis" className="inline-flex items-center rounded-full bg-slate-100 px-4 py-2 text-xs font-semibold text-slate-950">
-                    New Analysis
-                  </Link>
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3">
+                  <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Confidence</div>
+                  <div className="mt-2 text-lg font-semibold text-slate-50">{normalizedPercent(brief.decision_confidence)}%</div>
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3">
+                  <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Frameworks</div>
+                  <div className="mt-2 text-lg font-semibold text-slate-50">{Object.keys(displayFrameworks).length}</div>
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3">
+                  <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Quality</div>
+                  <div className="mt-2 text-lg font-semibold text-slate-50">{displayQuality.overall_grade}</div>
                 </div>
               </div>
             </div>
@@ -449,6 +454,9 @@ function AnalysisDetailContent() {
             <button type="button" onClick={handleShare} className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-3 text-sm font-semibold text-slate-200">
               <Share2 size={15} />Share Analysis
             </button>
+            <Link href={`/reports/${analysis.id}`} className="inline-flex items-center rounded-full border border-white/10 bg-white/5 px-4 py-3 text-sm font-semibold text-slate-200">
+              Board-ready report
+            </Link>
             <Link href="/new-analysis" className="inline-flex items-center rounded-full border border-white/10 bg-white/5 px-4 py-3 text-sm font-semibold text-slate-200">
               Start New
             </Link>
@@ -525,11 +533,4 @@ function V4AnalysisLoadingView({
                   </div>
                   <div className="mt-2 text-xs text-slate-500">{log?.duration_ms != null ? `${log.duration_ms} ms` : "Waiting"}</div>
                 </div>
-              );
-            })}
-          </div>
-        </section>
-      </div>
-    </div>
-  );
-}
+              );

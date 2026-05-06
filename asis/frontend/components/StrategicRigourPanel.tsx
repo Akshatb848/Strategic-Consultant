@@ -8,6 +8,22 @@ interface StrategicRigourPanelProps {
   quality?: QualityReport | null;
 }
 
+type JsonRecord = Record<string, unknown>;
+
+function asRecord(value: unknown): JsonRecord {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : {};
+}
+
+function asRecordArray(value: unknown): JsonRecord[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is JsonRecord => Boolean(item) && typeof item === "object" && !Array.isArray(item))
+    : [];
+}
+
+function asStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0) : [];
+}
+
 function asNumber(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value === "string") {
@@ -42,27 +58,27 @@ function signalBar(score?: number | null) {
 }
 
 export function StrategicRigourPanel({ brief, quality }: StrategicRigourPanelProps) {
-  const marketAnalysis = brief.market_analysis || {};
-  const financialAnalysis = brief.financial_analysis || {};
-  const riskAnalysis = brief.risk_analysis || {};
+  const marketAnalysis = asRecord(brief.market_analysis);
+  const financialAnalysis = asRecord(brief.financial_analysis);
+  const riskAnalysis = asRecord(brief.risk_analysis);
 
-  const bottomUp = financialAnalysis.bottom_up_revenue_model || {};
-  const sectorBuild = Array.isArray(bottomUp.sector_build) ? bottomUp.sector_build : [];
-  const assumptions = Array.isArray(bottomUp.key_assumptions) ? bottomUp.key_assumptions : [];
+  const bottomUp = asRecord(financialAnalysis.bottom_up_revenue_model);
+  const sectorBuild = asRecordArray(bottomUp.sector_build);
+  const assumptions = asStringArray(bottomUp.key_assumptions);
 
-  const scenarioAnalysis = financialAnalysis.scenario_analysis || {};
-  const scenarios = Array.isArray(scenarioAnalysis.scenarios) ? scenarioAnalysis.scenarios : [];
+  const scenarioAnalysis = asRecord(financialAnalysis.scenario_analysis);
+  const scenarios = asRecordArray(scenarioAnalysis.scenarios);
   const recommendedCase = String(scenarioAnalysis.recommended_case || "Base");
 
-  const pathways = marketAnalysis.strategic_pathways || {};
-  const pathwayOptions = Array.isArray(pathways.options) ? pathways.options : [];
+  const pathways = asRecord(marketAnalysis.strategic_pathways);
+  const pathwayOptions = asRecordArray(pathways.options);
 
-  const capabilityFit = marketAnalysis.capability_fit_matrix || {};
-  const capabilityRows = Array.isArray(capabilityFit.rows) ? capabilityFit.rows : [];
-  const criticalGaps = Array.isArray(capabilityFit.critical_gaps) ? capabilityFit.critical_gaps : [];
+  const capabilityFit = asRecord(marketAnalysis.capability_fit_matrix);
+  const capabilityRows = asRecordArray(capabilityFit.rows);
+  const criticalGaps = asStringArray(capabilityFit.critical_gaps);
 
-  const executionRealism = riskAnalysis.execution_realism || {};
-  const executionItems = Array.isArray(executionRealism.items) ? executionRealism.items : [];
+  const executionRealism = asRecord(riskAnalysis.execution_realism);
+  const executionItems = asRecordArray(executionRealism.items);
 
   return (
     <section className="rounded-3xl border border-white/10 bg-[#08101d] p-5">
@@ -126,7 +142,7 @@ export function StrategicRigourPanel({ brief, quality }: StrategicRigourPanelPro
                 </tr>
               </thead>
               <tbody>
-                {sectorBuild.map((entry: Record<string, unknown>) => (
+                {sectorBuild.map((entry) => (
                   <tr key={String(entry.sector)} className="border-t border-white/10">
                     <td className="py-3 pr-4">
                       <div className="font-medium text-slate-100">{String(entry.sector || "-")}</div>
@@ -145,7 +161,7 @@ export function StrategicRigourPanel({ brief, quality }: StrategicRigourPanelPro
 
           {assumptions.length > 0 ? (
             <div className="mt-5 flex flex-wrap gap-2">
-              {assumptions.map((assumption: string) => (
+              {assumptions.map((assumption) => (
                 <span key={assumption} className="rounded-full border border-white/10 bg-black/20 px-3 py-2 text-xs text-slate-300">
                   {assumption}
                 </span>
@@ -165,7 +181,7 @@ export function StrategicRigourPanel({ brief, quality }: StrategicRigourPanelPro
           </p>
 
           <div className="mt-5 space-y-3">
-            {scenarios.map((scenario: Record<string, unknown>) => {
+            {scenarios.map((scenario) => {
               const isRecommended = String(scenario.name || "").toLowerCase() === recommendedCase.toLowerCase();
               return (
                 <div
@@ -217,7 +233,7 @@ export function StrategicRigourPanel({ brief, quality }: StrategicRigourPanelPro
             {String(pathways.summary || "Strategic pathways are used to compare speed, optionality, and execution strain before making a board-level commitment.")}
           </p>
           <div className="mt-5 space-y-3">
-            {pathwayOptions.map((option: Record<string, unknown>) => (
+            {pathwayOptions.map((option) => (
               <div
                 key={String(option.name)}
                 className={`rounded-2xl border p-4 ${option.recommended ? "border-emerald-400/30 bg-emerald-400/10" : "border-white/10 bg-black/20"}`}
@@ -281,7 +297,7 @@ export function StrategicRigourPanel({ brief, quality }: StrategicRigourPanelPro
                 </tr>
               </thead>
               <tbody>
-                {capabilityRows.map((row: Record<string, unknown>) => {
+                {capabilityRows.map((row) => {
                   const critical = String(row.priority || "").toLowerCase() === "critical";
                   return (
                     <tr key={String(row.capability)} className={`border-t ${critical ? "border-rose-400/20" : "border-white/10"}`}>
@@ -318,7 +334,7 @@ export function StrategicRigourPanel({ brief, quality }: StrategicRigourPanelPro
             </div>
           </div>
           <div className="mt-5 space-y-3">
-            {executionItems.map((item: Record<string, unknown>) => (
+            {executionItems.map((item) => (
               <div key={String(item.factor)} className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4">
                 <div className="text-sm font-semibold text-slate-100">{String(item.factor || "-")}</div>
                 <div className="mt-2 text-xs uppercase tracking-[0.14em] text-slate-500">Baseline</div>

@@ -3,13 +3,14 @@
 import { useState } from "react";
 import { Download, Loader2 } from "lucide-react";
 
-import { reportsAPI } from "@/lib/api";
+import { reportsAPI, type ReportTheme } from "@/lib/api";
 
 interface ReportDownloadButtonProps {
   analysisId: string;
+  theme?: ReportTheme;
 }
 
-export function ReportDownloadButton({ analysisId }: ReportDownloadButtonProps) {
+export function ReportDownloadButton({ analysisId, theme }: ReportDownloadButtonProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -17,7 +18,7 @@ export function ReportDownloadButton({ analysisId }: ReportDownloadButtonProps) 
     setLoading(true);
     setError(null);
     try {
-      const response = await reportsAPI.pdf(analysisId);
+      const response = await reportsAPI.pdf(analysisId, theme);
       const blob = new Blob([response.data], { type: "application/pdf" });
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
@@ -27,8 +28,15 @@ export function ReportDownloadButton({ analysisId }: ReportDownloadButtonProps) 
       link.download = match?.[1] || `ASIS_${analysisId}.pdf`;
       link.click();
       URL.revokeObjectURL(url);
-    } catch (caughtError: any) {
-      setError(caughtError?.response?.data?.detail || "PDF generation failed.");
+    } catch (caughtError: unknown) {
+      const detail =
+        typeof caughtError === "object" &&
+        caughtError &&
+        "response" in caughtError &&
+        typeof (caughtError as { response?: { data?: unknown } }).response?.data === "string"
+          ? (caughtError as { response?: { data?: string } }).response?.data
+          : null;
+      setError(detail || "PDF generation failed.");
     } finally {
       setLoading(false);
     }

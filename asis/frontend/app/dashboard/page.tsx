@@ -26,9 +26,6 @@ function DashboardShell() {
   const { user, logout } = useAuth();
   const [analyses, setAnalyses] = useState<Analysis[]>([]);
   const [loading, setLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [hasMore, setHasMore] = useState(false);
-  const [offset, setOffset] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [memoryWarning, setMemoryWarning] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -41,19 +38,14 @@ function DashboardShell() {
     annual_revenue_usd_mn: "",
   });
 
-  const PAGE_SIZE = 20;
-
   useEffect(() => {
     let active = true;
-    void Promise.allSettled([analysesAPI.list({ limit: PAGE_SIZE, offset: 0 }), memoryAPI.list()])
+    void Promise.allSettled([analysesAPI.list({ limit: 200 }), memoryAPI.list()])
       .then(([analysisResult, memoryResult]) => {
         if (!active) return;
 
         if (analysisResult.status === "fulfilled") {
-          const fetched: Analysis[] = analysisResult.value.data.analyses;
-          setAnalyses(fetched);
-          setOffset(fetched.length);
-          setHasMore(fetched.length === PAGE_SIZE);
+          setAnalyses(analysisResult.value.data.analyses);
           setError(null);
         } else {
           setError("Unable to load your analyses right now.");
@@ -104,21 +96,6 @@ function DashboardShell() {
     ? Math.round(confidenceValues.reduce((sum, value) => sum + value, 0) / confidenceValues.length)
     : 0;
   const proceedCount = analyses.filter((item) => item.decision_recommendation === "PROCEED").length;
-
-  async function loadMore() {
-    setLoadingMore(true);
-    try {
-      const result = await analysesAPI.list({ limit: PAGE_SIZE, offset });
-      const fetched: Analysis[] = result.data.analyses;
-      setAnalyses((current) => [...current, ...fetched]);
-      setOffset((current) => current + fetched.length);
-      setHasMore(fetched.length === PAGE_SIZE);
-    } catch {
-      // silently fail — existing list is still usable
-    } finally {
-      setLoadingMore(false);
-    }
-  }
 
   async function persistProfileMemory(key: string, value: Record<string, any>) {
     try {
@@ -313,7 +290,6 @@ function DashboardShell() {
                   <div className="mt-2 text-sm text-slate-400">Start a new strategic review to populate the dashboard.</div>
                 </div>
               ) : (
-                <>
                 <div className="grid gap-4">
                   {filtered.map((analysis, idx) => (
                     <motion.div
@@ -324,6 +300,7 @@ function DashboardShell() {
                     >
                     <Link
                       href={`/analysis/${analysis.id}`}
+                      prefetch={false}
                       className="group block rounded-[26px] border border-white/8 bg-white/[0.03] p-5 transition hover:border-white/14 hover:bg-white/[0.05] hover:shadow-[0_8px_32px_rgba(0,0,0,0.3)]"
                     >
                       <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
@@ -357,7 +334,7 @@ function DashboardShell() {
                           <div className="mt-4 flex flex-wrap items-center gap-4 text-xs text-slate-500">
                             <span>{formatDistanceToNow(new Date(analysis.created_at), { addSuffix: true })}</span>
                             {analysis.duration_seconds != null ? <span>{Math.round(analysis.duration_seconds)}s runtime</span> : null}
-                            {analysis.total_cost_usd != null ? <span>${analysis.total_cost_usd.toFixed(4)} est. cost</span> : null}
+                            {analysis.total_cost_usd != null ? <span>${analysis.total_cost_usd.toFixed(4)} cost</span> : null}
                             <span>Pipeline {analysis.pipeline_version}</span>
                           </div>
                         </div>
@@ -380,19 +357,6 @@ function DashboardShell() {
                     </motion.div>
                   ))}
                 </div>
-                {hasMore && !search.trim() ? (
-                  <div className="mt-4 flex justify-center">
-                    <button
-                      type="button"
-                      onClick={() => void loadMore()}
-                      disabled={loadingMore}
-                      className="rounded-full border border-white/10 bg-white/[0.04] px-6 py-3 text-sm font-semibold text-slate-300 transition hover:border-white/20 hover:bg-white/[0.07] disabled:opacity-50"
-                    >
-                      {loadingMore ? "Loading..." : "Load more"}
-                    </button>
-                  </div>
-                ) : null}
-                </>
               )}
             </section>
           </div>
@@ -536,8 +500,4 @@ function ProfileField({
       <input
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="w-full rounded-[18px] border border-white/8 bg-white/[0.04] px-4 py-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-cyan-300/40"
-      />
-    </label>
-  );
-}
+        className="w-full rounded-[18px] bo

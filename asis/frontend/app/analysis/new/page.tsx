@@ -9,7 +9,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { analysesAPI, memoryAPI } from "@/lib/api";
 import { subscribeToAnalysisEvents } from "@/lib/sse";
 
-type AgentStatus = "pending" | "in_progress" | "completed";
+type AgentStatus = "pending" | "in_progress" | "completed" | "failed";
 
 const PIPELINE = [
   { id: "orchestrator", label: "Orchestrator", message: "Framing the board question and routing the specialist agents..." },
@@ -39,6 +39,21 @@ function completedStatuses(): Record<string, AgentStatus> {
   return Object.fromEntries(PIPELINE.map((step) => [step.id, "completed"])) as Record<string, AgentStatus>;
 }
 
+function markFailedStatus(
+  current: Record<string, AgentStatus>,
+  failedAgent?: string | null,
+): Record<string, AgentStatus> {
+  const next = { ...current };
+  const explicitAgent = failedAgent && failedAgent in next ? failedAgent : null;
+  const inferredAgent =
+    explicitAgent ||
+    [...PIPELINE].reverse().find((step) => next[step.id] === "in_progress")?.id ||
+    [...PIPELINE].reverse().find((step) => next[step.id] !== "completed")?.id ||
+    "synthesis";
+  next[inferredAgent] = "failed";
+  return next;
+}
+
 function statusesFromAnalysis(analysis: {
   status?: string | null;
   current_agent?: string | null;
@@ -59,6 +74,10 @@ function statusesFromAnalysis(analysis: {
   const currentAgent = String(analysis.current_agent || "");
   if (analysis.status === "running" && currentAgent in next && next[currentAgent] !== "completed") {
     next[currentAgent] = "in_progress";
+  }
+
+  if (analysis.status === "failed") {
+    return markFailedStatus(next, currentAgent || "synthesis");
   }
 
   return next;
@@ -185,6 +204,7 @@ function NewAnalysisContent() {
         if (event.event === "analysis_failed") {
           setError(String(event.data.message || "ASIS could not complete the analysis."));
           setLiveMessage(String(event.data.message || "The analysis failed before the brief was completed."));
+          setStatuses((current) => markFailedStatus(current, String(event.data.current_agent || "synthesis")));
         }
 
         if (event.event === "framework_complete") {
@@ -249,6 +269,8 @@ function NewAnalysisContent() {
     const completed = PIPELINE.filter((step) => statuses[step.id] === "completed").length;
     return Math.round((completed / PIPELINE.length) * 100);
   }, [statuses]);
+  const hasFailed = useMemo(() => PIPELINE.some((step) => statuses[step.id] === "failed"), [statuses]);
+  const displayedProgress = hasFailed ? Math.min(progress, 99) : progress;
 
   const queryQuality = useMemo(() => evaluateQueryQuality(query), [query]);
 
@@ -302,14 +324,23 @@ function NewAnalysisContent() {
                 <p className="mt-4 max-w-3xl text-sm leading-7 text-slate-400">{liveMessage}</p>
               </div>
 
-              <div className="flex items-center gap-3 rounded-full border border-cyan-300/20 bg-cyan-300/10 px-4 py-2 text-sm font-semibold text-cyan-100">
-                <Loader2 size={15} className="animate-spin" />
-                {progress}% complete
+              <div
+                className={`flex items-center gap-3 rounded-full border px-4 py-2 text-sm font-semibold ${
+                  hasFailed ? "border-rose-300/30 bg-rose-400/10 text-rose-100" : "border-cyan-300/20 bg-cyan-300/10 text-cyan-100"
+                }`}
+              >
+                {hasFailed ? null : <Loader2 size={15} className="animate-spin" />}
+                {hasFailed ? "Analysis failed" : `${displayedProgress}% complete`}
               </div>
             </div>
 
             <div className="mt-8 h-2 overflow-hidden rounded-full bg-white/6">
-              <div className="h-full rounded-full bg-[linear-gradient(90deg,#1b6af2,#2dd4bf)] transition-all duration-500" style={{ width: `${progress}%` }} />
+              <div
+                className={`h-full rounded-full transition-all duration-500 ${
+                  hasFailed ? "bg-rose-400" : "bg-[linear-gradient(90deg,#1b6af2,#2dd4bf)]"
+                }`}
+                style={{ width: `${displayedProgress}%` }}
+              />
             </div>
 
             {streamError ? (
@@ -323,11 +354,14 @@ function NewAnalysisContent() {
                 const status = statuses[step.id];
                 const isActive = status === "in_progress";
                 const isComplete = status === "completed";
+                const isFailed = status === "failed";
                 return (
                   <div
                     key={step.id}
                     className={`rounded-[24px] border px-5 py-4 transition ${
-                      isActive
+                      isFailed
+                        ? "border-rose-300/30 bg-rose-400/10"
+                        : isActive
                         ? "border-cyan-300/30 bg-cyan-300/10"
                         : isComplete
                           ? "border-emerald-300/18 bg-emerald-300/10"
@@ -338,7 +372,9 @@ function NewAnalysisContent() {
                       <div className="flex items-center gap-3">
                         <div
                           className={`flex h-9 w-9 items-center justify-center rounded-full text-sm font-semibold ${
-                            isActive
+                            isFailed
+                              ? "bg-rose-200 text-slate-950"
+                              : isActive
                               ? "bg-cyan-200 text-slate-950"
                               : isComplete
                                 ? "bg-emerald-200 text-slate-950"
@@ -354,14 +390,16 @@ function NewAnalysisContent() {
                       </div>
                       <span
                         className={`rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] ${
-                          isActive
+                          isFailed
+                            ? "bg-rose-200 text-slate-950"
+                            : isActive
                             ? "bg-cyan-200 text-slate-950"
                             : isComplete
                               ? "bg-emerald-200 text-slate-950"
                               : "bg-white/8 text-slate-400"
                         }`}
                       >
-                        {status === "in_progress" ? "In Progress" : status === "completed" ? "Completed" : "Pending"}
+                        {status === "failed" ? "Failed" : status === "in_progress" ? "In Progress" : status === "completed" ? "Completed" : "Pending"}
                       </span>
                     </div>
                   </div>

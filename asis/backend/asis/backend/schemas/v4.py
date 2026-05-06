@@ -233,6 +233,8 @@ class StrategicBriefV4(StrategicBrief):
     verification: dict[str, Any] | str
     roadmap: list[RoadmapItem] = Field(default_factory=list)
     citations: list[Citation] = Field(default_factory=list)
+    evidence_contract: dict[str, Any] = Field(default_factory=dict)
+    export_validation: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("decision_statement")
     @classmethod

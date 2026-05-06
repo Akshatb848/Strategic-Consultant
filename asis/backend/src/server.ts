@@ -6,6 +6,7 @@ import rateLimit from 'express-rate-limit';
 import cookieParser from 'cookie-parser';
 import { initSocketIO } from './lib/socketio';
 import { log } from './lib/logger';
+import { isLiveLLMConfigured, isLlmFallbackAllowed } from './lib/llmClient';
 import authRoutes from './routes/auth.routes';
 import analysisRoutes from './routes/analysis.routes';
 import reportsRoutes from './routes/reports.routes';
@@ -72,7 +73,18 @@ app.use('/api/v1/dissertation', dissertationRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/analyses', analysisRoutes);
 
-app.get('/api/v1/health', (_req, res) => res.json({ status: 'ok', version: '4.0.0', environment: process.env.NODE_ENV || 'production', features: ['web-search', 'semantic-memory', 'patent-analysis', 'dissertation-scaffold', 'llm-judge-cove'] }));
+app.get('/api/v1/health', (_req, res) =>
+  res.json({
+    status: 'ok',
+    version: '4.0.0',
+    environment: process.env.NODE_ENV || 'production',
+    llm_provider: 'anthropic',
+    anthropic_configured: isLiveLLMConfigured(),
+    llm_fallback_allowed: isLlmFallbackAllowed(),
+    search_enrichment_configured: Boolean(process.env.BRAVE_SEARCH_API_KEY || process.env.TAVILY_API_KEY),
+    features: ['web-search', 'semantic-memory', 'patent-analysis', 'dissertation-scaffold', 'llm-judge-cove'],
+  })
+);
 app.get('/api/health', (_req, res) => res.json({ status: 'ok', version: '4.0.0', environment: process.env.NODE_ENV || 'production' }));
 
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {

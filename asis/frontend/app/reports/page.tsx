@@ -17,13 +17,23 @@ import {
   qualityGradeColor,
   toCsv,
 } from "@/lib/analysis";
-import { reportsAPI, type QualityReport, type Report } from "@/lib/api";
+import { reportsAPI, type QualityReport, type Report, type StrategicBriefV4 } from "@/lib/api";
+
+function reportBrief(report: Report): StrategicBriefV4 | null {
+  return report.strategic_brief && typeof report.strategic_brief === "object"
+    ? (report.strategic_brief as StrategicBriefV4)
+    : null;
+}
 
 function reportContext(report: Report): string {
-  const context = report.strategic_brief?.context || {};
-  const company = context.company_name || report.strategic_brief?.report_metadata?.company_name || "Unnamed organisation";
-  const sector = context.sector || "sector not specified";
-  const geography = context.geography || "geography not specified";
+  const brief = reportBrief(report);
+  const context = brief?.context as Record<string, unknown> | undefined;
+  const company =
+    (typeof context?.company_name === "string" ? context.company_name : null) ||
+    brief?.report_metadata?.company_name ||
+    "Unnamed organisation";
+  const sector = typeof context?.sector === "string" ? context.sector : "sector not specified";
+  const geography = typeof context?.geography === "string" ? context.geography : "geography not specified";
   return `${company} - ${sector} - ${geography}`;
 }
 
@@ -73,7 +83,7 @@ function ReportsContent() {
   const filteredReports = useMemo(
     () =>
       reports.filter((report) => {
-        const brief = report.strategic_brief || {};
+        const brief = reportBrief(report) || {};
         const recommendation = recommendationBucket(briefRecommendation(brief));
         const haystack = [briefHeadline(brief), briefNarrative(brief), reportContext(report)].join(" ").toLowerCase();
         if (filter !== "all" && recommendation !== filter) return false;
@@ -85,11 +95,11 @@ function ReportsContent() {
 
   const completedReports = reports.filter((report) => report.pdf_status === "ready").length;
   const qualityGrades = reports
-    .map((report) => report.strategic_brief?.quality_report?.overall_grade)
-    .filter((grade): grade is string => typeof grade === "string");
+    .map((report) => reportBrief(report)?.quality_report?.overall_grade)
+    .filter((grade): grade is NonNullable<QualityReport["overall_grade"]> => typeof grade === "string");
   const premiumReports = qualityGrades.filter((grade) => grade === "A" || grade === "B").length;
   const averageConfidence = reports
-    .map((report) => displayConfidence(report.strategic_brief?.overall_confidence))
+    .map((report) => displayConfidence(reportBrief(report)?.overall_confidence))
     .filter((value): value is number => typeof value === "number");
   const avgConfidence = averageConfidence.length
     ? Math.round(averageConfidence.reduce((sum, value) => sum + value, 0) / averageConfidence.length)
@@ -100,12 +110,21 @@ function ReportsContent() {
       filteredReports.map((report) => ({
         id: report.id,
         analysis_id: report.analysis_id,
-        recommendation: briefRecommendation(report.strategic_brief || {}),
-        overall_confidence: displayConfidence(report.strategic_brief?.overall_confidence),
-        quality_grade: report.strategic_brief?.quality_report?.overall_grade,
-        company_name: report.strategic_brief?.context?.company_name,
-        sector: report.strategic_brief?.context?.sector,
-        geography: report.strategic_brief?.context?.geography,
+        recommendation: briefRecommendation(reportBrief(report) || {}),
+        overall_confidence: displayConfidence(reportBrief(report)?.overall_confidence),
+        quality_grade: reportBrief(report)?.quality_report?.overall_grade,
+        company_name:
+          typeof (reportBrief(report)?.context as Record<string, unknown> | undefined)?.company_name === "string"
+            ? ((reportBrief(report)?.context as Record<string, unknown>).company_name as string)
+            : undefined,
+        sector:
+          typeof (reportBrief(report)?.context as Record<string, unknown> | undefined)?.sector === "string"
+            ? ((reportBrief(report)?.context as Record<string, unknown>).sector as string)
+            : undefined,
+        geography:
+          typeof (reportBrief(report)?.context as Record<string, unknown> | undefined)?.geography === "string"
+            ? ((reportBrief(report)?.context as Record<string, unknown>).geography as string)
+            : undefined,
         created_at: report.created_at,
         updated_at: report.updated_at,
       }))
@@ -224,16 +243,16 @@ function ReportsContent() {
             <EmptyState title="No reports found" copy="Try broadening your search or run a new strategic analysis." />
           ) : (
             filteredReports.map((report) => {
-              const brief = report.strategic_brief || {};
-              const recommendation = briefRecommendation(brief);
-              const confidence = displayConfidence(brief.overall_confidence);
-              const quality = brief.quality_report as QualityReport | undefined;
+              const brief = reportBrief(report);
+              const recommendation = briefRecommendation(brief || {});
+              const confidence = displayConfidence(brief?.overall_confidence);
+              const quality = brief?.quality_report as QualityReport | undefined;
               const qualityColor = qualityGradeColor(quality);
               const verdictColor = decisionColor(recommendation);
               return (
                 <Link
                   key={report.id}
-                  href={`/analysis/${report.analysis_id}`}
+                  href={`/reports/${report.analysis_id}`}
                   className="group block rounded-[28px] border border-white/8 bg-[linear-gradient(180deg,rgba(13,22,38,0.92),rgba(8,16,29,0.9))] p-6 transition hover:border-white/14 hover:bg-[linear-gradient(180deg,rgba(16,27,46,0.96),rgba(9,18,34,0.94))] hover:shadow-[0_24px_72px_rgba(0,0,0,0.28)]"
                 >
                   <div className="flex flex-col gap-6 xl:flex-row xl:items-start xl:justify-between">
@@ -266,25 +285,57 @@ function ReportsContent() {
                         <span className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
                           v{report.report_version}
                         </span>
+                        {(report.fatal_invalidation_count || 0) > 0 ? (
+                          <span className="rounded-full border border-rose-400/25 bg-rose-500/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-rose-200">
+                            {report.fatal_invalidation_count} fatal challenge
+                          </span>
+                        ) : (report.major_invalidation_count || 0) > 0 ? (
+                          <span className="rounded-full border border-amber-400/25 bg-amber-500/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-amber-100">
+                            {report.major_invalidation_count} major challenge
+                          </span>
+                        ) : (
+                          <span className="rounded-full border border-emerald-400/20 bg-emerald-500/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-emerald-100">
+                            Validated
+                          </span>
+                        )}
+                        {report.recommended_option ? (
+                          <span className="rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-cyan-100">
+                            Option {report.recommended_option}
+                          </span>
+                        ) : null}
                       </div>
 
                       <h2 className="mt-5 max-w-4xl text-2xl font-semibold tracking-[-0.04em] text-white">
-                        {briefHeadline(brief)}
+                        {briefHeadline(brief || {})}
                       </h2>
-                      <p className="mt-4 max-w-4xl text-sm leading-7 text-slate-400">{briefNarrative(brief)}</p>
+                      <p className="mt-4 max-w-4xl text-sm leading-7 text-slate-400">{briefNarrative(brief || {})}</p>
 
                       <div className="mt-5 flex flex-wrap gap-4 text-xs text-slate-500">
                         <span>{reportContext(report)}</span>
                         <span>Updated {formatDistanceToNow(new Date(report.updated_at), { addSuffix: true })}</span>
-                        {report.pdf_status ? <span>PDF {report.pdf_status}</span> : null}
+                        {report.recommendation_downgraded ? (
+                          <span>
+                            <s>{report.original_recommendation || "PROCEED"}</s> → {recommendation || "HOLD"}
+                          </span>
+                        ) : null}
+                        {report.pdf_status ? (
+                          <span className={report.pdf_status === "blocked" ? "text-amber-200" : ""}>
+                            PDF {report.pdf_status}
+                          </span>
+                        ) : null}
                       </div>
+                      {report.pdf_status === "blocked" && report.pdf_error ? (
+                        <div className="mt-4 rounded-2xl border border-amber-300/25 bg-amber-300/10 px-4 py-3 text-xs leading-6 text-amber-100">
+                          Export blocked by enterprise quality gate. {summarizePdfError(report.pdf_error)}
+                        </div>
+                      ) : null}
                     </div>
 
                     <div className="grid w-full max-w-sm gap-3 sm:grid-cols-2 xl:grid-cols-1">
                       <MetricCard
                         label="Confidence"
                         value={confidence != null ? `${confidence}%` : "--"}
-                        accent={confidence != null ? confidenceColor(brief.overall_confidence) : "#94a3b8"}
+                        accent={confidence != null ? confidenceColor(brief?.overall_confidence) : "#94a3b8"}
                         detail="Decision calibration"
                       />
                       <MetricCard
@@ -330,6 +381,18 @@ function StatCard({
       </div>
     </article>
   );
+}
+
+function summarizePdfError(error: string): string {
+  try {
+    const parsed = JSON.parse(error) as { checks?: Array<{ id?: string; notes?: string | null }> };
+    const firstCheck = parsed.checks?.find((check) => check.notes || check.id);
+    if (firstCheck?.notes) return firstCheck.notes;
+    if (firstCheck?.id) return `Failed check: ${firstCheck.id}.`;
+  } catch {
+    // Fall through to a short raw message when older deployments stored plain text.
+  }
+  return error.length > 180 ? `${error.slice(0, 177)}...` : error;
 }
 
 function MetricCard({

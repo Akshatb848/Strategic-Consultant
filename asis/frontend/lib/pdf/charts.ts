@@ -3,6 +3,48 @@ import type { StrategicBriefV4 } from "@/lib/api";
 const NAVY = "#1a365d";
 const BLUE = "#2b6cb0";
 const TEXT = "#1a202c";
+type JsonRecord = Record<string, unknown>;
+type NumericRecord = Record<string, number>;
+
+function asRecord(value: unknown): JsonRecord {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : {};
+}
+
+function asRecordArray(value: unknown): JsonRecord[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is JsonRecord => Boolean(item) && typeof item === "object" && !Array.isArray(item))
+    : [];
+}
+
+function asStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.length > 0) : [];
+}
+
+function asNumericRecord(value: unknown): NumericRecord {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value as JsonRecord).filter(([, entry]) => typeof entry === "number" && Number.isFinite(entry))
+  ) as NumericRecord;
+}
+
+function scoreFrom(value: unknown): number {
+  const record = asRecord(value);
+  const score = record.score;
+  return typeof score === "number" && Number.isFinite(score) ? score : 0;
+}
+
+function numericValue(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function escapeMarkup(value: unknown): string {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
 
 function svgWrapper(width: number, height: number, content: string): string {
   return `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg">${content}</svg>`;
@@ -21,15 +63,15 @@ function polarPoints(values: number[], maxValue: number, centerX: number, center
 }
 
 export function renderPestleRadarSvg(brief: StrategicBriefV4): string {
-  const structured = brief.framework_outputs?.pestle?.structured_data || {};
+  const structured = asRecord(brief.framework_outputs?.pestle?.structured_data);
   const labels = ["Political", "Economic", "Social", "Tech", "Legal", "Environmental"];
   const values = [
-    structured.political?.score || 0,
-    structured.economic?.score || 0,
-    structured.social?.score || 0,
-    structured.technological?.score || 0,
-    structured.legal?.score || 0,
-    structured.environmental?.score || 0,
+    scoreFrom(structured.political),
+    scoreFrom(structured.economic),
+    scoreFrom(structured.social),
+    scoreFrom(structured.technological),
+    scoreFrom(structured.legal),
+    scoreFrom(structured.environmental),
   ];
   const polygon = polarPoints(values, 10, 240, 170, 120);
   const spokes = labels
@@ -41,7 +83,7 @@ export function renderPestleRadarSvg(brief: StrategicBriefV4): string {
       const ly = 170 + Math.sin(angle) * 146;
       return `
         <line x1="240" y1="170" x2="${x}" y2="${y}" stroke="#cbd5e0" stroke-width="1" />
-        <text x="${lx}" y="${ly}" font-size="11" text-anchor="middle" fill="${TEXT}">${label}</text>
+        <text x="${lx}" y="${ly}" font-size="11" text-anchor="middle" fill="${TEXT}">${escapeMarkup(label)}</text>
       `;
     })
     .join("");
@@ -60,13 +102,13 @@ export function renderPestleRadarSvg(brief: StrategicBriefV4): string {
 }
 
 export function renderPorterSvg(brief: StrategicBriefV4): string {
-  const structured = brief.framework_outputs?.porters_five_forces?.structured_data || {};
+  const structured = asRecord(brief.framework_outputs?.porters_five_forces?.structured_data);
   const labels = [
-    ["Rivalry", structured.competitive_rivalry?.score || 0],
-    ["Entrants", structured.threat_of_new_entrants?.score || 0],
-    ["Substitutes", structured.threat_of_substitutes?.score || 0],
-    ["Buyers", structured.bargaining_power_buyers?.score || 0],
-    ["Suppliers", structured.bargaining_power_suppliers?.score || 0],
+    ["Rivalry", scoreFrom(structured.competitive_rivalry)],
+    ["Entrants", scoreFrom(structured.threat_of_new_entrants)],
+    ["Substitutes", scoreFrom(structured.threat_of_substitutes)],
+    ["Buyers", scoreFrom(structured.bargaining_power_buyers)],
+    ["Suppliers", scoreFrom(structured.bargaining_power_suppliers)],
   ] as const;
   const polygon = polarPoints(labels.map((item) => Number(item[1])), 10, 240, 170, 118);
   const points = labels
@@ -74,7 +116,7 @@ export function renderPorterSvg(brief: StrategicBriefV4): string {
       const angle = (-Math.PI / 2) + (index / labels.length) * Math.PI * 2;
       const x = 240 + Math.cos(angle) * 135;
       const y = 170 + Math.sin(angle) * 135;
-      return `<text x="${x}" y="${y}" font-size="11" text-anchor="middle" fill="${TEXT}">${label} (${score})</text>`;
+      return `<text x="${x}" y="${y}" font-size="11" text-anchor="middle" fill="${TEXT}">${escapeMarkup(label)} (${score})</text>`;
     })
     .join("");
   return svgWrapper(
@@ -90,15 +132,15 @@ export function renderPorterSvg(brief: StrategicBriefV4): string {
 }
 
 export function renderBcgSvg(brief: StrategicBriefV4): string {
-  const units = brief.framework_outputs?.bcg_matrix?.structured_data?.business_units || [];
+  const units = asRecordArray(asRecord(brief.framework_outputs?.bcg_matrix?.structured_data).business_units);
   const bubbles = units
-    .map((unit: Record<string, any>, index: number) => {
+    .map((unit, index) => {
       const x = 60 + (Number(unit.relative_market_share || 0) / 5) * 420;
       const y = 320 - (Number(unit.market_growth_rate || 0) / 100) * 260;
       const r = 18 + (index % 3) * 8;
       return `
         <circle cx="${x}" cy="${y}" r="${r}" fill="${["#2b6cb0", "#1a365d", "#4299e1"][index % 3]}" fill-opacity="0.6" />
-        <text x="${x}" y="${y + 4}" text-anchor="middle" font-size="10" fill="white">${unit.name}</text>
+        <text x="${x}" y="${y + 4}" text-anchor="middle" font-size="10" fill="white">${escapeMarkup(unit.name)}</text>
       `;
     })
     .join("");
@@ -121,15 +163,15 @@ export function renderBcgSvg(brief: StrategicBriefV4): string {
 }
 
 export function renderMckinseySvg(brief: StrategicBriefV4): string {
-  const structured = brief.framework_outputs?.mckinsey_7s?.structured_data || {};
+  const structured = asRecord(brief.framework_outputs?.mckinsey_7s?.structured_data);
   const values = [
-    structured.strategy?.score || 0,
-    structured.structure?.score || 0,
-    structured.systems?.score || 0,
-    structured.staff?.score || 0,
-    structured.style?.score || 0,
-    structured.skills?.score || 0,
-    structured.shared_values?.score || 0,
+    scoreFrom(structured.strategy),
+    scoreFrom(structured.structure),
+    scoreFrom(structured.systems),
+    scoreFrom(structured.staff),
+    scoreFrom(structured.style),
+    scoreFrom(structured.skills),
+    scoreFrom(structured.shared_values),
   ];
   const labels = ["Strategy", "Structure", "Systems", "Staff", "Style", "Skills", "Shared Values"];
   const polygon = polarPoints(values, 10, 240, 170, 118);
@@ -138,7 +180,7 @@ export function renderMckinseySvg(brief: StrategicBriefV4): string {
       const angle = (-Math.PI / 2) + (index / labels.length) * Math.PI * 2;
       const x = 240 + Math.cos(angle) * 142;
       const y = 170 + Math.sin(angle) * 142;
-      return `<text x="${x}" y="${y}" text-anchor="middle" font-size="11" fill="${TEXT}">${label}</text>`;
+      return `<text x="${x}" y="${y}" text-anchor="middle" font-size="11" fill="${TEXT}">${escapeMarkup(label)}</text>`;
     })
     .join("");
   return svgWrapper(
@@ -154,17 +196,17 @@ export function renderMckinseySvg(brief: StrategicBriefV4): string {
 }
 
 export function renderBlueOceanSvg(brief: StrategicBriefV4): string {
-  const structured = brief.framework_outputs?.blue_ocean?.structured_data || {};
-  const factors: string[] = structured.factors || [];
-  const companyCurve = structured.company_curve || {};
+  const structured = asRecord(brief.framework_outputs?.blue_ocean?.structured_data);
+  const factors = asStringArray(structured.factors);
+  const companyCurve = asNumericRecord(structured.company_curve);
   const lines = ([
     ["Company", companyCurve, "#2b6cb0"],
-    ...Object.entries(structured.competitor_curves || {}).map(([name, curve], index) => [
+    ...Object.entries(asRecord(structured.competitor_curves)).map(([name, curve], index) => [
       name,
-      curve,
+      asNumericRecord(curve),
       ["#f59e0b", "#805ad5", "#38a169"][index % 3],
     ]),
-  ] as Array<[string, Record<string, number>, string]>)
+  ] as Array<[string, NumericRecord, string]>)
     .map(([name, curve, color], lineIndex) => {
       const points = factors
         .map((factor, index) => {
@@ -175,14 +217,14 @@ export function renderBlueOceanSvg(brief: StrategicBriefV4): string {
         .join(" ");
       return `
         <path d="${points}" fill="none" stroke="${color}" stroke-width="${lineIndex === 0 ? 3 : 2}" />
-        <text x="430" y="${34 + lineIndex * 18}" font-size="11" fill="${color}">${name}</text>
+        <text x="430" y="${34 + lineIndex * 18}" font-size="11" fill="${color}">${escapeMarkup(name)}</text>
       `;
     })
     .join("");
   const labels = factors
     .map((factor, index) => {
       const x = 70 + index * (factors.length > 1 ? 380 / (factors.length - 1) : 1);
-      return `<text x="${x}" y="330" text-anchor="middle" font-size="10" fill="${TEXT}">${factor}</text>`;
+      return `<text x="${x}" y="330" text-anchor="middle" font-size="10" fill="${TEXT}">${escapeMarkup(factor)}</text>`;
     })
     .join("");
   return svgWrapper(
@@ -199,48 +241,48 @@ export function renderBlueOceanSvg(brief: StrategicBriefV4): string {
 }
 
 export function renderRiskHeatmapHtml(brief: StrategicBriefV4): string {
-  const risks = brief.risk_analysis?.summary || [];
+  const risks = asRecordArray(brief.risk_analysis?.summary);
   const cells = Array.from({ length: 5 }, (_, row) =>
     Array.from({ length: 5 }, (_, col) => {
-      const risk = risks.find((item: Record<string, any>) => item.likelihood === col + 1 && item.impact === 5 - row);
-      const score = risk?.inherent_score || 0;
+      const risk = risks.find((item) => item.likelihood === col + 1 && item.impact === 5 - row);
+      const score = typeof risk?.inherent_score === "number" ? risk.inherent_score : 0;
       const background = score >= 16 ? "#fc8181" : score >= 9 ? "#f6ad55" : "#68d391";
-      return `<div style="border:1px solid #e2e8f0;background:${background};min-height:54px;padding:6px;font-size:10px;color:#1a202c;">${risk ? `${risk.risk_id}<br/>${risk.category}` : ""}</div>`;
+      return `<div style="border:1px solid #e2e8f0;background:${background};min-height:54px;padding:6px;font-size:10px;color:#1a202c;">${risk ? `${escapeMarkup(risk.risk_id)}<br/>${escapeMarkup(risk.category)}` : ""}</div>`;
     }).join("")
   ).join("");
   return `<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:0;">${cells}</div>`;
 }
 
 export function renderSwotHtml(brief: StrategicBriefV4): string {
-  const structured = brief.framework_outputs?.swot?.structured_data || {};
-  const quadrant = (items: Array<Record<string, any>>, title: string, background: string) => `
+  const structured = asRecord(brief.framework_outputs?.swot?.structured_data);
+  const quadrant = (items: JsonRecord[], title: string, background: string) => `
     <div style="border:1px solid #e2e8f0;background:${background};padding:12px;">
-      <h4 style="margin:0 0 8px 0;font-size:12px;color:${TEXT};">${title}</h4>
+      <h4 style="margin:0 0 8px 0;font-size:12px;color:${TEXT};">${escapeMarkup(title)}</h4>
       <ul style="margin:0;padding-left:16px;font-size:10px;color:${TEXT};line-height:1.5;">
-        ${items.map((item) => `<li>${item.point}</li>`).join("")}
+        ${items.map((item) => `<li>${escapeMarkup(item.point)}</li>`).join("")}
       </ul>
     </div>
   `;
   return `
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-      ${quadrant(structured.strengths || [], "Strengths", "#c6f6d5")}
-      ${quadrant(structured.weaknesses || [], "Weaknesses", "#fed7d7")}
-      ${quadrant(structured.opportunities || [], "Opportunities", "#bee3f8")}
-      ${quadrant(structured.threats || [], "Threats", "#fbd38d")}
+      ${quadrant(asRecordArray(structured.strengths), "Strengths", "#c6f6d5")}
+      ${quadrant(asRecordArray(structured.weaknesses), "Weaknesses", "#fed7d7")}
+      ${quadrant(asRecordArray(structured.opportunities), "Opportunities", "#bee3f8")}
+      ${quadrant(asRecordArray(structured.threats), "Threats", "#fbd38d")}
     </div>
   `;
 }
 
 export function renderAnsoffHtml(brief: StrategicBriefV4): string {
-  const structured = brief.framework_outputs?.ansoff?.structured_data || {};
+  const structured = asRecord(brief.framework_outputs?.ansoff?.structured_data);
   const cell = (key: string, title: string) => {
-    const item = structured[key] || {};
+    const item = asRecord(structured[key]);
     const recommended = structured.recommended_quadrant === key;
     return `
       <div style="border:2px solid ${recommended ? BLUE : "#e2e8f0"};padding:14px;border-radius:12px;background:${recommended ? "#ebf8ff" : "white"};">
-        <div style="font-size:12px;font-weight:700;color:${TEXT};">${title}${recommended ? " - RECOMMENDED" : ""}</div>
-        <div style="margin-top:6px;font-size:10px;color:${TEXT};">Feasibility: ${Math.round((item.feasibility || 0) * 100)}%</div>
-        <div style="margin-top:6px;font-size:10px;color:${TEXT};line-height:1.5;">${item.rationale || ""}</div>
+        <div style="font-size:12px;font-weight:700;color:${TEXT};">${escapeMarkup(title)}${recommended ? " - RECOMMENDED" : ""}</div>
+        <div style="margin-top:6px;font-size:10px;color:${TEXT};">Feasibility: ${Math.round(numericValue(item.feasibility) * 100)}%</div>
+        <div style="margin-top:6px;font-size:10px;color:${TEXT};line-height:1.5;">${escapeMarkup(item.rationale)}</div>
       </div>
     `;
   };

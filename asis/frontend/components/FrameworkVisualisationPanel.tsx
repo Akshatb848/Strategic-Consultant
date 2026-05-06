@@ -33,6 +33,16 @@ const TABS = [
   "balanced_scorecard",
 ];
 
+type JsonRecord = Record<string, unknown>;
+
+function asRecord(value: unknown): JsonRecord {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : {};
+}
+
+function asStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.length > 0) : [];
+}
+
 function TabCheck({ done }: { done: boolean }) {
   return (
     <span
@@ -75,7 +85,7 @@ export function FrameworkVisualisationPanel({
             <Mckinsey7sRadar structuredData={output.structured_data} />
             <div className="space-y-3">
               {["strategy", "structure", "systems", "staff", "style", "skills", "shared_values"].map((dimension) => {
-                const item = output.structured_data[dimension] || {};
+                const item = asRecord(output.structured_data[dimension]);
                 const score = Number(item.score || 0);
                 return (
                   <div key={dimension} className={`rounded-2xl border p-4 ${score < 5 ? "border-rose-500/20 bg-rose-500/10" : "border-white/10 bg-white/[0.03]"}`}>
@@ -83,9 +93,9 @@ export function FrameworkVisualisationPanel({
                       <div className="text-sm font-semibold capitalize text-slate-100">{dimension.replace(/_/g, " ")}</div>
                       <div className="text-sm font-semibold text-slate-100">{score}/10</div>
                     </div>
-                    <div className="mt-2 text-xs leading-6 text-slate-400">{item.current_state}</div>
-                    <div className="mt-1 text-xs leading-6 text-slate-500">Desired State: {item.desired_state}</div>
-                    <div className="mt-1 text-xs leading-6 text-slate-500">Gap: {item.gap}</div>
+                    <div className="mt-2 text-xs leading-6 text-slate-400">{String(item.current_state || "-")}</div>
+                    <div className="mt-1 text-xs leading-6 text-slate-500">Desired State: {String(item.desired_state || "-")}</div>
+                    <div className="mt-1 text-xs leading-6 text-slate-500">Gap: {String(item.gap || "-")}</div>
                   </div>
                 );
               })}
@@ -101,7 +111,7 @@ export function FrameworkVisualisationPanel({
                 <div key={key} className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
                   <div className="text-sm font-semibold capitalize text-slate-100">{key}</div>
                   <ul className="mt-3 space-y-2 text-sm text-slate-300">
-                    {(output.structured_data[key] || []).map((item: string) => (
+                    {asStringArray(output.structured_data[key]).map((item) => (
                       <li key={item} className="rounded-xl bg-black/20 px-3 py-3">
                         {item}
                       </li>
