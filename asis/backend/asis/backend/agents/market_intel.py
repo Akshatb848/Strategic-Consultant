@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from asis.backend.agents.base import BaseAgent, calculate_confidence
 from asis.backend.agents.references import build_citations, infer_sector_key
 from asis.backend.agents.types import PipelineState
@@ -9,6 +11,67 @@ class MarketIntelAgent(BaseAgent):
     agent_id = "market_intel"
     agent_name = "Market Intelligence"
     framework = "PESTLE + Porter's Five Forces"
+
+    def system_prompt(self) -> str:
+        return """You are the Market Intelligence agent for ASIS v4.0.
+Apply PESTLE analysis and Porter's Five Forces to assess market attractiveness for the strategic question.
+You are enriching a precomputed scaffold — return only a JSON patch with the fields you want to override.
+JSON only, no markdown, no extra text.
+
+Required patch shape:
+{
+  "market_size_summary": {
+    "headline": "<specific demand statement for this company/geography>",
+    "growth_rate": "<e.g. 12-15% CAGR based on evidence>",
+    "regulatory_landscape": "<specific regulatory environment description>"
+  },
+  "market_growth_themes": ["<specific theme 1>", "<specific theme 2>", "<specific theme 3>"],
+  "pestle_analysis": {
+    "political": {"score": <1-10>, "factors": ["<specific factor>", "..."], "citations": []},
+    "economic": {"score": <1-10>, "factors": ["<specific factor>", "..."], "citations": []},
+    "social": {"score": <1-10>, "factors": ["<specific factor>", "..."], "citations": []},
+    "technological": {"score": <1-10>, "factors": ["<specific factor>", "..."], "citations": []},
+    "legal": {"score": <1-10>, "factors": ["<specific factor>", "..."], "citations": []},
+    "environmental": {"score": <1-10>, "factors": ["<specific factor>"], "citations": []},
+    "overall_score": <float>,
+    "key_implication": "<one sentence strategic implication>"
+  },
+  "porters_five_forces": {
+    "competitive_rivalry": {"score": <1-10>, "rationale": "<specific>", "key_players": ["<named competitor>"]},
+    "threat_of_new_entrants": {"score": <1-10>, "rationale": "<specific>", "barriers": ["<barrier>"]},
+    "threat_of_substitutes": {"score": <1-10>, "rationale": "<specific>", "substitutes": ["<substitute>"]},
+    "bargaining_power_buyers": {"score": <1-10>, "rationale": "<specific>", "factors": ["<factor>"]},
+    "bargaining_power_suppliers": {"score": <1-10>, "rationale": "<specific>", "factors": ["<factor>"]},
+    "overall_attractiveness": <float 1-10>,
+    "strategic_implication": "<one sentence conclusion>"
+  },
+  "key_findings": ["<finding 1>", "<finding 2>", "<finding 3>"],
+  "strategic_implication": "<one sentence overall implication>",
+  "confidence_score": <float 0.5-0.95>
+}
+
+Rules:
+- Use specific company names, market data points, and geographies from the context
+- PESTLE factors must be specific to THIS company's situation, not generic
+- Named competitors must be real players in this sector/geography
+- Do NOT return placeholder values"""
+
+    def user_prompt(self, state: PipelineState) -> str:
+        ctx = state.get("extracted_context") or state.get("company_context") or {}
+        orch = state.get("orchestrator_output") or {}
+        summary = {
+            "company": ctx.get("company_name"),
+            "sector": ctx.get("sector"),
+            "geography": ctx.get("geography"),
+            "decision_type": ctx.get("decision_type"),
+            "priority_lenses": orch.get("priority_lenses", []),
+            "query_type": orch.get("query_type"),
+        }
+        return (
+            f"Strategic question:\n{state['query']}\n\n"
+            f"Context:\n{json.dumps(summary, ensure_ascii=False)}\n\n"
+            "Apply PESTLE and Porter's Five Forces to this specific market and company. Return the JSON patch."
+        )
 
     def local_result(self, state: PipelineState) -> dict:
         context = state.get("extracted_context") or {}
@@ -136,7 +199,6 @@ class MarketIntelAgent(BaseAgent):
             },
             "pestle_analysis": pestle,
             "porters_five_forces": porter_forces,
-            "porter_five_forces": forces,
             "regulatory_landscape": [
                 "Board oversight expectations are rising around resilience, conduct, and data controls.",
                 "Partner onboarding and compliance approvals can determine launch timing.",

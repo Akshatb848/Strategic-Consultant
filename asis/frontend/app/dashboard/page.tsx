@@ -314,7 +314,7 @@ function DashboardShell() {
                                 Template mode
                               </span>
                             ) : null}
-                            {analysis.decision_recommendation ? (
+                            {analysis.decision_recommendation && analysis.status !== 'failed' ? (
                               <span
                                 className="rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em]"
                                 style={{

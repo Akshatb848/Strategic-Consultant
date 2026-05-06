@@ -245,7 +245,7 @@ function AnalysisDetailContent() {
   }
 
   if (!brief) {
-    if (analysis.pipeline_version.startsWith("4")) {
+    if (analysis.pipeline_version?.startsWith("4")) {
       return <V4AnalysisLoadingView analysis={analysis} streamError={streamError} actionTitles={sectionActionTitles} />;
     }
     return <LegacyAnalysisView analysis={analysis} streamError={streamError} />;
@@ -264,7 +264,7 @@ function AnalysisDetailContent() {
   const handleShare = async () => {
     const url = `${window.location.origin}/analysis/${analysis.id}`;
     if (navigator.share) {
-      await navigator.share({ title: brief.report_metadata.company_name, text: brief.decision_statement, url });
+      await navigator.share({ title: brief.report_metadata?.company_name, text: brief.decision_statement, url });
       return;
     }
     await navigator.clipboard.writeText(url);
