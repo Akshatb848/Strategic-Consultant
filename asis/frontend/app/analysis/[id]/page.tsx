@@ -430,7 +430,7 @@ function AnalysisDetailContent() {
           )}
 
           {/* Failure Diagnostics — show when failed or very low confidence */}
-          {(analysis.status === 'failed' || (analysis.overall_confidence != null && analysis.overall_confidence < 55)) && (
+          {(analysis.status === 'failed' || (analysis.overall_confidence != null && normalizedPercent(analysis.overall_confidence) < 55)) && (
             <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.5 }}>
               <FailureDiagnosticsPanel analysis={analysis} agentLogs={analysis.agent_logs} onRetry={() => void load()} />
             </motion.div>
@@ -457,7 +457,7 @@ function AnalysisDetailContent() {
             <Link href={`/reports/${analysis.id}`} className="inline-flex items-center rounded-full border border-white/10 bg-white/5 px-4 py-3 text-sm font-semibold text-slate-200">
               Board-ready report
             </Link>
-            <Link href="/analysis/new" className="inline-flex items-center rounded-full border border-white/10 bg-white/5 px-4 py-3 text-sm font-semibold text-slate-200">
+            <Link href="/new-analysis" className="inline-flex items-center rounded-full border border-white/10 bg-white/5 px-4 py-3 text-sm font-semibold text-slate-200">
               Start New
             </Link>
           </section>
@@ -533,11 +533,4 @@ function V4AnalysisLoadingView({
                   </div>
                   <div className="mt-2 text-xs text-slate-500">{log?.duration_ms != null ? `${log.duration_ms} ms` : "Waiting"}</div>
                 </div>
-              );
-            })}
-          </div>
-        </section>
-      </div>
-    </div>
-  );
-}
+              );

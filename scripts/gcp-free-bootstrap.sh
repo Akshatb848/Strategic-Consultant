@@ -20,7 +20,7 @@ on_error() {
   docker_cmd system df || true
 
   # Print the last 200 lines of each ASIS container log so CI shows exactly what crashed.
-  for svc in backend frontend; do
+  for svc in backend frontend nginx; do
     local cname="${COMPOSE_PROJECT_NAME}-${svc}-1"
     if docker_cmd inspect "${cname}" >/dev/null 2>&1; then
       echo ""
@@ -453,14 +453,14 @@ launch_stack() {
 
       if local_image_exists "${backend_image}" && local_image_exists "${frontend_image}"; then
         log "Found both prebuilt images locally on the VM. Starting containers without rebuilding."
-        if docker_compose_cmd up -d --remove-orphans --force-recreate --no-build backend frontend; then
+        if docker_compose_cmd up -d --remove-orphans --force-recreate --no-build backend frontend nginx; then
           return
         fi
       elif is_registry_image "${backend_image}" && is_registry_image "${frontend_image}"; then
         log "Prebuilt images are not present locally. Pulling them from the configured registry."
         docker_cmd pull "${backend_image}"
         docker_cmd pull "${frontend_image}"
-        if docker_compose_cmd up -d --remove-orphans --force-recreate --no-build backend frontend; then
+        if docker_compose_cmd up -d --remove-orphans --force-recreate --no-build backend frontend nginx; then
           return
         fi
       else
@@ -538,8 +538,8 @@ wait_for_http_endpoint() {
 restart_stack_containers() {
   log "Restarting ASIS containers before a final health verification attempt."
   docker_compose_cmd ps || true
-  docker_compose_cmd logs --tail 200 backend frontend || true
-  docker_compose_cmd restart backend frontend || true
+  docker_compose_cmd logs --tail 200 backend frontend nginx || true
+  docker_compose_cmd restart backend frontend nginx || true
   sleep 10
 }
 
@@ -561,6 +561,8 @@ verify_stack_health() {
   wait_for_container_running "${COMPOSE_PROJECT_NAME}-frontend-1" 240
   wait_for_http_endpoint "http://127.0.0.1:${backend_port:-8000}/v1/health" 180
   wait_for_http_endpoint "http://127.0.0.1:${frontend_port:-3001}/api/health" 300
+  # Nginx may take a few extra seconds to pass its own health check after frontend is up
+  wait_for_http_endpoint "http://127.0.0.1:80/api/health" 60 || log "Nginx not yet healthy — non-fatal, stack is up."
 }
 
 print_summary() {
@@ -570,10 +572,13 @@ print_summary() {
 
   docker_cmd compose -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" ps || true
 
+  local vm_host
+  vm_host="$(env_value "VM_HOST" 2>/dev/null || true)"
+
   log "Deployment complete."
-  echo "Frontend: ${frontend_url}"
-  echo "Backend health: ${backend_url}/v1/health"
-  echo "Backend docs: ${backend_url}/docs"
+  echo "Frontend (direct):  ${frontend_url}"
+  echo "Frontend (nginx):   http://${vm_host:-<VM_HOST>}/"
+  echo "Backend health:     ${backend_url}/v1/health"
 }
 
 if [[ -z "${SUDO}" ]]; then

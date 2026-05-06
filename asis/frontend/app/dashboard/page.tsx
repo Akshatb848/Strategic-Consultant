@@ -40,7 +40,7 @@ function DashboardShell() {
 
   useEffect(() => {
     let active = true;
-    void Promise.allSettled([analysesAPI.list({ limit: 50 }), memoryAPI.list()])
+    void Promise.allSettled([analysesAPI.list({ limit: 200 }), memoryAPI.list()])
       .then(([analysisResult, memoryResult]) => {
         if (!active) return;
 
@@ -300,6 +300,7 @@ function DashboardShell() {
                     >
                     <Link
                       href={`/analysis/${analysis.id}`}
+                      prefetch={false}
                       className="group block rounded-[26px] border border-white/8 bg-white/[0.03] p-5 transition hover:border-white/14 hover:bg-white/[0.05] hover:shadow-[0_8px_32px_rgba(0,0,0,0.3)]"
                     >
                       <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
@@ -333,6 +334,7 @@ function DashboardShell() {
                           <div className="mt-4 flex flex-wrap items-center gap-4 text-xs text-slate-500">
                             <span>{formatDistanceToNow(new Date(analysis.created_at), { addSuffix: true })}</span>
                             {analysis.duration_seconds != null ? <span>{Math.round(analysis.duration_seconds)}s runtime</span> : null}
+                            {analysis.total_cost_usd != null ? <span>${analysis.total_cost_usd.toFixed(4)} cost</span> : null}
                             <span>Pipeline {analysis.pipeline_version}</span>
                           </div>
                         </div>
@@ -498,8 +500,4 @@ function ProfileField({
       <input
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="w-full rounded-[18px] border border-white/8 bg-white/[0.04] px-4 py-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-cyan-300/40"
-      />
-    </label>
-  );
-}
+        className="w-full rounded-[18px] bo

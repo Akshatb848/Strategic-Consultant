@@ -50,7 +50,14 @@ if any(marker in settings.jwt_secret.lower() for marker in _WEAK_SECRET_MARKERS)
     if settings.environment == "production":
         sys.exit(1)
 
-app = FastAPI(title=settings.app_name, version=settings.app_version)
+_is_prod = settings.environment == "production"
+app = FastAPI(
+    title=settings.app_name,
+    version=settings.app_version,
+    docs_url=None if _is_prod else "/docs",
+    redoc_url=None if _is_prod else "/redoc",
+    openapi_url=None if _is_prod else "/openapi.json",
+)
 
 # Order matters: SlowAPI before CORS
 app.state.limiter = limiter
@@ -119,11 +126,4 @@ __all__ = ["app", "limiter"]
 app.include_router(auth_router, prefix=settings.api_v1_prefix)
 app.include_router(analysis_router, prefix=settings.api_v1_prefix)
 app.include_router(reports_router, prefix=settings.api_v1_prefix)
-app.include_router(memory_router, prefix=settings.api_v1_prefix)
-app.include_router(system_router, prefix=settings.health_prefix)
-
-
-def run() -> None:  # pragma: no cover
-    import uvicorn
-
-    uvicorn.run("asis.backend.main:app", host="0.0.0.0", port=8000, reload=settings.environment == "development")
+app.include_router(memory_router, prefix=settings.ap

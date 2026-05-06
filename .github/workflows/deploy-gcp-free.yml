@@ -210,7 +210,7 @@ jobs:
               docker_cmd compose -f "${APP_DIR}/docker-compose.gcp-free.yml" --env-file "${APP_DIR}/.env.gcp" ps || true
             fi
 
-            for container_name in asis-gcp-free-backend-1 asis-gcp-free-frontend-1; do
+            for container_name in asis-gcp-free-backend-1 asis-gcp-free-frontend-1 asis-gcp-free-nginx-1; do
               if docker_cmd inspect "${container_name}" >/dev/null 2>&1; then
                 echo "[remote-diagnostics] Inspect ${container_name}:"
                 docker_cmd inspect "${container_name}" || true
@@ -476,6 +476,4 @@ jobs:
             echo "::group::Remote diagnostics"
             collect_remote_diagnostics || true
             echo "::endgroup::"
-            echo "::error::Remote deploy failed. Review the [remote-deploy] lines above for the exact failing command and bootstrap diagnostics."
-            exit 1
-          fi
+            echo "::error::Remote deploy failed. Review the [remote-deploy] lines above for 
