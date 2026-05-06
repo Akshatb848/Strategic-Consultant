@@ -150,7 +150,7 @@ export default function LandingPage() {
               <ArrowRight size={16} />
             </Link>
             <Link
-              href="/analysis/new"
+              href="/new-analysis"
               className="inline-flex items-center gap-2 rounded-full border border-white/12 px-6 py-3.5 text-sm font-medium text-slate-200 transition hover:border-white/20 hover:bg-white/5"
             >
               Start a strategic analysis

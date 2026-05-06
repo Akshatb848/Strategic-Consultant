@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 
 from fastapi import FastAPI, Request
@@ -50,7 +51,14 @@ if any(marker in settings.jwt_secret.lower() for marker in _WEAK_SECRET_MARKERS)
     if settings.environment == "production":
         sys.exit(1)
 
-app = FastAPI(title=settings.app_name, version=settings.app_version)
+_swagger_enabled = settings.environment != "production" or (os.getenv("SWAGGER_ENABLED", "false").lower() == "true")
+app = FastAPI(
+    title=settings.app_name,
+    version=settings.app_version,
+    docs_url="/docs" if _swagger_enabled else None,
+    redoc_url="/redoc" if _swagger_enabled else None,
+    openapi_url="/openapi.json" if _swagger_enabled else None,
+)
 
 # Order matters: SlowAPI before CORS
 app.state.limiter = limiter

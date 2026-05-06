@@ -123,7 +123,7 @@ class Settings(BaseModel):
     def agent_model_profiles(self) -> dict[str, AgentModelProfile]:
         profiles = {
             "orchestrator": AgentModelProfile(
-                primary=_env("AGENT_MODEL_ORCHESTRATOR", self.litellm_model_fast) or self.litellm_model_fast,
+                primary=_env("AGENT_MODEL_ORCHESTRATOR", self.litellm_model_primary) or self.litellm_model_primary,
                 fallbacks=[
                     _env("AGENT_MODEL_ORCHESTRATOR_FALLBACK", self.litellm_model_gemini_flash) or self.litellm_model_gemini_flash,
                     self.litellm_model_primary,
@@ -150,7 +150,7 @@ class Settings(BaseModel):
                 rationale="Reasoning-heavy capital modeling and verification math.",
             ),
             "market_intel": AgentModelProfile(
-                primary=_env("AGENT_MODEL_MARKET_INTEL", self.litellm_model_gemini_flash) or self.litellm_model_gemini_flash,
+                primary=_env("AGENT_MODEL_MARKET_INTEL", self.litellm_model_primary) or self.litellm_model_primary,
                 fallbacks=[
                     _env("AGENT_MODEL_MARKET_INTEL_FALLBACK", self.litellm_model_gemini_pro) or self.litellm_model_gemini_pro,
                     self.litellm_model_fast,

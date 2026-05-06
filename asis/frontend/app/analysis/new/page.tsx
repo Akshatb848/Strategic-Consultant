@@ -448,19 +448,21 @@ function NewAnalysisContent() {
             <div>
               <label className="mb-2 block text-sm font-medium text-slate-300">Strategic Question</label>
               <textarea
+                name="query"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="Should Apex Strategy Group enter the Indian fintech market in 2026 through a phased partnership strategy?"
                 rows={6}
+                required
                 className="w-full rounded-[24px] border border-white/8 bg-white/[0.04] px-5 py-4 text-base text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-cyan-300/40"
               />
             </div>
 
             <div className="grid gap-4 md:grid-cols-2">
-              <Field label="Organisation" value={organisation} onChange={setOrganisation} placeholder="Apex Strategy Group" />
-              <Field label="Industry" value={industry} onChange={setIndustry} placeholder="Strategy & Management Consulting" />
-              <Field label="Geography" value={geography} onChange={setGeography} placeholder="India" />
-              <Field label="Decision Type" value={decisionType} onChange={setDecisionType} placeholder="Market entry" />
+              <Field name="organisation" label="Organisation" value={organisation} onChange={setOrganisation} placeholder="Apex Strategy Group" />
+              <Field name="industry" label="Industry" value={industry} onChange={setIndustry} placeholder="Strategy & Management Consulting" />
+              <Field name="geography" label="Geography" value={geography} onChange={setGeography} placeholder="India" />
+              <Field name="decision_type" label="Decision Type" value={decisionType} onChange={setDecisionType} placeholder="Market entry" />
             </div>
 
             {error ? (
@@ -483,11 +485,13 @@ function NewAnalysisContent() {
 }
 
 function Field({
+  name,
   label,
   value,
   onChange,
   placeholder,
 }: {
+  name: string;
   label: string;
   value: string;
   onChange: (value: string) => void;
@@ -497,6 +501,7 @@ function Field({
     <label className="block">
       <span className="mb-2 block text-sm font-medium text-slate-300">{label}</span>
       <input
+        name={name}
         value={value}
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}

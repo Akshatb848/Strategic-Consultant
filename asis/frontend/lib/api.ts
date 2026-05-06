@@ -283,6 +283,7 @@ export interface Analysis {
   error_message?: string | null;
   board_narrative?: string | null;
   duration_seconds?: number | null;
+  total_cost_usd?: number | null;
   created_at: string;
   completed_at?: string | null;
   strategic_brief?: Record<string, any> | StrategicBriefV4 | null;
