@@ -292,7 +292,7 @@ export interface Analysis {
   query: string;
   company_context: Record<string, unknown>;
   extracted_context: Record<string, unknown>;
-  status: "queued" | "running" | "completed" | "failed";
+  status: "queued" | "running" | "completed" | "failed" | "cancelled";
   current_agent?: string | null;
   pipeline_version: string;
   used_fallback?: boolean;
@@ -302,6 +302,7 @@ export interface Analysis {
   error_message?: string | null;
   board_narrative?: string | null;
   duration_seconds?: number | null;
+  total_cost_usd?: number | null;
   created_at: string;
   completed_at?: string | null;
   strategic_brief?: JsonMap | StrategicBriefV4 | null;
