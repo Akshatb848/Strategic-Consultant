@@ -417,4 +417,3 @@ def cancel_analysis_endpoint(
         {"analysis_id": analysis_id, "message": "Analysis cancelled by user."},
     )
     return {"message": "Analysis cancelled.", "analysis_id": analysis_id}
-                                                   

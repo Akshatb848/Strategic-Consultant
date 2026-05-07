@@ -785,7 +785,7 @@ async def test_quality_gate_blocks_repeated_generic_financial_ladder():
 
 
 @pytest.mark.anyio
-async def test_quality_gate_pipeline_scope_surfaces_but_does_not_block_export_grade_failures():
+async def test_quality_gate_pipeline_scope_surfaces_fail_grade_without_downgrading_blockers():
     context = extract_problem_context(
         BAIN_AI_PLATFORM_QUERY,
         {"company_name": "Bain & Company", "sector": "Technology Consulting"},
@@ -801,9 +801,9 @@ async def test_quality_gate_pipeline_scope_surfaces_but_does_not_block_export_gr
     failed = {check.id: check for check in report.checks if not check.passed}
 
     assert "scenario_duplicate_guard" in failed
-    assert failed["scenario_duplicate_guard"].level == "WARN"
-    assert not QualityGate.has_block_failures(report)
-    assert report.overall_grade != "FAIL"
+    assert failed["scenario_duplicate_guard"].level == "BLOCK"
+    assert QualityGate.has_block_failures(report)
+    assert report.overall_grade == "FAIL"
 
 
 @pytest.mark.anyio

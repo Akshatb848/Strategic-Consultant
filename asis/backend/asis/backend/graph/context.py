@@ -134,25 +134,42 @@ def _extract_geographies(text: str) -> list[str]:
 
 def _extract_investment_range(query: str) -> dict | None:
     cleaned = query.replace(",", "")
-    pattern = re.compile(
-        r"(?P<currency>[$]|usd|us\$)\s*"
-        r"(?P<low>\d+(?:\.\d+)?)\s*(?:m|mn|million)?\s*"
-        r"(?:-|to|through|and|--|->|\u2013|\u2014)\s*"
-        r"(?:[$]|usd|us\$)?\s*(?P<high>\d+(?:\.\d+)?)\s*(?P<unit>m|mn|million|b|bn|billion)?",
+    unit_pattern = r"m|mn|million|b|bn|billion"
+    range_pattern = re.compile(
+        rf"(?P<currency>[$]|usd|us\$)?\s*"
+        rf"(?P<low>\d+(?:\.\d+)?)\s*(?P<low_unit>{unit_pattern})?\s*"
+        rf"(?:-|to|through|and|--|->|\u2013|\u2014)\s*"
+        rf"(?:[$]|usd|us\$)?\s*(?P<high>\d+(?:\.\d+)?)\s*(?P<high_unit>{unit_pattern})?",
         re.IGNORECASE,
     )
-    match = pattern.search(cleaned)
-    if not match:
+    match = range_pattern.search(cleaned)
+    if match and (match.group("currency") or match.group("low_unit") or match.group("high_unit")):
+        low = float(match.group("low"))
+        high = float(match.group("high"))
+        high_unit = (match.group("high_unit") or match.group("low_unit") or "m").lower()
+        low_unit = (match.group("low_unit") or high_unit).lower()
+        low *= _investment_unit_multiplier(low_unit)
+        high *= _investment_unit_multiplier(high_unit)
+        if high < low:
+            low, high = high, low
+        return {"min": round(low, 1), "max": round(high, 1), "mid": round((low + high) / 2, 1), "currency": "USD"}
+
+    single_pattern = re.compile(
+        rf"(?P<currency>[$]|usd|us\$)?\s*(?P<amount>\d+(?:\.\d+)?)\s*(?P<unit>{unit_pattern})",
+        re.IGNORECASE,
+    )
+    single = single_pattern.search(cleaned)
+    if not single:
         return None
-    low = float(match.group("low"))
-    high = float(match.group("high"))
-    unit = (match.group("unit") or "m").lower()
-    multiplier = 1000 if unit in {"b", "bn", "billion"} else 1
+    low = high = float(single.group("amount"))
+    multiplier = _investment_unit_multiplier(single.group("unit").lower())
     low *= multiplier
     high *= multiplier
-    if high < low:
-        low, high = high, low
     return {"min": round(low, 1), "max": round(high, 1), "mid": round((low + high) / 2, 1), "currency": "USD"}
+
+
+def _investment_unit_multiplier(unit: str) -> int:
+    return 1000 if unit in {"b", "bn", "billion"} else 1
 
 
 def _extract_time_horizon_years(query: str) -> dict | None:

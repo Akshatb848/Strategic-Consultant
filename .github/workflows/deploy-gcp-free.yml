@@ -476,4 +476,6 @@ jobs:
             echo "::group::Remote diagnostics"
             collect_remote_diagnostics || true
             echo "::endgroup::"
-            echo "::error::Remote deploy failed. Review the [remote-deploy] lines above for 
+            echo "::error::Remote deploy failed. Review the [remote-deploy] lines above for the exact failing command and bootstrap diagnostics."
+            exit 1
+          fi

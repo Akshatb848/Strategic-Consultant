@@ -161,6 +161,9 @@ class V4EnterpriseWorkflow:
     def _persist_report(self, db: Session, analysis: models.Analysis) -> None:
         if not analysis.strategic_brief:
             return
+        quality_failed = (analysis.strategic_brief.get("quality_report") or {}).get("overall_grade") == "FAIL"
+        pdf_status = "blocked" if quality_failed else "ready"
+        pdf_error = "REPORT_QUALITY_BLOCKED" if quality_failed else None
         report = analysis.report
         if not report:
             report = models.Report(
@@ -168,15 +171,16 @@ class V4EnterpriseWorkflow:
                 analysis_id=analysis.id,
                 user_id=analysis.user_id,
                 strategic_brief=analysis.strategic_brief,
-                pdf_status="ready",
-                pdf_progress=0,
+                pdf_status=pdf_status,
+                pdf_progress=100 if quality_failed else 0,
+                pdf_error=pdf_error,
             )
             db.add(report)
         else:
             report.strategic_brief = analysis.strategic_brief
-            report.pdf_status = "ready"
-            report.pdf_progress = 0
-            report.pdf_error = None
+            report.pdf_status = pdf_status
+            report.pdf_progress = 100 if quality_failed else 0
+            report.pdf_error = pdf_error
         if analysis.run_baseline:
             baseline_brief = self.baseline.build_brief(analysis.query, analysis.extracted_context or analysis.company_context or {})
             report.evaluation = self.evaluation.score(analysis.strategic_brief, baseline_brief)
@@ -359,14 +363,20 @@ class V4EnterpriseWorkflow:
 
         if final_quality_report and self.quality_gate.has_block_failures(final_quality_report):
             failed_checks = [
-                check.notes or check.id
+                check
                 for check in final_quality_report.checks
                 if check.level == "BLOCK" and not check.passed
             ]
-            raise RuntimeError(
-                "ASIS could not validate the final strategic brief after quality retries: "
-                + "; ".join(failed_checks[:4])
+            logger.warning(
+                "quality_gate_failed",
+                analysis_id=state["analysis_id"],
+                blocking_checks=[check.id for check in failed_checks],
             )
+            synthesis_output["analysis_meta"] = {
+                **(synthesis_output.get("analysis_meta") or {}),
+                "has_blocking_warnings": True,
+                "blocking_quality_checks": [check.id for check in failed_checks],
+            }
 
         publish_analysis_event(
             state["analysis_id"],

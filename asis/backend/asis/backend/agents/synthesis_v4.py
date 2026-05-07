@@ -42,6 +42,7 @@ brief. Return a single, valid JSON object containing only evidence-backed
 updates. Do not output any text outside the JSON object.
 
 CRITICAL RULES:
+1. decision_statement MUST begin with exactly one of:
    "PROCEED — ", "CONDITIONAL PROCEED — ", or "DO NOT PROCEED — "
    followed by the action, the primary evidence, and the key condition.
    Maximum 40 words.
@@ -50,41 +51,54 @@ CRITICAL RULES:
    The executive summary must be written so a C-suite executive reading
    only this section can decide whether to read further.
 
-3. PYRAMID PRINCIPLE: Every section_action_title must be a complete sentence
+3. CONSISTENCY ENFORCEMENT: Every text field must be directionally aligned
+   with the decision_statement prefix:
+   - If decision_statement begins "PROCEED": board_narrative, recommendation,
+     and executive_summary must support proceeding. Do not include phrases
+     like "do not proceed", "should not", or "we recommend against".
+   - If decision_statement begins "CONDITIONAL PROCEED": name the specific
+     conditions that must be met. Do not use unconditional language.
+   - If decision_statement begins "DO NOT PROCEED": board_narrative and
+     recommendation must clearly oppose proceeding. Do not include phrases
+     like "we recommend proceeding" or "should move forward".
+   Any response where the decision banner and narrative point in opposite
+   directions is a critical error.
+
+4. PYRAMID PRINCIPLE: Every section_action_title must be a complete sentence
    stating the finding, not a topic label.
 
-4. MECE VALIDATION: Before finalising, check that:
+5. MECE VALIDATION: Before finalising, check that:
    (a) No two SWOT points say the same thing in different words
    (b) Porter's Five Forces together explain the full competitive landscape
    (c) Risk Register covers political, financial, operational, reputational,
        and ESG risk categories with no gaps
    Set mece_score to a float 0-1 reflecting your confidence in MECE compliance.
 
-5. SWOT CONSTRUCTION: Build SWOT by cross-referencing:
+6. SWOT CONSTRUCTION: Build SWOT by cross-referencing:
    Strengths: financial_reasoning + market_intelligence
    Weaknesses: strategic_options + competitor_analysis
    Opportunities: market_intelligence + strategic_options
    Threats: risk_assessment + competitor_analysis + geo_intel
 
-6. COLLABORATION TRACE: For every cross-agent data dependency you used,
+7. COLLABORATION TRACE: For every cross-agent data dependency you used,
    create an AgentCollaborationEvent. Minimum 5 entries.
 
-7. SO WHAT CALLOUTS: For every framework in framework_outputs, produce
+8. SO WHAT CALLOUTS: For every framework in framework_outputs, produce
    a SoWhatCallout with implication, recommended_action, and risk_of_inaction.
 
-8. QUALITY SCORING: Set internal_consistency_score (0-1) reflecting whether
+9. QUALITY SCORING: Set internal_consistency_score (0-1) reflecting whether
    all framework findings point in the same direction. Explicitly note any
    contradictions in quality_report.quality_flags.
 
-9. BACKWARD COMPATIBILITY: Set recommendation to mirror decision outcome,
+10. BACKWARD COMPATIBILITY: Set recommendation to mirror decision outcome,
    populate context, citations, and verification.
-10. IMPLEMENTATION ROADMAP — 4 phases only:
+11. IMPLEMENTATION ROADMAP — 4 phases only:
     Phase 1: Immediate (0-3 months)
     Phase 2: Short-term (3-12 months)
     Phase 3: Medium-term (1-3 years)
     Phase 4: Long-term (3-5 years)
 
-11. EVIDENCE-FIRST OVERRIDE MODE:
+12. EVIDENCE-FIRST OVERRIDE MODE:
     - Do not preserve generic scaffold language if it conflicts with the query,
       decision type, company, sector, geography, or agent evidence.
     - You MUST reconcile decision_statement, recommendation, executive_summary,
@@ -179,6 +193,7 @@ CRITICAL RULES:
             executive_summary = deepcopy(scaffold["executive_summary"])
             merged["executive_summary"] = executive_summary
         executive_summary["headline"] = merged["decision_statement"]
+        merged = self._enforce_decision_narrative_consistency(scaffold, merged)
 
         if not isinstance(merged.get("verification"), dict):
             merged["verification"] = deepcopy(scaffold["verification"])
@@ -209,6 +224,53 @@ CRITICAL RULES:
         if isinstance(merged.get("export_validation"), dict):
             validated["export_validation"] = deepcopy(merged["export_validation"])
         return validated
+
+    def _enforce_decision_narrative_consistency(self, scaffold: dict, merged: dict) -> dict:
+        """Prevent generated prose from contradicting the deterministic decision banner."""
+        decision = str(merged.get("decision_statement") or "").upper()
+        if not decision.startswith(("PROCEED", "CONDITIONAL PROCEED", "DO NOT PROCEED")):
+            return merged
+
+        is_reject = decision.startswith("DO NOT PROCEED")
+        text_fields = ("board_narrative", "recommendation", "decision_rationale")
+        for field in text_fields:
+            value = merged.get(field)
+            if isinstance(value, str) and self._text_contradicts_decision(value, is_reject=is_reject):
+                fallback = scaffold.get(field)
+                if isinstance(fallback, str) and not self._text_contradicts_decision(fallback, is_reject=is_reject):
+                    merged[field] = fallback
+
+        executive_summary = merged.get("executive_summary")
+        scaffold_summary = scaffold.get("executive_summary")
+        if isinstance(executive_summary, dict):
+            summary_text = " ".join(str(value) for value in executive_summary.values())
+            if self._text_contradicts_decision(summary_text, is_reject=is_reject) and isinstance(scaffold_summary, dict):
+                merged["executive_summary"] = deepcopy(scaffold_summary)
+                merged["executive_summary"]["headline"] = merged["decision_statement"]
+        return merged
+
+    @staticmethod
+    def _text_contradicts_decision(text: str, *, is_reject: bool) -> bool:
+        lowered = text.lower()
+        reject_phrases = (
+            "do not proceed",
+            "should not proceed",
+            "we recommend against",
+            "recommend against",
+            "not recommended",
+            "advise against",
+            "should not move forward",
+        )
+        proceed_phrases = (
+            "we recommend proceeding",
+            "should proceed",
+            "move forward",
+            "recommend this investment",
+            "proceed with the investment",
+            "proceed with this investment",
+        )
+        phrases = proceed_phrases if is_reject else reject_phrases
+        return any(phrase in lowered for phrase in phrases)
 
     def _sanitize_semantic_keys(self, value):
         """Remove case/underscore duplicate keys before the report is persisted."""
@@ -314,6 +376,40 @@ CRITICAL RULES:
 
         return deepcopy(generated)
 
+    def _compress_agent_output(self, output: dict, max_keys: int = 8) -> dict:
+        """
+        Keep synthesis evidence compact enough for reasoning while preserving
+        the named facts the final brief must reconcile.
+        """
+        if not isinstance(output, dict):
+            return {}
+        compressed = {}
+        for key, value in list(output.items())[:max_keys]:
+            if key in {"citations", "agent_collaboration_trace"}:
+                compressed[key] = value[:3] if isinstance(value, list) else value
+            elif isinstance(value, list):
+                compressed[key] = value[:3] if len(value) > 3 else value
+            elif isinstance(value, dict) and len(json.dumps(value, default=str)) > 1800:
+                compressed[key] = {
+                    nested_key: nested_value
+                    for nested_key, nested_value in value.items()
+                    if nested_key in {
+                        "narrative",
+                        "summary",
+                        "recommendation",
+                        "confidence_score",
+                        "findings",
+                        "key_risks",
+                        "recommended_option",
+                        "top_competitors",
+                        "regulatory_outlook",
+                        "market_size_summary",
+                    }
+                }
+            else:
+                compressed[key] = value
+        return compressed
+
     def _live_user_prompt(self, state, scaffold: dict) -> str:
         framework_outputs = scaffold.get("framework_outputs") or {}
         framework_highlights = {
@@ -328,6 +424,10 @@ CRITICAL RULES:
         strategic_pathways = (scaffold.get("market_analysis") or {}).get("strategic_pathways") or {}
         execution_realism = (scaffold.get("risk_analysis") or {}).get("execution_realism") or {}
         risk_register = (scaffold.get("risk_analysis") or {}).get("risk_register") or []
+        prompt_context = state.get("extracted_context") or state.get("company_context") or {}
+        company = prompt_context.get("company_name") or "the organisation"
+        geography = prompt_context.get("geography") or "the target market"
+        query = state.get("query") or ""
 
         payload = {
             "task": (
@@ -337,9 +437,19 @@ CRITICAL RULES:
                 "with the actual company, decision type, geography, sector, financial case, risks, "
                 "and preferred strategic pathway."
             ),
-            "query": state.get("query"),
-            "immutable_query_facts": extract_query_facts(state.get("query") or ""),
-            "company_context": state.get("extracted_context") or state.get("company_context"),
+            "query": query,
+            "immutable_query_facts": extract_query_facts(query),
+            "company_context": prompt_context,
+            "differentiation_requirement": {
+                "company": company,
+                "geography": geography,
+                "rule": (
+                    "Every board-facing field must be specific to this company, geography, and query. "
+                    "Capability gaps, roadmap actions, so-what callouts, competitor dynamics, and the "
+                    "opening sentence of board_narrative must name or clearly reference these facts."
+                ),
+                "failure_mode": "Generic European expansion language is a critical quality failure.",
+            },
             "quality_failures": state.get("quality_failures") or [],
             "quality_retry_count": state.get("quality_retry_count") or 0,
             "scaffold_excerpt": {
@@ -389,6 +499,15 @@ CRITICAL RULES:
                         "options": (strategic_pathways.get("options") or [])[:3],
                     },
                 },
+            },
+            "compressed_agent_evidence": {
+                "orchestrator": self._compress_agent_output(state.get("orchestrator_output") or {}),
+                "market_intel": self._compress_agent_output(state.get("market_intel_output") or {}),
+                "risk_assessment": self._compress_agent_output(state.get("risk_assessment_output") or {}),
+                "competitor_analysis": self._compress_agent_output(state.get("competitor_analysis_output") or {}),
+                "geo_intel": self._compress_agent_output(state.get("geo_intel_output") or {}),
+                "financial_reasoning": self._compress_agent_output(state.get("financial_reasoning_output") or {}),
+                "strategic_options": self._compress_agent_output(state.get("strategic_options_output") or {}),
             },
             "framework_highlights": framework_highlights,
         }
@@ -590,7 +709,7 @@ CRITICAL RULES:
             primary_pathway=primary_pathway,
             execution_realism=execution_realism,
         )
-        roadmap_items = self._implementation_roadmap(profile)
+        roadmap_items = self._scale_roadmap_investments(profile, self._implementation_roadmap(profile))
         balanced_scorecard = framework_outputs["balanced_scorecard"]["structured_data"]
         commercial_rigor_score = round(
             mean(
@@ -947,6 +1066,9 @@ CRITICAL RULES:
             profile["default_recommendation"] = str(recommendation).strip().lower()
         scenario_variance = ((sum(ord(char) for char in f"{query}|{company}|{geography}") % 13) - 6) / 100
         profile["scenario_variance"] = scenario_variance if abs(scenario_variance) >= 0.005 else 0.015
+        profile["context"] = dict(context)
+        profile["company_name"] = company
+        profile["geography"] = geography
         return profile
 
     @staticmethod
@@ -2033,6 +2155,33 @@ CRITICAL RULES:
             return "Medium"
         return "Low"
 
+    def _roadmap_investment_scale(self, profile: dict[str, object]) -> float:
+        """
+        Hardcoded roadmap figures are calibrated for roughly $20M programs.
+        Scale them when the prompt names a larger investment envelope.
+        """
+        context = profile.get("context") or {}
+        investment_range = context.get("investment_range_usd_mn") if isinstance(context, dict) else {}
+        if not isinstance(investment_range, dict):
+            return 1.0
+        investment_mid = self._extract_numeric(investment_range.get("mid"), 0.0)
+        if investment_mid <= 0:
+            return 1.0
+        return max(1.0, min(100.0, investment_mid / 20.0))
+
+    def _scale_roadmap_investments(self, profile: dict[str, object], roadmap: list[dict]) -> list[dict]:
+        scale = self._roadmap_investment_scale(profile)
+        if scale <= 1.0:
+            return roadmap
+        scaled = []
+        for item in roadmap:
+            next_item = dict(item)
+            value = self._extract_numeric(next_item.get("estimated_investment_usd"), 0.0)
+            if value > 0:
+                next_item["estimated_investment_usd"] = round(value * scale, -3)
+            scaled.append(next_item)
+        return scaled
+
     def _implementation_roadmap(self, profile: dict[str, object]) -> list[dict]:
         decision_type = str(profile.get("decision_type") or "enter")
 
@@ -2363,7 +2512,11 @@ CRITICAL RULES:
 
         unscaled_total = sum(item["base_year_3_revenue_usd_mn"] for item in sector_plan) or 1.0
         scale_multiplier = max(0.72, min(1.38, (year_3_anchor / unscaled_total) * context_scale))
-        if context.get("investment_range_usd_mn"):
+        investment_range = context.get("investment_range_usd_mn") or {}
+        investment_mid = self._extract_numeric(investment_range.get("mid") if isinstance(investment_range, dict) else None, 0.0)
+        if investment_mid >= 200:
+            scale_multiplier = max(1.0, min(10.0, (year_3_anchor / unscaled_total) * context_scale))
+        elif investment_range:
             scale_multiplier = max(1.0, min(1.45, scale_multiplier + 0.22))
 
         sector_build = []
@@ -2474,17 +2627,66 @@ CRITICAL RULES:
             annual_cash_flow = revenue_year_3 * (ebitda_margin_pct / 100)
             terminal_value = 0.0
             investment_basis = "No explicit investment range supplied; scenario uses ASIS program-capital estimate."
+            formula_basis = (
+                "ROI = deterministic scenario multiple adjusted for risk and query-specific variance; "
+                "IRR is derived from the financial projection anchor and bounded for board-level scenario discipline."
+            )
+            payback_basis = "program cash payback"
             if investment_mid > 0:
-                terminal_value = annual_cash_flow * (3.0 if "platform" in str(profile.get("program_label", "")).lower() else 1.5)
-                cumulative_cash_flow = (annual_cash_flow * max(3.0, horizon_mid)) + terminal_value
-                roi_multiple = max(0.35, min(2.8, cumulative_cash_flow / investment_mid))
-                stage_one_capital = min(investment_mid * 0.3, 250.0)
-                payback = max(payback, int(round(stage_one_capital / max(annual_cash_flow, 1.0) * 12)))
-                irr_pct = max(4.0, min(32.0, (roi_multiple - 1.0) * 18 + 12))
-                investment_basis = (
-                    f"Midpoint of user-specified investment range: ${investment_mid:.1f}M "
-                    f"over roughly {horizon_mid:.1f} years."
-                )
+                large_investment_threshold_usd_mn = 200.0
+                is_large_investment = investment_mid >= large_investment_threshold_usd_mn
+
+                if is_large_investment:
+                    irr_table = {
+                        "acquire": (12.0, 18.0, 24.0),
+                        "merge": (11.0, 16.0, 22.0),
+                        "invest": (10.0, 16.0, 23.0),
+                        "enter": (11.0, 17.0, 24.0),
+                        "restructure": (14.0, 20.0, 26.0),
+                        "exit": (8.0, 12.0, 17.0),
+                        "divest": (9.0, 13.0, 18.0),
+                    }
+                    payback_table = {
+                        "acquire": (48, 36, 28),
+                        "merge": (54, 42, 32),
+                        "invest": (42, 32, 24),
+                        "enter": (48, 36, 26),
+                        "restructure": (30, 24, 18),
+                        "exit": (24, 18, 14),
+                        "divest": (28, 20, 16),
+                    }
+                    irr_benchmarks = irr_table.get(decision_type, irr_table["enter"])
+                    payback_benchmarks = payback_table.get(decision_type, payback_table["enter"])
+                    irr_pct = round(max(8.0, irr_benchmarks[index] - (risk_drag * 5)), 1)
+                    roi_multiple = round(max(0.85, min(2.8, (1 + irr_pct / 100) ** horizon_mid)), 2)
+                    payback = max(payback_benchmarks[index], payback_benchmarks[index] + int(risk_drag * 12))
+                    investment_basis = (
+                        f"Large-capital deal (${investment_mid:.0f}M midpoint). "
+                        f"IRR benchmarked against {decision_type} transaction comps with risk-adjusted drag "
+                        f"({risk_drag:.2f}). Revenue model operates at program-build scale; return metrics use "
+                        f"IRR-table logic to avoid division artifacts."
+                    )
+                    formula_basis = (
+                        "Large-capital ROI = (1 + benchmark IRR) ^ investment horizon; "
+                        "IRR and payback use transaction benchmark tables adjusted by risk drag."
+                    )
+                    payback_basis = "transaction benchmark"
+                else:
+                    terminal_value = annual_cash_flow * (3.0 if "platform" in str(profile.get("program_label", "")).lower() else 1.5)
+                    cumulative_cash_flow = (annual_cash_flow * max(3.0, horizon_mid)) + terminal_value
+                    roi_multiple = max(0.35, min(2.8, cumulative_cash_flow / investment_mid))
+                    stage_one_capital = min(investment_mid * 0.3, 250.0)
+                    payback = max(payback, int(round(stage_one_capital / max(annual_cash_flow, 1.0) * 12)))
+                    irr_pct = max(4.0, min(32.0, (roi_multiple - 1.0) * 18 + 12))
+                    investment_basis = (
+                        f"Midpoint of user-specified investment range: ${investment_mid:.1f}M "
+                        f"over roughly {horizon_mid:.1f} years."
+                    )
+                    formula_basis = (
+                        "ROI = (annual cash flow x horizon + terminal value) / investment midpoint; "
+                        "IRR is derived from risk-adjusted ROI uplift and bounded for board-level scenario discipline."
+                    )
+                    payback_basis = "stage-one tranche"
             else:
                 irr_pct = round(max(12.0, (irr_anchor * revenue_multiple) + (variance * (28 + index * 9))), 1)
             scenarios.append(
@@ -2497,12 +2699,9 @@ CRITICAL RULES:
                     "irr_pct": round(irr_pct, 1),
                     "payback_months": int(round(payback + (risk_drag * 6))),
                     "investment_usd_mn": investment_mid or None,
-                    "payback_basis": "stage-one tranche" if investment_mid else "program cash payback",
+                    "payback_basis": payback_basis,
                     "investment_basis": investment_basis,
-                    "formula_basis": (
-                        "ROI = (annual cash flow x horizon + terminal value) / investment midpoint; "
-                        "IRR is derived from risk-adjusted ROI uplift and bounded for board-level scenario discipline."
-                    ),
+                    "formula_basis": formula_basis,
                     "cash_flow_basis_usd_mn": round(annual_cash_flow, 1),
                     "terminal_value_basis_usd_mn": round(terminal_value, 1),
                     "source_or_assumption": (
@@ -2521,7 +2720,12 @@ CRITICAL RULES:
 
     def _build_capability_fit_matrix(self, *, query: str, context: dict, profile: dict[str, object]) -> dict[str, object]:
         rows = []
-        for capability in self._capability_blueprint(query=query, context=context, profile=profile):
+        blueprint = self._contextualize_capability_blueprint(
+            self._capability_blueprint(query=query, context=context, profile=profile),
+            context=context,
+            profile=profile,
+        )
+        for capability in blueprint:
             rows.append(
                 {
                     "capability": capability["capability"],
@@ -2542,6 +2746,33 @@ CRITICAL RULES:
             "rows": rows,
             "critical_gaps": critical_gaps,
         }
+
+    def _contextualize_capability_blueprint(
+        self,
+        blueprint: list[dict[str, str]],
+        *,
+        context: dict,
+        profile: dict[str, object],
+    ) -> list[dict[str, str]]:
+        company = str(context.get("company_name") or profile.get("company_name") or "The company")
+        geography = str(context.get("geography") or profile.get("geography") or "the target market")
+        if company == "The company" and geography == "the target market":
+            return blueprint
+
+        contextualized = []
+        for row in blueprint:
+            next_row = dict(row)
+            current_state = str(next_row.get("current_state") or "")
+            gap = str(next_row.get("gap") or "")
+            recommended_action = str(next_row.get("recommended_action") or "")
+            if company.lower() not in current_state.lower():
+                next_row["current_state"] = f"{company}: {current_state} for {geography}."
+            if company.lower() not in gap.lower():
+                next_row["gap"] = f"{company} in {geography}: {gap}"
+            if company.lower() not in recommended_action.lower():
+                next_row["recommended_action"] = f"{company} should {recommended_action[:1].lower()}{recommended_action[1:]}"
+            contextualized.append(next_row)
+        return contextualized
 
     def _build_strategic_pathways(
         self,
@@ -2807,7 +3038,7 @@ CRITICAL RULES:
         return {
             "name": name,
             "strategic_logic": strategic_logic,
-            "fit_score": round(max(0.25, min(0.95, fit_score)) * 10, 1),
+            "fit_score": round(max(0.25, min(0.95, fit_score)) * 100, 1),
             "capital_intensity": capital_intensity,
             "flexibility": flexibility,
             "execution_risk": execution_risk,

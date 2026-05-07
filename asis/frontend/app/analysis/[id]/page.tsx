@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
-import { ChevronDown, ChevronUp, Printer, Share2 } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronUp, Printer, Share2 } from "lucide-react";
 
 import { motion } from "framer-motion";
 import { AgentCollaborationGraph } from "@/components/AgentCollaborationGraph";
@@ -253,6 +253,7 @@ function AnalysisDetailContent() {
 
   const displayFrameworks = Object.keys(hydratedFrameworks).length > 0 ? hydratedFrameworks : (brief.framework_outputs || {});
   const displayQuality = qualityReport || brief.quality_report;
+  const qualityGateFailed = displayQuality?.overall_grade === "FAIL";
   const supportingFrameworkKeys = uniqueSupportingFrameworks(collaborationEvents, displayFrameworks);
   const supportingFrameworkLabels = supportingFrameworkKeys.map((framework) => frameworkDisplayName(framework));
   const context = (brief.context || analysis.extracted_context || analysis.company_context || {}) as Record<string, unknown>;
@@ -281,6 +282,23 @@ function AnalysisDetailContent() {
           ) : null}
 
           {analysis.used_fallback ? <FallbackBanner /> : null}
+
+          {qualityGateFailed ? (
+            <div className="rounded-2xl border border-red-500/40 bg-red-950/30 p-4">
+              <div className="flex items-center gap-2 text-sm font-semibold text-red-200">
+                <AlertTriangle className="h-5 w-5" />
+                Quality Gate: FAILED - this brief has critical validation failures
+              </div>
+              {displayQuality.quality_flags?.length ? (
+                <p className="mt-2 text-sm leading-6 text-red-200/90">
+                  {displayQuality.quality_flags.join(" | ")}
+                </p>
+              ) : null}
+              <p className="mt-2 text-sm leading-6 text-red-200/90">
+                PDF export is blocked. Human review is required before board presentation.
+              </p>
+            </div>
+          ) : null}
 
           <section className="sticky top-4 z-30 rounded-3xl border border-white/10 bg-[#08101d]/95 px-5 py-4 backdrop-blur">
             <div className="flex flex-col gap-5 xl:flex-row xl:items-center xl:justify-between">
@@ -450,7 +468,11 @@ function AnalysisDetailContent() {
           </motion.div>
 
           <section className="flex flex-wrap items-center justify-end gap-3 rounded-3xl border border-white/10 bg-[#08101d] p-5">
-            <ReportDownloadButton analysisId={analysis.id} />
+            <ReportDownloadButton
+              analysisId={analysis.id}
+              disabled={qualityGateFailed}
+              disabledReason="PDF export is blocked because the enterprise quality gate failed."
+            />
             <button type="button" onClick={handleShare} className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-3 text-sm font-semibold text-slate-200">
               <Share2 size={15} />Share Analysis
             </button>
@@ -533,4 +555,11 @@ function V4AnalysisLoadingView({
                   </div>
                   <div className="mt-2 text-xs text-slate-500">{log?.duration_ms != null ? `${log.duration_ms} ms` : "Waiting"}</div>
                 </div>
-              );
+              );
+            })}
+          </div>
+        </section>
+      </div>
+    </div>
+  );
+}

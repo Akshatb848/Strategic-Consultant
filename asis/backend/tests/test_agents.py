@@ -5,6 +5,7 @@ import json
 import pytest
 
 from asis.backend.agents.llm_proxy import llm_proxy
+from asis.backend.agents.financial_reasoning import FinancialReasoningAgent
 from asis.backend.agents.market_intel import MarketIntelAgent
 from asis.backend.agents.strategic_options import StrategicOptionsAgent
 from asis.backend.agents.synthesis_v4 import V4SynthesisAgent
@@ -220,3 +221,62 @@ def test_synthesis_retries_with_compact_repair_prompt(monkeypatch):
     assert len(prompts) == 2
     assert len(prompts[1]) < len(prompts[0])
     assert "required_fields" in prompts[1]
+
+
+def test_large_investment_uses_benchmark_scenario_math_and_scaled_roadmap():
+    query = "Should Acme Capital make a $1.5 billion acquisition of MittelTech in Germany over 5 years?"
+    context = {
+        "company_name": "Acme Capital",
+        "sector": "Technology",
+        "geography": "Germany",
+        "decision_type": "acquire",
+    }
+    financial = FinancialReasoningAgent().local_result({"query": query, "extracted_context": context})
+    assert financial["financial_projections"]["year_3"]["revenue"] >= 250_000_000
+
+    brief = V4SynthesisAgent().local_result(
+        {
+            "analysis_id": "large-investment",
+            "query": query,
+            "extracted_context": context,
+            "financial_reasoning_output": financial,
+        }
+    )
+    scenarios = brief["financial_analysis"]["scenario_analysis"]["scenarios"]
+    base = next(item for item in scenarios if item["name"] == "Base")
+    assert 16 <= base["irr_pct"] <= 22
+    assert base["payback_months"] < 120
+    assert base["roi_multiple"] > 0.8
+    assert "Large-capital deal" in base["investment_basis"]
+    assert brief["implementation_roadmap"][0]["estimated_investment_usd"] >= 10_000_000
+    assert all(option["fit_score"] >= 10 for option in brief["market_analysis"]["strategic_pathways"]["options"])
+
+
+def test_synthesis_resets_generated_narrative_that_contradicts_decision():
+    agent = V4SynthesisAgent()
+    scaffold = agent.local_result(
+        {
+            "analysis_id": "contradiction-guard",
+            "query": "Should Acme Advisory enter Germany through a partner-led model?",
+            "extracted_context": {
+                "company_name": "Acme Advisory",
+                "sector": "Consulting",
+                "geography": "Germany",
+                "decision_type": "enter",
+            },
+        }
+    )
+    generated = {
+        "decision_statement": "CONDITIONAL PROCEED — enter Germany only after partner and regulatory gates are met.",
+        "board_narrative": "We recommend against this move and do not proceed under the current plan.",
+        "recommendation": "Do not proceed.",
+        "executive_summary": {
+            **scaffold["executive_summary"],
+            "key_argument_1": "The board should not proceed because the case is invalid.",
+        },
+    }
+
+    merged = agent._merge_generated_brief(scaffold, generated)
+    assert "do not proceed" not in merged["board_narrative"].lower()
+    assert "recommend against" not in merged["board_narrative"].lower()
+    assert merged["executive_summary"]["headline"] == merged["decision_statement"]

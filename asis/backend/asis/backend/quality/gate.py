@@ -75,11 +75,6 @@ class QualityGate:
             self._check_context_leakage(brief),
             self._check_duplicate_semantic_keys(brief),
         ]
-        if scope == "pipeline":
-            checks = [
-                check.model_copy(update={"level": "WARN"}) if check.level == "BLOCK" else check
-                for check in checks
-            ]
         flags = [check.notes for check in checks if not check.passed and check.notes]
         citation_density_score = self._citation_density_score(brief)
         mece_score = brief.mece_score

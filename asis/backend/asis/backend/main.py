@@ -127,4 +127,11 @@ __all__ = ["app", "limiter"]
 app.include_router(auth_router, prefix=settings.api_v1_prefix)
 app.include_router(analysis_router, prefix=settings.api_v1_prefix)
 app.include_router(reports_router, prefix=settings.api_v1_prefix)
-app.include_router(memory_router, prefix=settings.ap
+app.include_router(memory_router, prefix=settings.api_v1_prefix)
+app.include_router(system_router, prefix=settings.health_prefix)
+
+
+def run() -> None:  # pragma: no cover
+    import uvicorn
+
+    uvicorn.run("asis.backend.main:app", host="0.0.0.0", port=8000, reload=settings.environment == "development")
