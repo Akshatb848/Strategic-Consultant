@@ -4,4 +4,5 @@
 *.bash text eol=lf
 *.yml text eol=lf
 *.yaml text eol=lf
+*.conf text eol=lf
 .github/workflows/* text eol=lf
