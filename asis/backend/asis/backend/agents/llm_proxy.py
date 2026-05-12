@@ -53,7 +53,7 @@ class LiteLLMProxy:
         if candidate in explicit:
             return explicit[candidate]
         lowered = candidate.lower()
-        if lowered.startswith(("groq/", "openai/gpt-oss-", "llama-3.3-70b")):
+        if lowered.startswith(("groq/", "openai/gpt-oss-", "llama-3.3-70b", "llama-3.1-")):
             return candidate
         if "reason" in lowered or agent_id in {"financial_reasoning", "quant", "cove", "strategic_options"}:
             return settings.groq_model_reasoning

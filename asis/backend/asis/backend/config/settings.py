@@ -19,6 +19,22 @@ def _env_int(name: str, default: int) -> int:
     return int(os.getenv(name, str(default)))
 
 
+def _groq_is_sole_provider() -> bool:
+    """True when GROQ_API_KEY is set and no LiteLLM proxy is configured."""
+    return bool(os.getenv("GROQ_API_KEY")) and not bool(os.getenv("LITELLM_PROXY_URL"))
+
+
+def _resolve_model(litellm_env: str, litellm_default: str, groq_env: str, groq_default: str) -> str:
+    """Return the Groq model when Groq is the sole provider, otherwise the LiteLLM model.
+
+    This ensures agent profiles request model names that match the active provider
+    so logging, cost tracking, and model routing are all transparent.
+    """
+    if _groq_is_sole_provider():
+        return os.getenv(groq_env, groq_default) or groq_default
+    return os.getenv(litellm_env, litellm_default) or litellm_default
+
+
 class AgentModelProfile(BaseModel):
     primary: str
     fallbacks: list[str] = Field(default_factory=list)
@@ -57,14 +73,14 @@ class Settings(BaseModel):
     groq_model_primary: str = Field(default_factory=lambda: _env("GROQ_MODEL_PRIMARY", "llama-3.3-70b-versatile") or "llama-3.3-70b-versatile")
     groq_model_fast: str = Field(default_factory=lambda: _env("GROQ_MODEL_FAST", "llama-3.1-8b-instant") or "llama-3.1-8b-instant")
     groq_model_reasoning: str = Field(default_factory=lambda: _env("GROQ_MODEL_REASONING", "llama-3.3-70b-versatile") or "llama-3.3-70b-versatile")
-    litellm_model_primary: str = Field(default_factory=lambda: _env("LITELLM_MODEL_PRIMARY", "claude-sonnet-4-5") or "claude-sonnet-4-5")
-    litellm_model_fast: str = Field(default_factory=lambda: _env("LITELLM_MODEL_FAST", "claude-haiku-4-5") or "claude-haiku-4-5")
-    litellm_model_gemini_pro: str = Field(default_factory=lambda: _env("LITELLM_MODEL_GEMINI_PRO", "gemini-2.5-pro") or "gemini-2.5-pro")
-    litellm_model_gemini_flash: str = Field(default_factory=lambda: _env("LITELLM_MODEL_GEMINI_FLASH", "gemini-2.0-flash") or "gemini-2.0-flash")
-    litellm_model_phi_reasoning: str = Field(default_factory=lambda: _env("LITELLM_MODEL_PHI_REASONING", "phi-4-reasoning") or "phi-4-reasoning")
-    litellm_model_qwen_strategy: str = Field(default_factory=lambda: _env("LITELLM_MODEL_QWEN_STRATEGY", "qwen-strategy") or "qwen-strategy")
-    litellm_model_arctic_research: str = Field(default_factory=lambda: _env("LITELLM_MODEL_ARCTIC_RESEARCH", "arctic-research") or "arctic-research")
-    litellm_model_llama_governance: str = Field(default_factory=lambda: _env("LITELLM_MODEL_LLAMA_GOVERNANCE", "llama-governance") or "llama-governance")
+    litellm_model_primary: str = Field(default_factory=lambda: _resolve_model("LITELLM_MODEL_PRIMARY", "claude-sonnet-4-5", "GROQ_MODEL_PRIMARY", "llama-3.3-70b-versatile"))
+    litellm_model_fast: str = Field(default_factory=lambda: _resolve_model("LITELLM_MODEL_FAST", "claude-haiku-4-5", "GROQ_MODEL_FAST", "llama-3.1-8b-instant"))
+    litellm_model_gemini_pro: str = Field(default_factory=lambda: _resolve_model("LITELLM_MODEL_GEMINI_PRO", "gemini-2.5-pro", "GROQ_MODEL_PRIMARY", "llama-3.3-70b-versatile"))
+    litellm_model_gemini_flash: str = Field(default_factory=lambda: _resolve_model("LITELLM_MODEL_GEMINI_FLASH", "gemini-2.0-flash", "GROQ_MODEL_FAST", "llama-3.1-8b-instant"))
+    litellm_model_phi_reasoning: str = Field(default_factory=lambda: _resolve_model("LITELLM_MODEL_PHI_REASONING", "phi-4-reasoning", "GROQ_MODEL_REASONING", "llama-3.3-70b-versatile"))
+    litellm_model_qwen_strategy: str = Field(default_factory=lambda: _resolve_model("LITELLM_MODEL_QWEN_STRATEGY", "qwen-strategy", "GROQ_MODEL_PRIMARY", "llama-3.3-70b-versatile"))
+    litellm_model_arctic_research: str = Field(default_factory=lambda: _resolve_model("LITELLM_MODEL_ARCTIC_RESEARCH", "arctic-research", "GROQ_MODEL_PRIMARY", "llama-3.3-70b-versatile"))
+    litellm_model_llama_governance: str = Field(default_factory=lambda: _resolve_model("LITELLM_MODEL_LLAMA_GOVERNANCE", "llama-governance", "GROQ_MODEL_PRIMARY", "llama-3.3-70b-versatile"))
     embedding_model: str = Field(default_factory=lambda: _env("EMBEDDING_MODEL", "text-embedding-3-small") or "text-embedding-3-small")
     demo_mode: bool = Field(default_factory=lambda: _env_bool("ASIS_DEMO_MODE", True))
     allow_llm_fallback: bool = Field(
