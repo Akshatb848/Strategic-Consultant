@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.."; pwd)"
 ENV_TEMPLATE="${ROOT_DIR}/.env.gcp.example"
 ENV_FILE="${ROOT_DIR}/.env.gcp"
 COMPOSE_FILE="${ROOT_DIR}/docker-compose.gcp-free.yml"
@@ -350,6 +350,49 @@ ensure_required_ports() {
   done
 }
 
+open_gcp_http_firewall() {
+  # nginx publishes port 80 on the host, but GCP's VPC-level firewall is separate
+  # from Docker port bindings — the site will be unreachable until port 80 is
+  # explicitly allowed in the project's firewall rules.
+  if ! command -v gcloud >/dev/null 2>&1; then
+    log "WARNING: gcloud CLI not found. If the site is unreachable, allow TCP port 80 in GCP Console → VPC Network → Firewall rules (source: 0.0.0.0/0)."
+    return 0
+  fi
+
+  local project
+  project="$(gcloud config get-value project 2>/dev/null)" || true
+  if [[ -z "${project}" ]]; then
+    log "WARNING: gcloud project not configured. Ensure TCP port 80 is allowed in GCP Console → VPC Network → Firewall."
+    return 0
+  fi
+
+  local existing
+  existing="$(gcloud compute firewall-rules list --project="${project}" \
+    --filter="direction=INGRESS AND allowed[].ports:80" \
+    --format="value(name)" 2>/dev/null)" || true
+  if [[ -n "${existing}" ]]; then
+    log "GCP firewall already allows TCP port 80 (rule: ${existing})."
+    return 0
+  fi
+
+  log "No GCP firewall rule found for TCP port 80. Creating asis-allow-http (project=${project})..."
+  if gcloud compute firewall-rules create asis-allow-http \
+      --project="${project}" \
+      --direction=INGRESS \
+      --priority=1000 \
+      --network=default \
+      --action=ALLOW \
+      --rules=tcp:80 \
+      --source-ranges=0.0.0.0/0 \
+      --quiet 2>/dev/null; then
+    log "GCP firewall rule asis-allow-http created — TCP port 80 is now open."
+  else
+    log "WARNING: Could not create GCP firewall rule automatically."
+    log "Run manually: gcloud compute firewall-rules create asis-allow-http --direction=INGRESS --rules=tcp:80 --source-ranges=0.0.0.0/0 --action=ALLOW"
+    log "Or: GCP Console → VPC Network → Firewall → Create rule → TCP:80 → Source 0.0.0.0/0"
+  fi
+}
+
 clear_stale_pull_processes() {
   local compose_pull_pattern
   compose_pull_pattern="${COMPOSE_FILE} --env-file ${ENV_FILE} pull backend frontend"
@@ -551,7 +594,7 @@ verify_stack_health() {
   if wait_for_container_running "${COMPOSE_PROJECT_NAME}-backend-1" 180 \
     && wait_for_container_running "${COMPOSE_PROJECT_NAME}-frontend-1" 240 \
     && wait_for_http_endpoint "http://127.0.0.1:${backend_port:-8000}/v1/health" 180 \
-    && wait_for_http_endpoint "http://127.0.0.1:${frontend_port:-3001}/api/health" 300; then
+    && wait_for_http_endpoint "http://127.0.0.1:${frontend_port:-3000}/api/health" 300; then
     return 0
   fi
 
@@ -560,7 +603,7 @@ verify_stack_health() {
   wait_for_container_running "${COMPOSE_PROJECT_NAME}-backend-1" 180
   wait_for_container_running "${COMPOSE_PROJECT_NAME}-frontend-1" 240
   wait_for_http_endpoint "http://127.0.0.1:${backend_port:-8000}/v1/health" 180
-  wait_for_http_endpoint "http://127.0.0.1:${frontend_port:-3001}/api/health" 300
+  wait_for_http_endpoint "http://127.0.0.1:${frontend_port:-3000}/api/health" 300
   # Nginx may take a few extra seconds to pass its own health check after frontend is up
   wait_for_http_endpoint "http://127.0.0.1:80/api/health" 60 || log "Nginx not yet healthy — non-fatal, stack is up."
 }
@@ -595,6 +638,7 @@ validate_env_file
 docker_login_if_configured
 remove_legacy_stack
 ensure_required_ports
+open_gcp_http_firewall
 clear_stale_pull_processes
 prune_stale_asis_images
 launch_stack
