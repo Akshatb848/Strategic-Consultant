@@ -594,7 +594,7 @@ verify_stack_health() {
   if wait_for_container_running "${COMPOSE_PROJECT_NAME}-backend-1" 180 \
     && wait_for_container_running "${COMPOSE_PROJECT_NAME}-frontend-1" 240 \
     && wait_for_http_endpoint "http://127.0.0.1:${backend_port:-8000}/v1/health" 180 \
-    && wait_for_http_endpoint "http://127.0.0.1:${frontend_port:-3001}/api/health" 300; then
+    && wait_for_http_endpoint "http://127.0.0.1:${frontend_port:-3000}/api/health" 300; then
     return 0
   fi
 
@@ -603,7 +603,7 @@ verify_stack_health() {
   wait_for_container_running "${COMPOSE_PROJECT_NAME}-backend-1" 180
   wait_for_container_running "${COMPOSE_PROJECT_NAME}-frontend-1" 240
   wait_for_http_endpoint "http://127.0.0.1:${backend_port:-8000}/v1/health" 180
-  wait_for_http_endpoint "http://127.0.0.1:${frontend_port:-3001}/api/health" 300
+  wait_for_http_endpoint "http://127.0.0.1:${frontend_port:-3000}/api/health" 300
   # Nginx may take a few extra seconds to pass its own health check after frontend is up
   wait_for_http_endpoint "http://127.0.0.1:80/api/health" 60 || log "Nginx not yet healthy — non-fatal, stack is up."
 }
