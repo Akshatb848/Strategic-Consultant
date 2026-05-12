@@ -11,7 +11,7 @@ from litellm import completion
 from asis.backend.config.logging import logger
 from asis.backend.config.settings import get_settings
 
-# ── Model pricing table (USD per 1M tokens, input/output) ────────────────────
+# ── Model pricing table (USD per 1M tokens, input/output) ──────────────────────
 # Updated April 2026 — adjust as providers change pricing.
 _MODEL_COST_PER_1M: dict[str, tuple[float, float]] = {
     "claude-sonnet-4-5": (3.0, 15.0),
@@ -53,7 +53,7 @@ class LiteLLMProxy:
         if candidate in explicit:
             return explicit[candidate]
         lowered = candidate.lower()
-        if lowered.startswith(("groq/", "openai/gpt-oss-", "llama-3.3-70b")):
+        if lowered.startswith(("groq/", "openai/gpt-oss-", "llama-3.3-70b", "llama-3.1-")):
             return candidate
         if "reason" in lowered or agent_id in {"financial_reasoning", "quant", "cove", "strategic_options"}:
             return settings.groq_model_reasoning
