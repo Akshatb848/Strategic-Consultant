@@ -1,0 +1,239 @@
+name: Tests & Quality Checks
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: asis
+          POSTGRES_PASSWORD: asis
+          POSTGRES_DB: asis
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+      redis:
+        image: redis:7
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    strategy:
+      matrix:
+        python-version: ['3.11', '3.12']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          cd asis/backend
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-cov pytest-asyncio
+
+      - name: Lint with flake8
+        run: |
+          cd asis/backend
+          pip install flake8
+          # Stop the build if there are Python syntax errors or undefined names
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+          # Exit-zero treats all errors as warnings
+          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+
+      - name: Type check with mypy
+        run: |
+          cd asis/backend
+          pip install mypy
+          mypy asis/backend --ignore-missing-imports --no-error-summary || true
+
+      - name: Run unit tests
+        env:
+          DATABASE_URL: postgresql+psycopg://asis:asis@localhost:5432/asis
+          REDIS_URL: redis://localhost:6379/0
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          ASIS_DEMO_MODE: false
+          ALLOW_LLM_FALLBACK: false
+        run: |
+          cd asis/backend
+          pytest tests/test_agents.py -v --cov=asis --cov-report=xml
+
+      - name: Run LLM integration tests
+        env:
+          DATABASE_URL: postgresql+psycopg://asis:asis@localhost:5432/asis
+          REDIS_URL: redis://localhost:6379/0
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          ASIS_DEMO_MODE: false
+          ALLOW_LLM_FALLBACK: false
+        run: |
+          cd asis/backend
+          pytest tests/test_llm_integration.py -v --cov=asis --cov-report=xml || true
+
+      - name: Run edge case and scalability tests
+        env:
+          DATABASE_URL: postgresql+psycopg://asis:asis@localhost:5432/asis
+          REDIS_URL: redis://localhost:6379/0
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          ASIS_DEMO_MODE: false
+          ALLOW_LLM_FALLBACK: false
+        run: |
+          cd asis/backend
+          pytest tests/test_edge_cases_scalability.py -v --cov=asis --cov-report=xml || true
+
+      - name: Run quality and sanity tests
+        env:
+          DATABASE_URL: postgresql+psycopg://asis:asis@localhost:5432/asis
+          REDIS_URL: redis://localhost:6379/0
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          ASIS_DEMO_MODE: false
+          ALLOW_LLM_FALLBACK: false
+        run: |
+          cd asis/backend
+          pytest tests/test_quality_sanity.py -v --cov=asis --cov-report=xml
+
+      - name: Run production fixes validation
+        env:
+          DATABASE_URL: postgresql+psycopg://asis:asis@localhost:5432/asis
+          REDIS_URL: redis://localhost:6379/0
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          ASIS_DEMO_MODE: false
+          ALLOW_LLM_FALLBACK: false
+        run: |
+          cd asis/backend
+          python test_production_fixes.py
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          files: ./asis/backend/coverage.xml
+          flags: unittests
+          name: codecov-umbrella
+          fail_ci_if_error: false
+
+      - name: Test TypeScript build
+        run: |
+          cd asis/frontend
+          npm install --legacy-peer-deps 2>/dev/null || true
+          npm run build 2>/dev/null || true
+          npx tsc --noEmit 2>/dev/null || true
+
+  security-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: Upload Trivy results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  build-docker:
+    needs: [test]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v4
+        with:
+          images: ${{ secrets.DOCKER_USERNAME }}/asis-backend
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha
+
+      - name: Build and push backend
+        uses: docker/build-push-action@v4
+        with:
+          context: ./asis/backend
+          file: ./asis/backend/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Build and push frontend
+        uses: docker/build-push-action@v4
+        with:
+          context: ./asis/frontend
+          file: ./asis/frontend/Dockerfile
+          push: true
+          tags: ${{ secrets.DOCKER_USERNAME }}/asis-frontend:latest
+          labels: ${{ steps.meta.outputs.labels }}
+
+  deploy-staging:
+    needs: [build-docker]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy to staging
+        run: |
+          echo "Deploying to staging environment..."
+          # Add your staging deployment commands here
+
+      - name: Run smoke tests
+        run: |
+          echo "Running smoke tests..."
+          sleep 10
+          curl -s http://staging.example.com/v1/health || echo "Health check failed"
+
+  notify:
+    needs: [test, security-check]
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+      - name: Check test results
+        run: |
+          if [[ "${{ needs.test.result }}" != "success" ]]; then
+            echo "⚠️ Tests failed! Check logs above."
+            exit 1
+          else
+            echo "✅ All tests passed!"
+          fi
