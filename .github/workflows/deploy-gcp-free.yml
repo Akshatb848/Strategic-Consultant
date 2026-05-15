@@ -54,7 +54,7 @@ jobs:
           file: asis/frontend/Dockerfile
           load: true
           build-args: |
-            NEXT_PUBLIC_API_URL=http://${{ env.VM_HOST }}:3001
+            NEXT_PUBLIC_API_URL=http://${{ env.VM_HOST }}
           tags: ${{ steps.names.outputs.frontend_image }}
           cache-from: type=gha,scope=asis-frontend
           cache-to: type=gha,mode=max,scope=asis-frontend
@@ -421,10 +421,10 @@ jobs:
 
           cat > .env.gcp <<EOF
           JWT_SECRET=${JWT_SECRET}
-          FRONTEND_URL=http://${VM_HOST}:3001
+          FRONTEND_URL=http://${VM_HOST}
           FRONTEND_INTERNAL_URL=http://frontend:3000
-          ALLOWED_ORIGINS=http://${VM_HOST}:3001
-          NEXT_PUBLIC_API_URL=http://${VM_HOST}:3001
+          ALLOWED_ORIGINS=http://${VM_HOST}
+          NEXT_PUBLIC_API_URL=http://${VM_HOST}
           DATABASE_URL=sqlite:////data/asis_v4.db
           ASIS_DATA_DIR=${RESOLVED_VM_DATA_DIR}
           ENVIRONMENT=production
@@ -452,16 +452,17 @@ jobs:
           OPEN_MODEL_API_BASE=${OPEN_MODEL_API_BASE:-}
           OPEN_MODEL_API_KEY=${OPEN_MODEL_API_KEY:-}
           BACKEND_PORT=8000
-          FRONTEND_PORT=3001
+          FRONTEND_PORT=3000
           BACKEND_IMAGE=${BACKEND_IMAGE}
           FRONTEND_IMAGE=${FRONTEND_IMAGE}
           GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
           GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
-          GOOGLE_CALLBACK_URL=${GOOGLE_CALLBACK_URL:-http://${VM_HOST}:8000/api/v1/auth/google/callback}
+          GOOGLE_CALLBACK_URL=${GOOGLE_CALLBACK_URL:-http://${VM_HOST}/api/v1/auth/google/callback}
           GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:-}
           GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET:-}
-          GITHUB_CALLBACK_URL=${GITHUB_CALLBACK_URL:-http://${VM_HOST}:8000/api/v1/auth/github/callback}
+          GITHUB_CALLBACK_URL=${GITHUB_CALLBACK_URL:-http://${VM_HOST}/api/v1/auth/github/callback}
           EOF
+          sed -i 's/^[[:space:]]*//' .env.gcp
 
           for required_key in JWT_SECRET FRONTEND_URL ALLOWED_ORIGINS NEXT_PUBLIC_API_URL BACKEND_IMAGE FRONTEND_IMAGE; do
             grep -q "^${required_key}=" .env.gcp || {
