@@ -59,7 +59,7 @@ jobs:
           ASIS_DEMO_MODE: "false"
           ALLOW_LLM_FALLBACK: "false"
           LANGFUSE_ENABLED: "false"
-          COST_TRACKING_ENABLED: "false"
+          COST_TRACKING_ENABLED: "true"
           RATE_LIMIT_ANALYSES_PER_MINUTE: "9999"
           RATE_LIMIT_ANALYSES_PER_DAY: "9999"
         run: python -m pytest tests -q --tb=short
