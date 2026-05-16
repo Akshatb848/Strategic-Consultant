@@ -235,11 +235,12 @@ jobs:
         run: |
           cd asis/backend
           pip install -q -r requirements.txt
+          pip install -q pytest
 
       - name: Run production fixes validation
         run: |
           cd asis/backend
-          python test_production_fixes.py
+          pytest tests/test_quality_sanity.py::TestProductionFixesVerification -v
 
   summary:
     needs: [verify-llm, verify-production-config, verify-code-quality, verify-all-agents, verify-pipeline, verify-production-fixes]

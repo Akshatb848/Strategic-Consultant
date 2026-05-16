@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main, develop]
 
+permissions:
+  contents: read
+  security-events: write
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -133,7 +137,7 @@ jobs:
           ALLOW_LLM_FALLBACK: false
         run: |
           cd asis/backend
-          python test_production_fixes.py
+          pytest tests/test_quality_sanity.py::TestProductionFixesVerification -v
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v3
@@ -163,7 +167,7 @@ jobs:
           output: 'trivy-results.sarif'
 
       - name: Upload Trivy results to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@v2
+        uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: 'trivy-results.sarif'
 
