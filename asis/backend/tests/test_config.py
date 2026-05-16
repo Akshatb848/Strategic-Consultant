@@ -12,6 +12,8 @@ def test_asyncpg_database_url_is_normalized_to_sync_driver(monkeypatch):
 
 
 def test_agent_model_profiles_expose_open_model_fallbacks(monkeypatch):
+    monkeypatch.setenv("LITELLM_PROXY_URL", "http://litellm:4000")
+    monkeypatch.setenv("LITELLM_MASTER_KEY", "test-master-key")
     monkeypatch.setenv("LITELLM_MODEL_GEMINI_PRO", "gemini-2.5-pro")
     monkeypatch.setenv("LITELLM_MODEL_PHI_REASONING", "phi-4-reasoning")
     get_settings.cache_clear()

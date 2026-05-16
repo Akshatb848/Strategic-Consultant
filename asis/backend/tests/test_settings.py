@@ -24,3 +24,18 @@ def test_active_v4_agent_profiles_cover_runtime_ids(monkeypatch):
     assert profiles["synthesis"].primary
 
     get_settings.cache_clear()
+
+
+def test_fail_hard_llm_defaults_when_env_flags_absent(monkeypatch):
+    monkeypatch.delenv("ASIS_DEMO_MODE", raising=False)
+    monkeypatch.delenv("ALLOW_LLM_FALLBACK", raising=False)
+    monkeypatch.delenv("ENVIRONMENT", raising=False)
+    monkeypatch.delenv("NODE_ENV", raising=False)
+
+    get_settings.cache_clear()
+    settings = get_settings()
+
+    assert settings.demo_mode is False
+    assert settings.allow_llm_fallback is False
+
+    get_settings.cache_clear()

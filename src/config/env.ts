@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import 'dotenv/config';
 
 // ── Validated environment configuration ──────────────────────────────────────
 const envSchema = z.object({
@@ -39,17 +40,21 @@ const envSchema = z.object({
   GROQ_BASE_URL: z.string().default('https://api.groq.com/openai/v1'),
   // Alias used in docker-compose.gcp-free.yml
   GROQ_API_BASE: z.string().optional(),
+  GROQ_MODEL_PRIMARY: z.string().default('llama-3.3-70b-versatile'),
+  GROQ_MODEL_FAST: z.string().default('llama-3.1-8b-instant'),
+  GROQ_MODEL_REASONING: z.string().default('llama-3.3-70b-versatile'),
+  ALLOW_LLM_FALLBACK: z.string().default('false'),
 
   // Per-agent model routing
-  LLM_MODEL_STRATEGIST: z.string().default('qwen/qwen3-32b'),
-  LLM_MODEL_QUANT: z.string().default('meta-llama/llama-4-scout-17b-16e-instruct'),
-  LLM_MODEL_MARKET_INTEL: z.string().default('qwen/qwen3-32b'),
-  LLM_MODEL_RISK: z.string().default('meta-llama/llama-4-scout-17b-16e-instruct'),
-  LLM_MODEL_RED_TEAM: z.string().default('meta-llama/llama-4-scout-17b-16e-instruct'),
-  LLM_MODEL_ETHICIST: z.string().default('qwen/qwen3-32b'),
-  LLM_MODEL_COVE: z.string().default('meta-llama/llama-4-scout-17b-16e-instruct'),
-  LLM_MODEL_SYNTHESIS: z.string().default('meta-llama/llama-4-scout-17b-16e-instruct'),
-  LLM_MODEL_CONTEXT_EXTRACTOR: z.string().default('meta-llama/llama-3.1-8b-instant'),
+  LLM_MODEL_STRATEGIST: z.string().default('llama-3.3-70b-versatile'),
+  LLM_MODEL_QUANT: z.string().default('llama-3.3-70b-versatile'),
+  LLM_MODEL_MARKET_INTEL: z.string().default('llama-3.3-70b-versatile'),
+  LLM_MODEL_RISK: z.string().default('llama-3.3-70b-versatile'),
+  LLM_MODEL_RED_TEAM: z.string().default('llama-3.3-70b-versatile'),
+  LLM_MODEL_ETHICIST: z.string().default('llama-3.3-70b-versatile'),
+  LLM_MODEL_COVE: z.string().default('llama-3.3-70b-versatile'),
+  LLM_MODEL_SYNTHESIS: z.string().default('llama-3.3-70b-versatile'),
+  LLM_MODEL_CONTEXT_EXTRACTOR: z.string().default('llama-3.1-8b-instant'),
   LLM_MAX_TOKENS: z.coerce.number().default(4096),
 
   // Redis (optional — falls back to in-memory)

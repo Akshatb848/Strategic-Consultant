@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from abc import ABC, abstractmethod
+from abc import ABC
 from time import perf_counter
 
 from asis.backend.agents.llm_proxy import llm_proxy
@@ -73,7 +73,7 @@ class BaseAgent(ABC):
     def resolve_models(self) -> list[str]:
         settings = get_settings()
         if isinstance(self.llm_model, list):
-            return self.llm_model
+            return self._dedupe_models(self.llm_model)
         if isinstance(self.llm_model, str):
             return [self.llm_model]
         profile = settings.agent_model_profiles.get(self.agent_id)
@@ -82,13 +82,16 @@ class BaseAgent(ABC):
         models = [profile.primary, *profile.fallbacks]
         if profile.open_source:
             models.append(profile.open_source)
+        return self._dedupe_models(models)
+
+    @staticmethod
+    def _dedupe_models(models: list[str]) -> list[str]:
         deduped: list[str] = []
         for model in models:
             if model and model not in deduped:
                 deduped.append(model)
         return deduped
 
-    @abstractmethod
     def local_result(self, state: PipelineState) -> dict:
         raise NotImplementedError
 

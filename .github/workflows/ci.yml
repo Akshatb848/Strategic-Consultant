@@ -31,13 +31,33 @@ jobs:
           pip install -r requirements.txt
           pip install slowapi langfuse
 
+      - name: Verify Groq Actions secret
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: |
+          python - <<'PY'
+          import os
+          import sys
+
+          key = os.getenv("GROQ_API_KEY", "")
+          if not key.startswith("gsk_"):
+              sys.exit("GROQ_API_KEY secret is missing or malformed")
+
+          print("GROQ_API_KEY secret is configured")
+          PY
+
       - name: Run backend tests
         env:
           DATABASE_URL: sqlite:///./test_asis.db
-          ANTHROPIC_API_KEY: sk-ant-test-placeholder
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GROQ_API_BASE: https://api.groq.com/openai/v1
+          GROQ_MODEL_PRIMARY: llama-3.3-70b-versatile
+          GROQ_MODEL_FAST: llama-3.1-8b-instant
+          GROQ_MODEL_REASONING: llama-3.3-70b-versatile
           JWT_SECRET: test-secret-32-chars-minimum-len!!
           ENVIRONMENT: test
-          ASIS_DEMO_MODE: "true"
+          ASIS_DEMO_MODE: "false"
+          ALLOW_LLM_FALLBACK: "false"
           LANGFUSE_ENABLED: "false"
           COST_TRACKING_ENABLED: "false"
           RATE_LIMIT_ANALYSES_PER_MINUTE: "9999"

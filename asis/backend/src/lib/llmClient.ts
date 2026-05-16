@@ -1,18 +1,22 @@
-import Anthropic from '@anthropic-ai/sdk';
+import 'dotenv/config';
 
 import { log } from './logger';
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || '' });
-const MAX_TOKENS = parseInt(process.env.ANTHROPIC_MAX_TOKENS || '4096', 10);
+const DEFAULT_PRIMARY_MODEL = 'llama-3.3-70b-versatile';
+const DEFAULT_FAST_MODEL = 'llama-3.1-8b-instant';
+const DEFAULT_API_BASE = 'https://api.groq.com/openai/v1';
 
-interface FallbackContext {
-  organisation: string;
-  industry: string;
-  geography: string;
-  decisionType: string;
-}
-
-const FALLBACK_CONFIDENCE_RANGE: [number, number] = [56, 68];
+type GroqChatResponse = {
+  choices?: Array<{
+    message?: {
+      content?: string | Array<{ text?: string }>;
+    };
+  }>;
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+  };
+};
 
 export function robustJsonParse<T>(raw: string): T | null {
   if (!raw?.trim()) return null;
@@ -79,109 +83,95 @@ function parseBooleanEnv(value: string | undefined, defaultValue: boolean): bool
 }
 
 export function isLiveLLMConfigured(): boolean {
-  return Boolean(process.env.ANTHROPIC_API_KEY?.trim());
+  return Boolean(process.env.GROQ_API_KEY?.trim());
 }
 
 export function isLlmFallbackAllowed(): boolean {
-  return parseBooleanEnv(process.env.ALLOW_LLM_FALLBACK, process.env.NODE_ENV !== 'production');
+  return parseBooleanEnv(process.env.ALLOW_LLM_FALLBACK, false);
 }
 
-function extractFallbackContext(userMessage: string): FallbackContext {
-  const fromLine = (label: string) => {
-    const match = userMessage.match(new RegExp(`${label}:\\s*(.+)`, 'i'));
-    return match?.[1]?.trim() || '';
+function getGroqApiBase(): string {
+  return (process.env.GROQ_API_BASE || process.env.GROQ_BASE_URL || DEFAULT_API_BASE).replace(/\/$/, '');
+}
+
+function modelForAgent(agentId: string): string {
+  const primary = process.env.GROQ_MODEL_PRIMARY || DEFAULT_PRIMARY_MODEL;
+  const fast = process.env.GROQ_MODEL_FAST || DEFAULT_FAST_MODEL;
+  const reasoning = process.env.GROQ_MODEL_REASONING || primary;
+  const configured: Record<string, string | undefined> = {
+    strategist: process.env.LLM_MODEL_STRATEGIST,
+    quant: process.env.LLM_MODEL_QUANT || reasoning,
+    market_intel: process.env.LLM_MODEL_MARKET_INTEL || primary,
+    risk: process.env.LLM_MODEL_RISK || primary,
+    red_team: process.env.LLM_MODEL_RED_TEAM || primary,
+    ethicist: process.env.LLM_MODEL_ETHICIST || primary,
+    cove: process.env.LLM_MODEL_COVE || reasoning,
+    synthesis: process.env.LLM_MODEL_SYNTHESIS || primary,
+    patent: primary,
+    dissertation: primary,
   };
-
-  return {
-    organisation: fromLine('Organisation'),
-    industry: fromLine('Industry'),
-    geography: fromLine('Geography'),
-    decisionType: fromLine('Decision Type'),
-  };
+  return configured[agentId] || primary || fast;
 }
 
-function hashedConfidence(seed: string): number {
-  let hash = 0;
-  for (let index = 0; index < seed.length; index += 1) {
-    hash = (hash * 31 + seed.charCodeAt(index)) % 1000003;
-  }
-  const [min, max] = FALLBACK_CONFIDENCE_RANGE;
-  return min + (Math.abs(hash) % (max - min + 1));
+function inferAgentId(systemPrompt: string): string {
+  const lower = systemPrompt.toLowerCase();
+  if (lower.includes('patent attorney')) return 'patent';
+  if (lower.includes('academic research advisor')) return 'dissertation';
+  if (lower.includes('cove') || lower.includes('verification officer')) return 'cove';
+  if (lower.includes('quant') || lower.includes('financial')) return 'quant';
+  if (lower.includes('market')) return 'market_intel';
+  if (lower.includes('red team') || lower.includes('adversarial')) return 'red_team';
+  if (lower.includes('ethic') || lower.includes('esg')) return 'ethicist';
+  if (lower.includes('risk')) return 'risk';
+  if (lower.includes('synthesis') || lower.includes('report assembler')) return 'synthesis';
+  return 'strategist';
 }
 
-function sanitizeFallbackString(value: string, context: FallbackContext): string {
-  const organisation = context.organisation || 'the client organization';
-  const industry = context.industry || 'the sector';
-  const geography = context.geography || 'the target market';
-  const decisionType = context.decisionType || 'the stated decision';
-
-  return value
-    .replace(/\bReliance Industries\b/gi, organisation)
-    .replace(/\bReliance\b/gi, organisation)
-    .replace(/\bJioAI Labs\b/gi, 'the implementation program')
-    .replace(/\bJioAI\b/gi, 'the proposed capability')
-    .replace(/\bJioCinema\b|\bJioFiber\b|\bMyJio\b|\bJio Payments Bank\b/gi, 'the client operating platform')
-    .replace(/\bTCS\b|\bInfosys\b|\bWipro\b|\bGoogle DeepMind India\b|\bGoogle India\b|\bKrutrim AI\b/gi, 'named incumbent competitors')
-    .replace(/\bHDFC Bank\b|\bAirtel\b|\bVodafone Idea\b|\bBSNL\b/gi, 'relevant enterprise counterparties')
-    .replace(/\bDPDP Act 2023\b/gi, 'the governing data and regulatory framework')
-    .replace(/\bCCI\b|\bCompetition Commission of India\b/gi, 'the competition regulator')
-    .replace(/\bJamnagar\b/gi, geography)
-    .replace(/\bIndia enterprise AI market\b/gi, `${geography} market`)
-    .replace(/\bvernacular AI\b/gi, `${industry} whitespace`)
-    .replace(/\b450M-user data lake\b/gi, 'the client data and platform asset')
-    .replace(/\bAI startup acquisition\b/gi, `${decisionType.toLowerCase()} case`);
+function normalizeContent(content: string | Array<{ text?: string }> | undefined): string {
+  if (Array.isArray(content)) {
+    return content.map((part) => part.text || '').join('');
+  }
+  return typeof content === 'string' ? content : '';
 }
 
-function sanitizeFallbackPayload<T>(value: T, context: FallbackContext, path = 'root'): T {
-  if (typeof value === 'string') {
-    return sanitizeFallbackString(value, context) as T;
+async function callGroq(model: string, systemPrompt: string, userMessage: string): Promise<GroqChatResponse> {
+  const apiKey = process.env.GROQ_API_KEY?.trim();
+  if (!apiKey) {
+    throw new Error('GROQ_API_KEY is not configured and LLM fallback is disabled.');
   }
 
-  if (Array.isArray(value)) {
-    return value.map((entry, index) => sanitizeFallbackPayload(entry, context, `${path}[${index}]`)) as T;
-  }
+  const response = await fetch(`${getGroqApiBase()}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model,
+      max_tokens: Number(process.env.GROQ_MAX_TOKENS || process.env.LLM_MAX_TOKENS || 4096),
+      temperature: 0.2,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        {
+          role: 'user',
+          content: `${userMessage}\n\nRETURN ONLY VALID JSON. NO TEXT BEFORE OR AFTER. NO MARKDOWN FENCES. NO <think> TAGS.`,
+        },
+      ],
+    }),
+  });
 
-  if (value && typeof value === 'object') {
-    const output: Record<string, unknown> = {};
-    for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
-      if (['confidence_score', 'overall_confidence', 'overall_verification_score'].includes(key)) {
-        output[key] = hashedConfidence(
-          `${context.organisation}|${context.industry}|${context.geography}|${context.decisionType}|${path}.${key}`
-        );
-        continue;
-      }
-
-      if (key === 'decision_recommendation' && typeof entry === 'string') {
-        output[key] = 'HOLD';
-        continue;
-      }
-
-      if (key === 'risk_adjusted_recommendation' && typeof entry === 'string') {
-        output[key] = `${context.organisation || 'The client'} should defer a binding decision until a live model run validates the strategic and financial assumptions.`;
-        continue;
-      }
-
-      if (key === 'board_narrative' && typeof entry === 'string') {
-        output[key] = `${context.organisation || 'The client'} requires a live LLM-backed synthesis run before this recommendation can be treated as board-ready.`;
-        continue;
-      }
-
-      if (key === 'executive_summary' && typeof entry === 'string') {
-        output[key] = `Fallback-mode summary for ${context.organisation || 'the client'} in ${context.geography || 'the target market'}: validate this report with a live model run before using it for strategic decisions.`;
-        continue;
-      }
-
-      if (key === 'quality_grade' && typeof entry === 'string') {
-        output[key] = 'C';
-        continue;
-      }
-
-      output[key] = sanitizeFallbackPayload(entry, context, `${path}.${key}`);
+  if (!response.ok) {
+    const body = await response.text();
+    const error = new Error(`Groq API request failed with HTTP ${response.status}: ${body.slice(0, 240)}`);
+    (error as Error & { status?: number; retryAfter?: number }).status = response.status;
+    const retryAfter = Number(response.headers.get('retry-after') || 0);
+    if (retryAfter > 0) {
+      (error as Error & { retryAfter?: number }).retryAfter = retryAfter;
     }
-    return output as T;
+    throw error;
   }
 
-  return value;
+  return (await response.json()) as GroqChatResponse;
 }
 
 export async function callLLMWithRetry<T extends Record<string, unknown>>(
@@ -189,55 +179,38 @@ export async function callLLMWithRetry<T extends Record<string, unknown>>(
   userMessage: string,
   requiredFields: string[],
   fallback: T,
-  maxAttempts = 3
+  agentIdOrMaxAttempts: string | number = 'strategist',
+  maybeMaxAttempts = 3
 ): Promise<{ data: T; usedFallback: boolean; attempts: number; inputTokens: number; outputTokens: number }> {
   const fallbackAllowed = isLlmFallbackAllowed();
-  const fallbackContext = extractFallbackContext(userMessage);
+  const agentId = typeof agentIdOrMaxAttempts === 'string' ? agentIdOrMaxAttempts : inferAgentId(systemPrompt);
+  const maxAttempts = typeof agentIdOrMaxAttempts === 'number' ? agentIdOrMaxAttempts : maybeMaxAttempts;
   let currentUserMessage = userMessage;
 
   if (!isLiveLLMConfigured()) {
-    if (!fallbackAllowed) {
-      throw new Error('ANTHROPIC_API_KEY is not configured and ALLOW_LLM_FALLBACK is disabled.');
+    if (fallbackAllowed) {
+      log.warn('No GROQ_API_KEY and ALLOW_LLM_FALLBACK is enabled; using structured fallback');
+      return { data: fallback, usedFallback: true, attempts: 0, inputTokens: 0, outputTokens: 0 };
     }
-    log.warn('No ANTHROPIC_API_KEY — using structured fallback');
-    return {
-      data: sanitizeFallbackPayload(fallback, fallbackContext),
-      usedFallback: true,
-      attempts: 0,
-      inputTokens: 0,
-      outputTokens: 0,
-    };
+    throw new Error('GROQ_API_KEY is not configured and LLM fallback is disabled.');
   }
 
+  const model = modelForAgent(agentId);
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
-      log.info(`LLM call starting — attempt ${attempt}/${maxAttempts}`);
-
-      const response = await anthropic.messages.create({
-        model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-20250514',
-        max_tokens: MAX_TOKENS,
-        system: systemPrompt,
-        messages: [
-          {
-            role: 'user',
-            content: `${currentUserMessage}\n\nRETURN ONLY VALID JSON. NO TEXT BEFORE OR AFTER. NO MARKDOWN FENCES. NO <think> TAGS.`,
-          },
-        ],
-      });
-
-      const rawText = response.content[0].type === 'text' ? response.content[0].text : '';
-      const inputTokens = response.usage.input_tokens;
-      const outputTokens = response.usage.output_tokens;
-
-      log.info(`LLM tokens — in: ${inputTokens}, out: ${outputTokens}`);
-
+      log.info(`Groq LLM call starting - agent=${agentId} model=${model} attempt=${attempt}/${maxAttempts}`);
+      const response = await callGroq(model, systemPrompt, currentUserMessage);
+      const rawText = normalizeContent(response.choices?.[0]?.message?.content || '');
+      const inputTokens = response.usage?.prompt_tokens || 0;
+      const outputTokens = response.usage?.completion_tokens || 0;
       const parsed = robustJsonParse<T>(rawText);
+
       if (parsed && validateRequiredFields(parsed as Record<string, unknown>, requiredFields)) {
         return { data: parsed, usedFallback: false, attempts: attempt, inputTokens, outputTokens };
       }
 
       if (attempt < maxAttempts) {
-        log.warn(`Schema validation failed on attempt ${attempt} (required: ${requiredFields.join(', ')}) — retrying`);
+        log.warn(`Schema validation failed on attempt ${attempt} (required: ${requiredFields.join(', ')}) - retrying`);
         currentUserMessage = `The previous response could not be parsed or was missing required fields (${requiredFields.join(', ')}).
 Repair it into valid JSON without changing the underlying facts.
 
@@ -249,38 +222,24 @@ ${rawText.slice(0, 6000)}`;
         await sleep(attempt * 800);
       }
     } catch (error: unknown) {
-      const err = error as { status?: number; headers?: Record<string, string> };
-
-      if (err?.status === 429) {
-        const retryAfter = parseInt(err?.headers?.['retry-after'] || '15', 10);
-        log.warn(`Rate limited by Anthropic — waiting ${retryAfter}s before retry (attempt ${attempt})`);
+      const err = error as Error & { status?: number; retryAfter?: number };
+      if (err.status === 429) {
+        const retryAfter = err.retryAfter || 15;
+        log.warn(`Groq rate limit - waiting ${retryAfter}s before retry (attempt ${attempt})`);
         await sleep(retryAfter * 1000);
         continue;
       }
-
-      if (err?.status === 529) {
-        log.warn(`Anthropic API overloaded — waiting 20s (attempt ${attempt})`);
-        await sleep(20000);
-        continue;
-      }
-
-      log.error(`LLM call error on attempt ${attempt}: ${String(error)}`);
+      log.error(`Groq LLM call error on attempt ${attempt}: ${err.message || String(error)}`);
       if (attempt < maxAttempts) {
         await sleep(attempt * 1200);
       }
     }
   }
 
-  if (!fallbackAllowed) {
-    throw new Error(`Anthropic live response failed validation after ${maxAttempts} attempt(s); fallback is disabled.`);
+  if (fallbackAllowed) {
+    log.warn(`All Groq attempts failed and ALLOW_LLM_FALLBACK is enabled (required: ${requiredFields.join(', ')})`);
+    return { data: fallback, usedFallback: true, attempts: maxAttempts, inputTokens: 0, outputTokens: 0 };
   }
 
-  log.warn(`All LLM attempts failed — using structured fallback (required: ${requiredFields.join(', ')})`);
-  return {
-    data: sanitizeFallbackPayload(fallback, fallbackContext),
-    usedFallback: true,
-    attempts: maxAttempts,
-    inputTokens: 0,
-    outputTokens: 0,
-  };
+  throw new Error(`Groq live response failed validation after ${maxAttempts} attempt(s); fallback is disabled.`);
 }

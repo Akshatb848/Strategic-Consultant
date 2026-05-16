@@ -12,6 +12,15 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 
+@pytest.fixture(autouse=True)
+def clear_settings_cache_between_tests():
+    from asis.backend.config.settings import get_settings
+
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
 @pytest.fixture()
 async def client(tmp_path, monkeypatch):
     db_path = tmp_path / "test.db"

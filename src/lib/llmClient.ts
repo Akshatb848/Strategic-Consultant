@@ -8,14 +8,27 @@ let groqClient: OpenAI | null = null;
 function getClient(): OpenAI {
   if (!groqClient) {
     if (!env.GROQ_API_KEY) {
-      logger.warn('⚠️  GROQ_API_KEY not set — agents will use fallback data');
+      throw new Error('GROQ_API_KEY is not configured and LLM fallback is disabled.');
     }
     groqClient = new OpenAI({
-      apiKey: env.GROQ_API_KEY || 'dummy-key-for-fallback',
+      apiKey: env.GROQ_API_KEY,
       baseURL: env.GROQ_BASE_URL || env.GROQ_API_BASE || 'https://api.groq.com/openai/v1',
     });
   }
   return groqClient;
+}
+
+function parseBooleanEnv(value: string | undefined, defaultValue: boolean): boolean {
+  if (value == null || value.trim() === '') return defaultValue;
+  return ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase());
+}
+
+export function isLiveLLMConfigured(): boolean {
+  return Boolean(env.GROQ_API_KEY?.trim());
+}
+
+export function isLlmFallbackAllowed(): boolean {
+  return parseBooleanEnv(env.ALLOW_LLM_FALLBACK, false);
 }
 
 // ── Model routing — each agent gets the best model for its task ─────────────
@@ -89,7 +102,7 @@ export function validateRequiredFields(
   );
 }
 
-// ── Main LLM call with retry + fallback ─────────────────────────────────────
+// ── Main Groq LLM call with retry and fail-hard defaults ────────────────────
 export async function callLLMWithRetry<T extends Record<string, unknown>>(
   systemPrompt: string,
   userMessage: string,
@@ -105,17 +118,20 @@ export async function callLLMWithRetry<T extends Record<string, unknown>>(
   durationMs: number;
 }> {
   const startTime = Date.now();
+  const fallbackAllowed = isLlmFallbackAllowed();
 
-  // If no API key, use fallback immediately
-  if (!env.GROQ_API_KEY) {
-    logger.warn('No GROQ_API_KEY — using structured fallback');
-    return {
-      data: fallback,
-      usedFallback: true,
-      attempts: 0,
-      tokenUsage: { input: 0, output: 0 },
-      durationMs: Date.now() - startTime,
-    };
+  if (!isLiveLLMConfigured()) {
+    if (fallbackAllowed) {
+      logger.warn('No GROQ_API_KEY and ALLOW_LLM_FALLBACK is enabled; using structured fallback');
+      return {
+        data: fallback,
+        usedFallback: true,
+        attempts: 0,
+        tokenUsage: { input: 0, output: 0 },
+        durationMs: Date.now() - startTime,
+      };
+    }
+    throw new Error('GROQ_API_KEY is not configured and LLM fallback is disabled.');
   }
 
   const client = getClient();
@@ -178,15 +194,18 @@ export async function callLLMWithRetry<T extends Record<string, unknown>>(
     }
   }
 
-  // All attempts failed — use structured fallback
-  logger.warn({ agentId }, 'All LLM attempts failed, using structured fallback');
-  return {
-    data: fallback,
-    usedFallback: true,
-    attempts: maxAttempts,
-    tokenUsage: { input: 0, output: 0 },
-    durationMs: Date.now() - startTime,
-  };
+  if (fallbackAllowed) {
+    logger.warn({ agentId }, 'All LLM attempts failed and ALLOW_LLM_FALLBACK is enabled; using structured fallback');
+    return {
+      data: fallback,
+      usedFallback: true,
+      attempts: maxAttempts,
+      tokenUsage: { input: 0, output: 0 },
+      durationMs: Date.now() - startTime,
+    };
+  }
+
+  throw new Error(`Groq live response failed validation after ${maxAttempts} attempt(s); fallback is disabled.`);
 }
 
 function sleep(ms: number): Promise<void> {

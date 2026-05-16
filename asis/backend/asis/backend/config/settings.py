@@ -1,10 +1,30 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from functools import lru_cache
 from typing import Literal
 
+from dotenv import load_dotenv
 from pydantic import BaseModel, Field
+
+
+def _load_environment_files() -> None:
+    """Load local env files without overriding real process env values."""
+    settings_file = Path(__file__).resolve()
+    backend_root = settings_file.parents[3]
+    repo_root = settings_file.parents[5]
+    candidates = [
+        repo_root / ".env",
+        backend_root / ".env",
+        Path.cwd() / ".env",
+    ]
+    for env_file in dict.fromkeys(candidates):
+        if env_file.exists():
+            load_dotenv(env_file, override=False)
+
+
+_load_environment_files()
 
 
 def _env(name: str, default: str | None = None) -> str | None:
@@ -82,14 +102,12 @@ class Settings(BaseModel):
     litellm_model_arctic_research: str = Field(default_factory=lambda: _resolve_model("LITELLM_MODEL_ARCTIC_RESEARCH", "arctic-research", "GROQ_MODEL_PRIMARY", "llama-3.3-70b-versatile"))
     litellm_model_llama_governance: str = Field(default_factory=lambda: _resolve_model("LITELLM_MODEL_LLAMA_GOVERNANCE", "llama-governance", "GROQ_MODEL_PRIMARY", "llama-3.3-70b-versatile"))
     embedding_model: str = Field(default_factory=lambda: _env("EMBEDDING_MODEL", "text-embedding-3-small") or "text-embedding-3-small")
-    demo_mode: bool = Field(default_factory=lambda: _env_bool("ASIS_DEMO_MODE", True))
+    demo_mode: bool = Field(default_factory=lambda: _env_bool("ASIS_DEMO_MODE", False))
     allow_llm_fallback: bool = Field(
         default_factory=lambda: (
             _env(
                 "ALLOW_LLM_FALLBACK",
-                "true"
-                if (_env("ENVIRONMENT", _env("NODE_ENV", "development")) or "development") != "production"
-                else "false",
+                "false",
             )
             or "false"
         ).lower()

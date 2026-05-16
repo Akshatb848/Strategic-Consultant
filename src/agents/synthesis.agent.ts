@@ -23,7 +23,7 @@ Do not repeat each agent output. Resolve tensions between them into a single boa
 CONFIDENCE - MANDATORY RULE:
 The overall_confidence field must be read from the CoVe agent's calculated value passed in upstream context.
 You do not calculate it. You do not estimate it. You do not default it.
-If CoVe is unavailable due to system error, use 68 as a conservative fallback.
+If CoVe is unavailable due to system error, return a JSON error_state that explains the missing upstream dependency.
 Never use 85 as a default.
 
 INVALIDATION RESPONSE PROTOCOL:
@@ -441,16 +441,25 @@ Return only valid JSON.
   const result = await callLLMWithRetry<SynthesisOutput>(
     SYNTHESIS_SYSTEM_PROMPT,
     userMessage,
-    ['executive_summary', 'board_narrative', 'decision_recommendation', 'overall_confidence'],
+    [
+      'executive_summary',
+      'board_narrative',
+      'strategic_imperatives',
+      'roadmap',
+      'balanced_scorecard',
+      'competitive_benchmarks',
+      'success_metrics',
+      'decision_recommendation',
+      'risk_adjusted_recommendation',
+      'overall_confidence',
+      'frameworks_applied',
+    ],
     fallback,
     'synthesis'
   );
 
   return {
     ...result,
-    data: enrichSynthesisOutput(input, {
-      ...fallback,
-      ...result.data,
-    }),
+    data: enrichSynthesisOutput(input, result.data),
   };
 }

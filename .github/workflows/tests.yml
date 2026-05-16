@@ -55,6 +55,16 @@ jobs:
           pip install -r requirements.txt
           pip install pytest pytest-cov pytest-asyncio
 
+      - name: Verify Groq Actions secret
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: |
+          if [[ -z "${GROQ_API_KEY}" || "${GROQ_API_KEY}" != gsk_* ]]; then
+            echo "GROQ_API_KEY secret is missing or malformed"
+            exit 1
+          fi
+          echo "GROQ_API_KEY secret is configured"
+
       - name: Lint with flake8
         run: |
           cd asis/backend
@@ -90,7 +100,7 @@ jobs:
           ALLOW_LLM_FALLBACK: false
         run: |
           cd asis/backend
-          pytest tests/test_llm_integration.py -v --cov=asis --cov-report=xml || true
+          pytest tests/test_llm_integration.py -v --cov=asis --cov-report=xml
 
       - name: Run edge case and scalability tests
         env:
@@ -101,7 +111,7 @@ jobs:
           ALLOW_LLM_FALLBACK: false
         run: |
           cd asis/backend
-          pytest tests/test_edge_cases_scalability.py -v --cov=asis --cov-report=xml || true
+          pytest tests/test_edge_cases_scalability.py -v --cov=asis --cov-report=xml
 
       - name: Run quality and sanity tests
         env:
@@ -136,9 +146,8 @@ jobs:
       - name: Test TypeScript build
         run: |
           cd asis/frontend
-          npm install --legacy-peer-deps 2>/dev/null || true
-          npm run build 2>/dev/null || true
-          npx tsc --noEmit 2>/dev/null || true
+          npm ci
+          npm run type-check
 
   security-check:
     runs-on: ubuntu-latest

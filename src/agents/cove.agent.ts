@@ -160,13 +160,15 @@ Return only valid JSON.
   const result = await callLLMWithRetry<CoVeOutput>(
     COVE_SYSTEM_PROMPT,
     userMessage,
-    ['verification_checks', 'logic_consistent', 'overall_verification_score', 'recommendation'],
+    ['verification_checks', 'logic_consistent', 'overall_verification_score', 'recommendation', 'confidence_breakdown'],
     fallback,
     'cove'
   );
 
-  const breakdown =
-    result.data.confidence_breakdown || fallback.confidence_breakdown || fallback.confidence_breakdown;
+  const breakdown = result.data.confidence_breakdown;
+  if (!breakdown) {
+    throw new Error('Groq CoVe response passed required checks but omitted confidence_breakdown.');
+  }
 
   return {
     ...result,

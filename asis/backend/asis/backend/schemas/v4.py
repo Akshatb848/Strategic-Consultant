@@ -130,7 +130,7 @@ class GeoIntelOutput(BaseModel):
     political_risk_score: float = Field(ge=0, le=10)
     trade_barriers: list[str] = Field(default_factory=list)
     regulatory_outlook: str
-    cage_distance_analysis: dict[str, str]
+    cage_distance_analysis: dict[str, Any]
     fdi_sentiment: str
     framework_outputs: dict[str, FrameworkOutput] = Field(default_factory=dict)
 

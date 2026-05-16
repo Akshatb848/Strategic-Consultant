@@ -139,7 +139,8 @@ class LiteLLMProxy:
                             "content": user_prompt + "\nReturn only valid JSON with double-quoted keys.",
                         },
                     ],
-                    "temperature": 0.2,
+                    "temperature": 0.1,
+                    "max_tokens": 4096,
                 }
                 if langfuse_callbacks:
                     kwargs["callbacks"] = langfuse_callbacks

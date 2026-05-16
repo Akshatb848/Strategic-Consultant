@@ -91,6 +91,11 @@ jobs:
           set -euo pipefail
           trap 'echo "::error::Deploy runner failed at line ${LINENO}: ${BASH_COMMAND}"' ERR
 
+          if [[ -z "${GROQ_API_KEY:-}" || "${GROQ_API_KEY}" != gsk_* ]]; then
+            echo "::error::GROQ_API_KEY secret is required and must be a Groq key for production deployment."
+            exit 1
+          fi
+
           install -m 700 -d ~/.ssh
           key_file=~/.ssh/gcp_free_vm_key
           key_valid=false
