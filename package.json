@@ -13,6 +13,16 @@
     "db:push": "npx prisma db push",
     "db:studio": "npx prisma studio"
   },
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "db:migrate": "npx prisma migrate dev",
+    "db:generate": "npx prisma generate",
+    "db:push": "npx prisma db push",
+    "db:studio": "npx prisma studio",
+    "test:llm": "tsx asis/backend/tests/run_tests.ts"
+  },
   "keywords": [
     "asis",
     "strategic-intelligence",

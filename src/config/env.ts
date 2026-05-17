@@ -56,6 +56,11 @@ const envSchema = z.object({
   LLM_MODEL_SYNTHESIS: z.string().default('llama-3.3-70b-versatile'),
   LLM_MODEL_CONTEXT_EXTRACTOR: z.string().default('llama-3.1-8b-instant'),
   LLM_MAX_TOKENS: z.coerce.number().default(4096),
+  // LLM request tuning
+  LLM_REQUEST_TIMEOUT: z.coerce.number().default(30000),
+  LLM_MAX_RETRIES: z.coerce.number().default(4),
+  LLM_RETRY_BASE_MS: z.coerce.number().default(500),
+  LLM_RETRY_JITTER_PCT: z.coerce.number().default(0.2),
 
   // Redis (optional — falls back to in-memory)
   REDIS_URL: z.string().optional(),

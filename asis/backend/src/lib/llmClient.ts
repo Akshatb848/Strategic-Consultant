@@ -139,6 +139,9 @@ async function callGroq(model: string, systemPrompt: string, userMessage: string
   if (!apiKey) {
     throw new Error('GROQ_API_KEY is not configured and LLM fallback is disabled.');
   }
+  const timeoutMs = Number(process.env.LLM_REQUEST_TIMEOUT || 30000);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   const response = await fetch(`${getGroqApiBase()}/chat/completions`, {
     method: 'POST',
@@ -158,7 +161,9 @@ async function callGroq(model: string, systemPrompt: string, userMessage: string
         },
       ],
     }),
+    signal: controller.signal,
   });
+  clearTimeout(timeout);
 
   if (!response.ok) {
     const body = await response.text();
@@ -196,7 +201,17 @@ export async function callLLMWithRetry<T extends Record<string, unknown>>(
   }
 
   const model = modelForAgent(agentId);
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+  const retries = Number(process.env.LLM_MAX_RETRIES || maxAttempts || 3);
+  const baseMs = Number(process.env.LLM_RETRY_BASE_MS || 500);
+  const jitterPct = Math.max(0, Math.min(1, Number(process.env.LLM_RETRY_JITTER_PCT || 0.2)));
+
+  function backoffDelay(attempt: number) {
+    const delay = baseMs * Math.pow(2, attempt - 1);
+    const jitter = 1 + (Math.random() * 2 - 1) * jitterPct;
+    return Math.max(0, Math.floor(delay * jitter));
+  }
+
+  for (let attempt = 1; attempt <= retries; attempt += 1) {
     try {
       log.info(`Groq LLM call starting - agent=${agentId} model=${model} attempt=${attempt}/${maxAttempts}`);
       const response = await callGroq(model, systemPrompt, currentUserMessage);
@@ -209,7 +224,7 @@ export async function callLLMWithRetry<T extends Record<string, unknown>>(
         return { data: parsed, usedFallback: false, attempts: attempt, inputTokens, outputTokens };
       }
 
-      if (attempt < maxAttempts) {
+      if (attempt < retries) {
         log.warn(`Schema validation failed on attempt ${attempt} (required: ${requiredFields.join(', ')}) - retrying`);
         currentUserMessage = `The previous response could not be parsed or was missing required fields (${requiredFields.join(', ')}).
 Repair it into valid JSON without changing the underlying facts.
@@ -219,7 +234,7 @@ ${userMessage}
 
 Previous invalid response:
 ${rawText.slice(0, 6000)}`;
-        await sleep(attempt * 800);
+        await sleep(backoffDelay(attempt));
       }
     } catch (error: unknown) {
       const err = error as Error & { status?: number; retryAfter?: number };
@@ -229,9 +244,14 @@ ${rawText.slice(0, 6000)}`;
         await sleep(retryAfter * 1000);
         continue;
       }
-      log.error(`Groq LLM call error on attempt ${attempt}: ${err.message || String(error)}`);
-      if (attempt < maxAttempts) {
-        await sleep(attempt * 1200);
+      // Handle abort / timeout
+      if (err.message && err.message.includes('The operation was aborted') || err.message.includes('timed out')) {
+        log.warn(`Groq LLM request timed out on attempt ${attempt}`);
+      } else {
+        log.error(`Groq LLM call error on attempt ${attempt}: ${err.message || String(error)}`);
+      }
+      if (attempt < retries) {
+        await sleep(backoffDelay(attempt));
       }
     }
   }
