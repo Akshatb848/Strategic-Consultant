@@ -11,8 +11,7 @@ from litellm import completion
 from asis.backend.config.logging import logger
 from asis.backend.config.settings import get_settings
 
-# ── Model pricing table (USD per 1M tokens, input/output) ────────────────────
-# Updated April 2026 — adjust as providers change pricing.
+# Model pricing table (USD per 1M tokens, input/output).
 _MODEL_COST_PER_1M: dict[str, tuple[float, float]] = {
     "claude-sonnet-4-5": (3.0, 15.0),
     "claude-haiku-4-5": (0.25, 1.25),
@@ -27,12 +26,14 @@ _MODEL_COST_PER_1M: dict[str, tuple[float, float]] = {
     "gpt-oss-120b": (0.15, 0.60),
 }
 
-_DEFAULT_COST_PER_1M = (1.0, 4.0)  # conservative fallback
+_DEFAULT_COST_PER_1M = (1.0, 4.0)
 
 
 def _estimate_cost(model: str, tokens_in: int, tokens_out: int) -> float:
     """Return cost in USD for a single LLM call."""
-    model_key = model.split("/")[-1].lower()  # strip provider prefix
+    model_key = model.split("/")[-1].lower()
+    if model_key.endswith(":free") or model.lower().endswith("openrouter/free"):
+        return 0.0
     price_in, price_out = _MODEL_COST_PER_1M.get(model_key, _DEFAULT_COST_PER_1M)
     return round((tokens_in * price_in + tokens_out * price_out) / 1_000_000, 8)
 
@@ -53,13 +54,62 @@ class LiteLLMProxy:
         if candidate in explicit:
             return explicit[candidate]
         lowered = candidate.lower()
-        if lowered.startswith(("groq/", "openai/gpt-oss-", "llama-3.3-70b")):
+        native_groq_models = {
+            settings.groq_model_primary,
+            settings.groq_model_fast,
+            settings.groq_model_reasoning,
+        }
+        if candidate in native_groq_models or lowered.startswith(
+            (
+                "groq/",
+                "llama-",
+                "mixtral-",
+                "gemma-",
+                "deepseek-",
+                "openai/gpt-oss-",
+                "gpt-oss-",
+            )
+        ):
             return candidate
         if "reason" in lowered or agent_id in {"financial_reasoning", "quant", "cove", "strategic_options"}:
             return settings.groq_model_reasoning
         if "flash" in lowered or "fast" in lowered or agent_id == "orchestrator":
             return settings.groq_model_fast
         return settings.groq_model_primary
+
+    @staticmethod
+    def _openrouter_model_alias(settings, candidate: str, agent_id: str | None) -> str:
+        explicit = {
+            settings.litellm_model_fast: settings.openrouter_model_fast,
+            settings.litellm_model_primary: settings.openrouter_model_primary,
+            settings.litellm_model_gemini_flash: settings.openrouter_model_fast,
+            settings.litellm_model_gemini_pro: settings.openrouter_model_primary,
+            settings.litellm_model_phi_reasoning: settings.openrouter_model_reasoning,
+            settings.litellm_model_qwen_strategy: settings.openrouter_model_reasoning,
+            settings.litellm_model_arctic_research: settings.openrouter_model_primary,
+            settings.litellm_model_llama_governance: settings.openrouter_model_primary,
+            settings.groq_model_primary: settings.openrouter_model_primary,
+            settings.groq_model_fast: settings.openrouter_model_fast,
+            settings.groq_model_reasoning: settings.openrouter_model_reasoning,
+        }
+        if candidate in explicit:
+            candidate = explicit[candidate]
+        else:
+            lowered = candidate.lower()
+            if "/" in candidate:
+                candidate = candidate
+            elif "reason" in lowered or agent_id in {"financial_reasoning", "quant", "cove", "strategic_options"}:
+                candidate = settings.openrouter_model_reasoning
+            elif "flash" in lowered or "fast" in lowered or agent_id == "orchestrator":
+                candidate = settings.openrouter_model_fast
+            elif "/" not in candidate:
+                candidate = settings.openrouter_model_primary
+
+        if candidate.startswith("openrouter/") and candidate != "openrouter/free":
+            return candidate
+        if candidate.startswith("openrouter/"):
+            return f"openrouter/{candidate}"
+        return f"openrouter/{candidate}"
 
     @staticmethod
     def _extract_json_payload(content: str) -> dict[str, Any]:
@@ -88,13 +138,20 @@ class LiteLLMProxy:
     ) -> dict[str, Any] | None:
         settings = get_settings()
         use_proxy = bool(settings.litellm_proxy_url and settings.litellm_master_key)
+        use_openrouter = bool(settings.openrouter_api_key)
         use_direct_groq = bool(settings.groq_api_key)
-        if not use_proxy and not use_direct_groq:
+        if not use_proxy and not use_openrouter and not use_direct_groq:
             return None
 
         candidate_models = [value for value in (models or [model or settings.litellm_model_primary]) if value]
+        providers: list[str] = []
+        if use_proxy:
+            providers.append("litellm_proxy")
+        if use_openrouter:
+            providers.append("openrouter")
+        if use_direct_groq:
+            providers.append("groq_direct")
 
-        # Build Langfuse callback if enabled
         langfuse_trace_id: str | None = None
         langfuse_callbacks: list = []
         if settings.langfuse_enabled and settings.langfuse_public_key and settings.langfuse_secret_key:
@@ -115,88 +172,109 @@ class LiteLLMProxy:
             except Exception as exc:
                 logger.warning("langfuse_callback_init_failed", error=str(exc))
 
-        for candidate in candidate_models:
-            t0 = time.perf_counter()
-            try:
+        attempted: set[tuple[str, str]] = set()
+        for provider_mode in providers:
+            provider_candidates = list(candidate_models)
+            if provider_mode == "openrouter":
+                provider_candidates.append(settings.openrouter_model_fallback)
+
+            for candidate in provider_candidates:
+                t0 = time.perf_counter()
                 runtime_model = candidate
-                api_base = settings.litellm_proxy_url
-                api_key = settings.litellm_master_key
-                provider_mode = "litellm_proxy"
-                if not use_proxy:
-                    runtime_model = self._groq_model_alias(settings, candidate, agent_id)
-                    api_base = settings.groq_api_base
-                    api_key = settings.groq_api_key
-                    provider_mode = "groq_direct"
+                try:
+                    api_base = settings.litellm_proxy_url
+                    api_key = settings.litellm_master_key
+                    extra_headers: dict[str, str] = {}
 
-                kwargs: dict[str, Any] = {
-                    "model": runtime_model,
-                    "api_base": api_base,
-                    "api_key": api_key,
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {
-                            "role": "user",
-                            "content": user_prompt + "\nReturn only valid JSON with double-quoted keys.",
-                        },
-                    ],
-                    "temperature": 0.2,
-                }
-                if langfuse_callbacks:
-                    kwargs["callbacks"] = langfuse_callbacks
+                    if provider_mode == "openrouter":
+                        runtime_model = self._openrouter_model_alias(settings, candidate, agent_id)
+                        api_base = settings.openrouter_api_base
+                        api_key = settings.openrouter_api_key
+                        if settings.openrouter_site_url:
+                            extra_headers["HTTP-Referer"] = settings.openrouter_site_url
+                        if settings.openrouter_app_title:
+                            extra_headers["X-OpenRouter-Title"] = settings.openrouter_app_title
+                    elif provider_mode == "groq_direct":
+                        runtime_model = self._groq_model_alias(settings, candidate, agent_id)
+                        api_base = settings.groq_api_base
+                        api_key = settings.groq_api_key
 
-                response = completion(**kwargs)
-                latency_ms = int((time.perf_counter() - t0) * 1000)
+                    dedupe_key = (provider_mode, runtime_model)
+                    if dedupe_key in attempted:
+                        continue
+                    attempted.add(dedupe_key)
 
-                content = response["choices"][0]["message"]["content"]
-                if isinstance(content, list):
-                    text = "".join(part.get("text", "") for part in content if isinstance(part, dict))
-                else:
-                    text = content
+                    kwargs: dict[str, Any] = {
+                        "model": runtime_model,
+                        "api_base": api_base,
+                        "api_key": api_key,
+                        "messages": [
+                            {"role": "system", "content": system_prompt},
+                            {
+                                "role": "user",
+                                "content": user_prompt + "\nReturn only valid JSON with double-quoted keys.",
+                            },
+                        ],
+                        "temperature": 0.2,
+                    }
+                    if settings.litellm_ssl_verify is not None:
+                        kwargs["ssl_verify"] = settings.litellm_ssl_verify
+                    if extra_headers:
+                        kwargs["extra_headers"] = extra_headers
+                    if langfuse_callbacks:
+                        kwargs["callbacks"] = langfuse_callbacks
 
-                payload = self._extract_json_payload(text)
+                    response = completion(**kwargs)
+                    latency_ms = int((time.perf_counter() - t0) * 1000)
 
-                # ── Capture token usage and cost ──────────────────────────────
-                usage = getattr(response, "usage", None) or {}
-                if hasattr(usage, "__dict__"):
-                    usage = usage.__dict__
-                tokens_in = int(usage.get("prompt_tokens") or 0)
-                tokens_out = int(usage.get("completion_tokens") or 0)
-                cost_usd = _estimate_cost(runtime_model, tokens_in, tokens_out)
+                    content = response["choices"][0]["message"]["content"]
+                    if isinstance(content, list):
+                        text = "".join(part.get("text", "") for part in content if isinstance(part, dict))
+                    else:
+                        text = content
 
-                payload["_model_used"] = runtime_model
-                payload["_langfuse_trace_id"] = langfuse_trace_id
-                payload["_token_usage"] = {
-                    "tokens_in": tokens_in,
-                    "tokens_out": tokens_out,
-                    "cost_usd": cost_usd,
-                    "latency_ms": latency_ms,
-                    "provider_mode": provider_mode,
-                }
+                    payload = self._extract_json_payload(text)
+                    usage = getattr(response, "usage", None) or {}
+                    if hasattr(usage, "__dict__"):
+                        usage = usage.__dict__
+                    tokens_in = int(usage.get("prompt_tokens") or 0)
+                    tokens_out = int(usage.get("completion_tokens") or 0)
+                    cost_usd = _estimate_cost(runtime_model, tokens_in, tokens_out)
 
-                logger.info(
-                    "llm_call_success",
-                    model=runtime_model,
-                    requested_model=candidate,
-                    provider_mode=provider_mode,
-                    agent_id=agent_id,
-                    analysis_id=analysis_id,
-                    tokens_in=tokens_in,
-                    tokens_out=tokens_out,
-                    cost_usd=cost_usd,
-                    latency_ms=latency_ms,
-                )
+                    payload["_model_used"] = runtime_model
+                    payload["_langfuse_trace_id"] = langfuse_trace_id
+                    payload["_token_usage"] = {
+                        "tokens_in": tokens_in,
+                        "tokens_out": tokens_out,
+                        "cost_usd": cost_usd,
+                        "latency_ms": latency_ms,
+                        "provider_mode": provider_mode,
+                    }
 
-                return payload
+                    logger.info(
+                        "llm_call_success",
+                        model=runtime_model,
+                        requested_model=candidate,
+                        provider_mode=provider_mode,
+                        agent_id=agent_id,
+                        analysis_id=analysis_id,
+                        tokens_in=tokens_in,
+                        tokens_out=tokens_out,
+                        cost_usd=cost_usd,
+                        latency_ms=latency_ms,
+                    )
 
-            except Exception as exc:  # pragma: no cover - exercised in live environments
-                logger.warning(
-                    "litellm_proxy_failed",
-                    model=runtime_model,
-                    requested_model=candidate,
-                    provider_mode=provider_mode,
-                    agent_id=agent_id,
-                    error=str(exc),
-                )
+                    return payload
+
+                except Exception as exc:  # pragma: no cover - exercised in live environments
+                    logger.warning(
+                        "litellm_proxy_failed",
+                        model=runtime_model,
+                        requested_model=candidate,
+                        provider_mode=provider_mode,
+                        agent_id=agent_id,
+                        error=str(exc),
+                    )
         return None
 
 

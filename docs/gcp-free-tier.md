@@ -86,7 +86,7 @@ Edit `.env.gcp` before the first launch. At minimum set:
 The rest of the free-tier defaults are already set:
 
 - SQLite persistence via `/data/asis_v4.db`
-- `ASIS_DEMO_MODE=true`
+- `ASIS_DEMO_MODE=false`
 - `RUN_ANALYSES_INLINE=true`
 - `ENABLE_AUTO_SCHEMA=true`
 - `SECURE_COOKIES=false`

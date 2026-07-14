@@ -2,9 +2,38 @@ from __future__ import annotations
 
 import os
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
+from dotenv import load_dotenv
 from pydantic import BaseModel, Field
+
+
+def _install_os_truststore() -> bool:
+    try:
+        import truststore
+
+        truststore.inject_into_ssl()
+        return True
+    except Exception:
+        return False
+
+
+_OS_TRUSTSTORE_ACTIVE = _install_os_truststore()
+
+
+def _load_env_files() -> None:
+    seen: set[Path] = set()
+    for parent in Path(__file__).resolve().parents:
+        for filename in (".env", ".env.local"):
+            env_path = parent / filename
+            if env_path in seen or not env_path.is_file():
+                continue
+            load_dotenv(env_path, override=False)
+            seen.add(env_path)
+
+
+_load_env_files()
 
 
 def _env(name: str, default: str | None = None) -> str | None:
@@ -13,6 +42,35 @@ def _env(name: str, default: str | None = None) -> str | None:
 
 def _env_bool(name: str, default: bool) -> bool:
     return os.getenv(name, str(default)).lower() == "true"
+
+
+def _env_bool_or_path(name: str, default: str | bool | None = None) -> str | bool | None:
+    value = os.getenv(name)
+    if value is None or value.strip() == "":
+        return default
+    normalized = value.strip().lower()
+    if normalized in {"true", "1", "yes", "on"}:
+        return True
+    if normalized in {"false", "0", "no", "off"}:
+        return False
+    return value
+
+
+def _default_ssl_verify() -> str | bool | None:
+    configured = _env_bool_or_path("LITELLM_SSL_VERIFY")
+    if configured is not None:
+        return configured
+    bundle = _env("SSL_CERT_FILE") or _env("REQUESTS_CA_BUNDLE")
+    if bundle:
+        return bundle
+    if _OS_TRUSTSTORE_ACTIVE:
+        return True
+    try:
+        import certifi
+
+        return certifi.where()
+    except Exception:
+        return None
 
 
 def _env_int(name: str, default: int) -> int:
@@ -57,6 +115,24 @@ class Settings(BaseModel):
     groq_model_primary: str = Field(default_factory=lambda: _env("GROQ_MODEL_PRIMARY", "llama-3.3-70b-versatile") or "llama-3.3-70b-versatile")
     groq_model_fast: str = Field(default_factory=lambda: _env("GROQ_MODEL_FAST", "llama-3.1-8b-instant") or "llama-3.1-8b-instant")
     groq_model_reasoning: str = Field(default_factory=lambda: _env("GROQ_MODEL_REASONING", "llama-3.3-70b-versatile") or "llama-3.3-70b-versatile")
+    openrouter_api_key: str | None = Field(default_factory=lambda: _env("OPENROUTER_API_KEY"))
+    openrouter_api_base: str = Field(default_factory=lambda: _env("OPENROUTER_API_BASE", "https://openrouter.ai/api/v1") or "https://openrouter.ai/api/v1")
+    openrouter_model_primary: str = Field(
+        default_factory=lambda: _env("OPENROUTER_MODEL_PRIMARY", "nvidia/nemotron-3-super-120b-a12b:free")
+        or "nvidia/nemotron-3-super-120b-a12b:free"
+    )
+    openrouter_model_fast: str = Field(
+        default_factory=lambda: _env("OPENROUTER_MODEL_FAST", "google/gemma-4-31b-it:free")
+        or "google/gemma-4-31b-it:free"
+    )
+    openrouter_model_reasoning: str = Field(
+        default_factory=lambda: _env("OPENROUTER_MODEL_REASONING", "nvidia/nemotron-3-ultra-550b-a55b:free")
+        or "nvidia/nemotron-3-ultra-550b-a55b:free"
+    )
+    openrouter_model_fallback: str = Field(default_factory=lambda: _env("OPENROUTER_MODEL_FALLBACK", "openrouter/free") or "openrouter/free")
+    openrouter_site_url: str | None = Field(default_factory=lambda: _env("OPENROUTER_SITE_URL") or _env("FRONTEND_URL"))
+    openrouter_app_title: str = Field(default_factory=lambda: _env("OPENROUTER_APP_TITLE", "ASIS Strategic Consultant") or "ASIS Strategic Consultant")
+    litellm_ssl_verify: str | bool | None = Field(default_factory=_default_ssl_verify)
     litellm_model_primary: str = Field(default_factory=lambda: _env("LITELLM_MODEL_PRIMARY", "claude-sonnet-4-5") or "claude-sonnet-4-5")
     litellm_model_fast: str = Field(default_factory=lambda: _env("LITELLM_MODEL_FAST", "claude-haiku-4-5") or "claude-haiku-4-5")
     litellm_model_gemini_pro: str = Field(default_factory=lambda: _env("LITELLM_MODEL_GEMINI_PRO", "gemini-2.5-pro") or "gemini-2.5-pro")
@@ -66,15 +142,10 @@ class Settings(BaseModel):
     litellm_model_arctic_research: str = Field(default_factory=lambda: _env("LITELLM_MODEL_ARCTIC_RESEARCH", "arctic-research") or "arctic-research")
     litellm_model_llama_governance: str = Field(default_factory=lambda: _env("LITELLM_MODEL_LLAMA_GOVERNANCE", "llama-governance") or "llama-governance")
     embedding_model: str = Field(default_factory=lambda: _env("EMBEDDING_MODEL", "text-embedding-3-small") or "text-embedding-3-small")
-    demo_mode: bool = Field(default_factory=lambda: _env_bool("ASIS_DEMO_MODE", True))
+    demo_mode: bool = Field(default_factory=lambda: _env_bool("ASIS_DEMO_MODE", False))
     allow_llm_fallback: bool = Field(
         default_factory=lambda: (
-            _env(
-                "ALLOW_LLM_FALLBACK",
-                "true"
-                if (_env("ENVIRONMENT", _env("NODE_ENV", "development")) or "development") != "production"
-                else "false",
-            )
+            _env("ALLOW_LLM_FALLBACK", "false")
             or "false"
         ).lower()
         == "true"

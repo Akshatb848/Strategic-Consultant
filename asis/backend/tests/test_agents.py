@@ -28,6 +28,8 @@ def test_llm_proxy_uses_direct_groq_when_proxy_is_absent(monkeypatch):
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.setenv("ALLOW_LLM_FALLBACK", "false")
     monkeypatch.setenv("GROQ_API_KEY", "test-groq-key")
+    monkeypatch.setenv("LITELLM_SSL_VERIFY", "C:/corp/ca-bundle.pem")
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     monkeypatch.delenv("LITELLM_PROXY_URL", raising=False)
     monkeypatch.delenv("LITELLM_MASTER_KEY", raising=False)
     _clear_settings_cache()
@@ -70,6 +72,168 @@ def test_llm_proxy_uses_direct_groq_when_proxy_is_absent(monkeypatch):
     assert captured["api_key"] == "test-groq-key"
     assert captured["api_base"] == "https://api.groq.com/openai/v1"
     assert captured["model"] == "llama-3.3-70b-versatile"
+    assert captured["ssl_verify"] == "C:/corp/ca-bundle.pem"
+    assert payload["_token_usage"]["provider_mode"] == "groq_direct"
+
+
+def test_llm_proxy_preserves_native_groq_model_names(monkeypatch):
+    monkeypatch.setenv("ASIS_DEMO_MODE", "false")
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("ALLOW_LLM_FALLBACK", "false")
+    monkeypatch.setenv("GROQ_API_KEY", "test-groq-key")
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("LITELLM_PROXY_URL", raising=False)
+    monkeypatch.delenv("LITELLM_MASTER_KEY", raising=False)
+    _clear_settings_cache()
+
+    captured: dict[str, object] = {}
+
+    class MockResponse(dict):
+        usage = {"prompt_tokens": 8, "completion_tokens": 9}
+
+    def fake_completion(**kwargs):
+        captured.update(kwargs)
+        return MockResponse(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "confidence_score": 0.7,
+                                    "citations": [],
+                                }
+                            )
+                        }
+                    }
+                ]
+            }
+        )
+
+    monkeypatch.setattr("asis.backend.agents.llm_proxy.completion", fake_completion)
+
+    payload = llm_proxy.generate_json(
+        system_prompt="system",
+        user_prompt="user",
+        models=["llama-3.1-8b-instant"],
+        agent_id="market_intel",
+        analysis_id="analysis-456",
+    )
+
+    assert payload is not None
+    assert captured["model"] == "llama-3.1-8b-instant"
+    assert payload["_model_used"] == "llama-3.1-8b-instant"
+
+
+def test_llm_proxy_uses_openrouter_before_direct_groq(monkeypatch):
+    monkeypatch.setenv("ASIS_DEMO_MODE", "false")
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("ALLOW_LLM_FALLBACK", "false")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-openrouter-key")
+    monkeypatch.setenv("OPENROUTER_SITE_URL", "https://asis.example.com")
+    monkeypatch.setenv("OPENROUTER_APP_TITLE", "ASIS Test")
+    monkeypatch.setenv("GROQ_API_KEY", "test-groq-key")
+    monkeypatch.delenv("LITELLM_PROXY_URL", raising=False)
+    monkeypatch.delenv("LITELLM_MASTER_KEY", raising=False)
+    _clear_settings_cache()
+
+    captured: dict[str, object] = {}
+
+    class MockResponse(dict):
+        usage = {"prompt_tokens": 11, "completion_tokens": 12}
+
+    def fake_completion(**kwargs):
+        captured.update(kwargs)
+        return MockResponse(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "confidence_score": 0.77,
+                                    "citations": [],
+                                }
+                            )
+                        }
+                    }
+                ]
+            }
+        )
+
+    monkeypatch.setattr("asis.backend.agents.llm_proxy.completion", fake_completion)
+
+    payload = llm_proxy.generate_json(
+        system_prompt="system",
+        user_prompt="user",
+        models=["claude-sonnet-4-5"],
+        agent_id="market_intel",
+        analysis_id="analysis-openrouter",
+    )
+
+    assert payload is not None
+    assert captured["api_key"] == "test-openrouter-key"
+    assert captured["api_base"] == "https://openrouter.ai/api/v1"
+    assert captured["model"] == "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
+    assert captured["extra_headers"] == {
+        "HTTP-Referer": "https://asis.example.com",
+        "X-OpenRouter-Title": "ASIS Test",
+    }
+    assert payload["_token_usage"]["provider_mode"] == "openrouter"
+    assert payload["_token_usage"]["cost_usd"] == 0.0
+
+
+def test_llm_proxy_falls_back_from_openrouter_to_groq(monkeypatch):
+    monkeypatch.setenv("ASIS_DEMO_MODE", "false")
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("ALLOW_LLM_FALLBACK", "false")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-openrouter-key")
+    monkeypatch.setenv("OPENROUTER_MODEL_FALLBACK", "openrouter/free")
+    monkeypatch.setenv("GROQ_API_KEY", "test-groq-key")
+    monkeypatch.delenv("LITELLM_PROXY_URL", raising=False)
+    monkeypatch.delenv("LITELLM_MASTER_KEY", raising=False)
+    _clear_settings_cache()
+
+    attempted_models: list[str] = []
+
+    class MockResponse(dict):
+        usage = {"prompt_tokens": 9, "completion_tokens": 10}
+
+    def fake_completion(**kwargs):
+        attempted_models.append(str(kwargs["model"]))
+        if str(kwargs["model"]).startswith("openrouter/"):
+            raise RuntimeError("openrouter unavailable")
+        return MockResponse(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "confidence_score": 0.72,
+                                    "citations": [],
+                                }
+                            )
+                        }
+                    }
+                ]
+            }
+        )
+
+    monkeypatch.setattr("asis.backend.agents.llm_proxy.completion", fake_completion)
+
+    payload = llm_proxy.generate_json(
+        system_prompt="system",
+        user_prompt="user",
+        models=["claude-haiku-4-5"],
+        agent_id="orchestrator",
+        analysis_id="analysis-openrouter-fallback",
+    )
+
+    assert payload is not None
+    assert attempted_models[0] == "openrouter/google/gemma-4-31b-it:free"
+    assert "openrouter/openrouter/free" in attempted_models
+    assert attempted_models[-1] == "llama-3.1-8b-instant"
     assert payload["_token_usage"]["provider_mode"] == "groq_direct"
 
 

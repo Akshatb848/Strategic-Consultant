@@ -26,6 +26,7 @@ dependencies = [
   "sqlalchemy>=2.0",
   "scipy>=1.10",
   "structlog>=24.4",
+  "truststore>=0.10",
   "uvicorn>=0.32",
 ]
 

@@ -25,6 +25,8 @@ jobs:
       VM_HOST: ${{ vars.GCP_FREE_VM_HOST || secrets.GCP_FREE_VM_HOST }}
       VM_USER: ${{ vars.GCP_FREE_VM_USER || secrets.GCP_FREE_VM_USER }}
       VM_DATA_DIR: /opt/asis/data
+      DEPLOY_REF_NAME: ${{ github.ref_name }}
+      DEPLOY_SHA: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
 
@@ -67,6 +69,8 @@ jobs:
           VM_HOST: ${{ env.VM_HOST }}
           VM_USER: ${{ env.VM_USER }}
           VM_DATA_DIR: ${{ env.VM_DATA_DIR }}
+          DEPLOY_REF_NAME: ${{ env.DEPLOY_REF_NAME }}
+          DEPLOY_SHA: ${{ env.DEPLOY_SHA }}
           JWT_SECRET: ${{ secrets.GCP_FREE_JWT_SECRET }}
           REPOSITORY: ${{ github.repository }}
           SSH_PRIVATE_KEY: ${{ secrets.GCP_FREE_VM_SSH_KEY }}
@@ -83,6 +87,14 @@ jobs:
           GROQ_MODEL_PRIMARY: ${{ vars.GROQ_MODEL_PRIMARY || secrets.GROQ_MODEL_PRIMARY }}
           GROQ_MODEL_FAST: ${{ vars.GROQ_MODEL_FAST || secrets.GROQ_MODEL_FAST }}
           GROQ_MODEL_REASONING: ${{ vars.GROQ_MODEL_REASONING || secrets.GROQ_MODEL_REASONING }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          OPENROUTER_API_BASE: ${{ vars.OPENROUTER_API_BASE || secrets.OPENROUTER_API_BASE }}
+          OPENROUTER_MODEL_PRIMARY: ${{ vars.OPENROUTER_MODEL_PRIMARY || secrets.OPENROUTER_MODEL_PRIMARY }}
+          OPENROUTER_MODEL_FAST: ${{ vars.OPENROUTER_MODEL_FAST || secrets.OPENROUTER_MODEL_FAST }}
+          OPENROUTER_MODEL_REASONING: ${{ vars.OPENROUTER_MODEL_REASONING || secrets.OPENROUTER_MODEL_REASONING }}
+          OPENROUTER_MODEL_FALLBACK: ${{ vars.OPENROUTER_MODEL_FALLBACK || secrets.OPENROUTER_MODEL_FALLBACK }}
+          OPENROUTER_SITE_URL: ${{ vars.OPENROUTER_SITE_URL || secrets.OPENROUTER_SITE_URL }}
+          OPENROUTER_APP_TITLE: ${{ vars.OPENROUTER_APP_TITLE || secrets.OPENROUTER_APP_TITLE }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPEN_MODEL_API_BASE: ${{ vars.OPEN_MODEL_API_BASE || secrets.OPEN_MODEL_API_BASE }}
@@ -141,6 +153,8 @@ jobs:
             "FRONTEND_IMAGE=${FRONTEND_IMAGE}"
             "VM_HOST=${VM_HOST}"
             "VM_DATA_DIR=${VM_DATA_DIR}"
+            "DEPLOY_REF_NAME=${DEPLOY_REF_NAME}"
+            "DEPLOY_SHA=${DEPLOY_SHA}"
             "JWT_SECRET=${JWT_SECRET}"
             "REPOSITORY=${REPOSITORY}"
             "GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}"
@@ -156,6 +170,14 @@ jobs:
             "GROQ_MODEL_PRIMARY=${GROQ_MODEL_PRIMARY:-}"
             "GROQ_MODEL_FAST=${GROQ_MODEL_FAST:-}"
             "GROQ_MODEL_REASONING=${GROQ_MODEL_REASONING:-}"
+            "OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}"
+            "OPENROUTER_API_BASE=${OPENROUTER_API_BASE:-}"
+            "OPENROUTER_MODEL_PRIMARY=${OPENROUTER_MODEL_PRIMARY:-}"
+            "OPENROUTER_MODEL_FAST=${OPENROUTER_MODEL_FAST:-}"
+            "OPENROUTER_MODEL_REASONING=${OPENROUTER_MODEL_REASONING:-}"
+            "OPENROUTER_MODEL_FALLBACK=${OPENROUTER_MODEL_FALLBACK:-}"
+            "OPENROUTER_SITE_URL=${OPENROUTER_SITE_URL:-}"
+            "OPENROUTER_APP_TITLE=${OPENROUTER_APP_TITLE:-}"
             "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}"
             "OPENAI_API_KEY=${OPENAI_API_KEY:-}"
             "OPEN_MODEL_API_BASE=${OPEN_MODEL_API_BASE:-}"
@@ -409,14 +431,9 @@ jobs:
           fi
 
           cd "${APP_DIR}"
-          git fetch origin
-          if git show-ref --verify --quiet refs/heads/main; then
-            git checkout main
-          else
-            git checkout -b main origin/main
-          fi
-          # This checkout is automation-owned, so keep it force-synced to origin/main.
-          git reset --hard origin/main
+          git fetch origin "${DEPLOY_REF_NAME}"
+          # This checkout is automation-owned, so keep it force-synced to the workflow commit.
+          git checkout --detach "${DEPLOY_SHA}"
           git clean -fd
 
           cat > .env.gcp <<EOF
@@ -446,6 +463,14 @@ jobs:
           GROQ_MODEL_PRIMARY=${GROQ_MODEL_PRIMARY:-llama-3.3-70b-versatile}
           GROQ_MODEL_FAST=${GROQ_MODEL_FAST:-llama-3.1-8b-instant}
           GROQ_MODEL_REASONING=${GROQ_MODEL_REASONING:-llama-3.3-70b-versatile}
+          OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+          OPENROUTER_API_BASE=${OPENROUTER_API_BASE:-https://openrouter.ai/api/v1}
+          OPENROUTER_MODEL_PRIMARY=${OPENROUTER_MODEL_PRIMARY:-nvidia/nemotron-3-super-120b-a12b:free}
+          OPENROUTER_MODEL_FAST=${OPENROUTER_MODEL_FAST:-google/gemma-4-31b-it:free}
+          OPENROUTER_MODEL_REASONING=${OPENROUTER_MODEL_REASONING:-nvidia/nemotron-3-ultra-550b-a55b:free}
+          OPENROUTER_MODEL_FALLBACK=${OPENROUTER_MODEL_FALLBACK:-openrouter/free}
+          OPENROUTER_SITE_URL=${OPENROUTER_SITE_URL:-http://${VM_HOST}:3001}
+          OPENROUTER_APP_TITLE=${OPENROUTER_APP_TITLE:-ASIS Strategic Consultant}
           ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
           ANTHROPIC_MAX_TOKENS=4096
           OPENAI_API_KEY=${OPENAI_API_KEY:-}
