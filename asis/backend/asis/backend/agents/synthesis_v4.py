@@ -6,6 +6,8 @@ import re
 from datetime import datetime
 from statistics import mean
 
+from pydantic import ValidationError
+
 from asis.backend.agents.base import BaseAgent
 from asis.backend.agents.llm_proxy import llm_proxy
 from asis.backend.agents.references import build_citations
@@ -28,6 +30,33 @@ class V4SynthesisAgent(BaseAgent):
     agent_id = "synthesis"
     agent_name = "Synthesis"
     framework = "StrategicBriefV4 board synthesis"
+    _SCHEMA_SENSITIVE_KEYS = {
+        "agent_collaboration_trace",
+        "balanced_scorecard",
+        "citations",
+        "exhibit_registry",
+        "executive_summary",
+        "framework_outputs",
+        "implementation_roadmap",
+        "quality_report",
+        "report_metadata",
+        "roadmap",
+        "so_what_callouts",
+        "verification",
+    }
+    _LIVE_PROSE_KEYS = (
+        "decision_statement",
+        "decision_confidence",
+        "decision_rationale",
+        "decision_evidence",
+        "board_narrative",
+        "recommendation",
+        "executive_summary",
+        "section_action_titles",
+        "so_what_callouts",
+        "overall_confidence",
+        "confidence_score",
+    )
 
     def system_prompt(self) -> str:
         return """
@@ -216,14 +245,89 @@ CRITICAL RULES:
         )
         merged["confidence_score"] = merged.get("confidence_score") or merged.get("overall_confidence") or scaffold.get("confidence_score", 0.68)
 
-        validated = StrategicBriefV4.model_validate(merged).model_dump(mode="json")
+        validated, correction_reason = self._validate_or_repair_generated_brief(scaffold, merged)
         validated = self._sanitize_semantic_keys(validated)
         validated["confidence_score"] = merged["confidence_score"]
+        if correction_reason:
+            validated["_correction_reason"] = correction_reason
+            validated["_self_corrected"] = True
         if isinstance(merged.get("evidence_contract"), dict):
             validated["evidence_contract"] = deepcopy(merged["evidence_contract"])
         if isinstance(merged.get("export_validation"), dict):
             validated["export_validation"] = deepcopy(merged["export_validation"])
         return validated
+
+    def _validate_or_repair_generated_brief(self, scaffold: dict, merged: dict) -> tuple[dict, str | None]:
+        try:
+            return StrategicBriefV4.model_validate(merged).model_dump(mode="json"), None
+        except ValidationError as first_exc:
+            first_summary = self._validation_summary(first_exc)
+
+        repaired = deepcopy(merged)
+        replaced = self._replace_invalid_schema_sections(scaffold, repaired, first_summary)
+        try:
+            validated = StrategicBriefV4.model_validate(repaired).model_dump(mode="json")
+            reason = self._repair_reason(first_summary, replaced)
+            return validated, reason
+        except ValidationError as second_exc:
+            second_summary = self._validation_summary(second_exc)
+
+        salvaged = self._salvage_live_prose(scaffold, repaired)
+        validated = StrategicBriefV4.model_validate(salvaged).model_dump(mode="json")
+        reason = self._repair_reason(first_summary, replaced, second_summary, fallback_used=True)
+        return validated, reason
+
+    def _replace_invalid_schema_sections(self, scaffold: dict, repaired: dict, issues: list[dict[str, str]]) -> list[str]:
+        invalid_top_level = {issue["field"].split(".", 1)[0] for issue in issues if issue.get("field")}
+        keys_to_replace = sorted((invalid_top_level & self._SCHEMA_SENSITIVE_KEYS) | {"framework_outputs"})
+        replaced: list[str] = []
+        for key in keys_to_replace:
+            if key in scaffold:
+                repaired[key] = deepcopy(scaffold[key])
+                replaced.append(key)
+        return replaced
+
+    def _salvage_live_prose(self, scaffold: dict, candidate: dict) -> dict:
+        salvaged = deepcopy(scaffold)
+        for key in self._LIVE_PROSE_KEYS:
+            if key not in candidate:
+                continue
+            trial = deepcopy(salvaged)
+            trial[key] = deepcopy(candidate[key])
+            if key == "executive_summary" and isinstance(trial.get("executive_summary"), dict):
+                trial["executive_summary"]["headline"] = trial.get("decision_statement") or scaffold.get("decision_statement")
+            try:
+                StrategicBriefV4.model_validate(trial)
+            except ValidationError:
+                continue
+            salvaged = trial
+        return salvaged
+
+    @staticmethod
+    def _validation_summary(exc: ValidationError, *, limit: int = 8) -> list[dict[str, str]]:
+        issues: list[dict[str, str]] = []
+        for error in exc.errors()[:limit]:
+            loc = ".".join(str(part) for part in error.get("loc", ())) or "root"
+            issues.append({"field": loc, "message": str(error.get("msg") or "invalid value")})
+        return issues
+
+    @staticmethod
+    def _repair_reason(
+        first_summary: list[dict[str, str]],
+        replaced: list[str],
+        second_summary: list[dict[str, str]] | None = None,
+        *,
+        fallback_used: bool = False,
+    ) -> str:
+        first_text = "; ".join(f"{item['field']}: {item['message']}" for item in first_summary[:5])
+        replaced_text = ", ".join(replaced) if replaced else "no targeted sections"
+        reason = f"Repaired live synthesis schema output; replaced {replaced_text}. Initial validation: {first_text}"
+        if second_summary:
+            second_text = "; ".join(f"{item['field']}: {item['message']}" for item in second_summary[:3])
+            reason += f". Secondary validation: {second_text}"
+        if fallback_used:
+            reason += ". Used scaffold-backed salvage for final schema safety."
+        return reason[:1400]
 
     def _enforce_decision_narrative_consistency(self, scaffold: dict, merged: dict) -> dict:
         """Prevent generated prose from contradicting the deterministic decision banner."""

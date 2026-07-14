@@ -10,6 +10,7 @@ from asis.backend.agents.market_intel import MarketIntelAgent
 from asis.backend.agents.strategic_options import StrategicOptionsAgent
 from asis.backend.agents.synthesis_v4 import V4SynthesisAgent
 from asis.backend.config.settings import get_settings
+from asis.backend.schemas.v4 import StrategicBriefV4
 
 
 def _clear_settings_cache() -> None:
@@ -444,3 +445,97 @@ def test_synthesis_resets_generated_narrative_that_contradicts_decision():
     assert "do not proceed" not in merged["board_narrative"].lower()
     assert "recommend against" not in merged["board_narrative"].lower()
     assert merged["executive_summary"]["headline"] == merged["decision_statement"]
+
+
+def test_synthesis_repairs_invalid_live_schema_sections_without_fallback():
+    agent = V4SynthesisAgent()
+    scaffold = agent.local_result(
+        {
+            "analysis_id": "schema-repair",
+            "query": "Should Acme Advisory launch an AI governance practice in India through a partner-led model?",
+            "extracted_context": {
+                "company_name": "Acme Advisory",
+                "sector": "Consulting",
+                "geography": "India",
+                "decision_type": "enter",
+            },
+        }
+    )
+    generated = {
+        "decision_statement": "CONDITIONAL PROCEED - launch only after partner governance and compliance gates are proven.",
+        "board_narrative": "Live synthesis sees a credible growth option if partner controls and compliance gates are proven before scale.",
+        "recommendation": "Proceed conditionally after partner due diligence.",
+        "decision_rationale": "The opportunity is attractive, but execution should be gated by partner quality and compliance readiness.",
+        "framework_outputs": {
+            "pestle": {
+                "framework_name": "not_a_framework",
+                "agent_author": "market_intelligence",
+                "structured_data": {},
+                "narrative": "Malformed live framework payload.",
+                "confidence_score": 0.7,
+            }
+        },
+        "balanced_scorecard": {"financial": "not a perspective"},
+        "implementation_roadmap": [{"phase": 7, "actions": "not-a-list"}],
+    }
+
+    merged = agent._merge_generated_brief(scaffold, generated)
+    validated = StrategicBriefV4.model_validate(merged)
+
+    assert validated.board_narrative == generated["board_narrative"]
+    assert validated.recommendation == generated["recommendation"]
+    assert validated.framework_outputs["pestle"].framework_name.value == "pestle"
+    assert merged["_self_corrected"] is True
+    assert "framework_outputs" in merged["_correction_reason"]
+    assert "balanced_scorecard" in merged["_correction_reason"]
+
+
+def test_synthesis_run_persists_schema_repair_diagnostics(monkeypatch):
+    monkeypatch.setenv("ASIS_DEMO_MODE", "false")
+    monkeypatch.setenv("ALLOW_LLM_FALLBACK", "false")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-openrouter-key")
+    _clear_settings_cache()
+
+    def fake_generate_json(**_kwargs):
+        return {
+            "decision_statement": "CONDITIONAL PROCEED - launch only after partner and regulatory gates are met.",
+            "board_narrative": "Live synthesis supports a staged market entry with strong partner and regulatory gates.",
+            "framework_outputs": {
+                "pestle": {
+                    "framework_name": "invalid",
+                    "agent_author": "invalid",
+                    "structured_data": {},
+                    "narrative": "Invalid enum values should be repaired.",
+                    "confidence_score": 0.72,
+                }
+            },
+        }
+
+    monkeypatch.setattr("asis.backend.agents.synthesis_v4.llm_proxy.generate_json", fake_generate_json)
+
+    result = V4SynthesisAgent().run(
+        {
+            "analysis_id": "schema-repair-run",
+            "query": "Should Acme Advisory launch AI governance services in India in 2027?",
+            "extracted_context": {
+                "company_name": "Acme Advisory",
+                "sector": "Consulting",
+                "geography": "India",
+                "decision_type": "enter",
+            },
+            "market_intel_output": {},
+            "risk_assessment_output": {},
+            "competitor_analysis_output": {},
+            "geo_intel_output": {},
+            "financial_reasoning_output": {},
+            "strategic_options_output": {},
+            "framework_outputs": {},
+            "agent_collaboration_trace": [],
+        }
+    )
+
+    assert result.used_fallback is False
+    assert result.self_corrected is True
+    assert result.correction_reason
+    assert "framework_outputs" in result.correction_reason
+    assert StrategicBriefV4.model_validate(result.data)

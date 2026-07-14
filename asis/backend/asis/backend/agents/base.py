@@ -26,6 +26,8 @@ class BaseAgent(ABC):
         langfuse_trace_id = generated.pop("_langfuse_trace_id", None)
         token_usage = generated.pop("_token_usage", None)
         used_fallback = bool(generated.pop("_used_fallback", False))
+        correction_reason = generated.pop("_correction_reason", None)
+        self_corrected = bool(generated.pop("_self_corrected", False))
         return AgentOutput(
             agent_id=self.agent_id,
             agent_name=self.agent_name,
@@ -37,6 +39,8 @@ class BaseAgent(ABC):
             token_usage=token_usage,
             citations=generated.get("citations") or build_citations(state.get("extracted_context") or state.get("company_context") or {}),
             used_fallback=used_fallback,
+            correction_reason=correction_reason,
+            self_corrected=self_corrected,
             data=generated,
         )
 
