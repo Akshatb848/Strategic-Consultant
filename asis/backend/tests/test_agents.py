@@ -382,6 +382,42 @@ def test_agents_fail_fast_without_live_provider_when_fallback_disabled(monkeypat
         )
 
 
+def test_base_agent_repairs_provider_exhaustion_when_live_provider_configured(monkeypatch):
+    monkeypatch.setenv("ASIS_DEMO_MODE", "false")
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("ALLOW_LLM_FALLBACK", "false")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-openrouter-key")
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.delenv("LITELLM_PROXY_URL", raising=False)
+    monkeypatch.delenv("LITELLM_MASTER_KEY", raising=False)
+    _clear_settings_cache()
+
+    def fake_generate_json(**_kwargs):
+        return None
+
+    monkeypatch.setattr("asis.backend.agents.base.llm_proxy.generate_json", fake_generate_json)
+
+    result = MarketIntelAgent().run(
+        {
+            "analysis_id": "market-provider-exhaustion",
+            "query": "Should Oracle expand sovereign cloud and AI analytics for India public-sector customers by 2030?",
+            "extracted_context": {
+                "company_name": "Oracle",
+                "sector": "Cloud Infrastructure",
+                "geography": "India",
+                "decision_type": "expand",
+            },
+        }
+    )
+
+    assert result.used_fallback is False
+    assert result.self_corrected is True
+    assert result.model_used == "asis-deterministic-market_intel-repair"
+    assert result.token_usage and result.token_usage["provider_mode"] == "deterministic_repair"
+    assert "no parseable JSON" in (result.correction_reason or "")
+    assert result.data["confidence_score"] > 0
+
+
 def test_synthesis_retries_with_compact_repair_prompt(monkeypatch):
     monkeypatch.setenv("ASIS_DEMO_MODE", "false")
     monkeypatch.setenv("ALLOW_LLM_FALLBACK", "false")
