@@ -77,6 +77,13 @@ def _env_int(name: str, default: int) -> int:
     return int(os.getenv(name, str(default)))
 
 
+def _env_list(name: str, default: list[str]) -> list[str]:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
 class AgentModelProfile(BaseModel):
     primary: str
     fallbacks: list[str] = Field(default_factory=list)
@@ -130,8 +137,22 @@ class Settings(BaseModel):
         or "nvidia/nemotron-3-ultra-550b-a55b:free"
     )
     openrouter_model_fallback: str = Field(default_factory=lambda: _env("OPENROUTER_MODEL_FALLBACK", "openrouter/free") or "openrouter/free")
+    openrouter_extra_fallback_models: list[str] = Field(
+        default_factory=lambda: _env_list(
+            "OPENROUTER_EXTRA_FALLBACK_MODELS",
+            [
+                "qwen/qwen3-next-80b-a3b-instruct:free",
+                "meta-llama/llama-3.3-70b-instruct:free",
+                "qwen/qwen3-coder:free",
+                "nvidia/nemotron-3-nano-30b-a3b:free",
+            ],
+        )
+    )
     openrouter_site_url: str | None = Field(default_factory=lambda: _env("OPENROUTER_SITE_URL") or _env("FRONTEND_URL"))
     openrouter_app_title: str = Field(default_factory=lambda: _env("OPENROUTER_APP_TITLE", "ASIS Strategic Consultant") or "ASIS Strategic Consultant")
+    openrouter_max_concurrency: int = Field(default_factory=lambda: max(1, _env_int("OPENROUTER_MAX_CONCURRENCY", 1)))
+    openrouter_retry_count: int = Field(default_factory=lambda: max(1, _env_int("OPENROUTER_RETRY_COUNT", 2)))
+    openrouter_retry_backoff_seconds: float = Field(default_factory=lambda: float(_env("OPENROUTER_RETRY_BACKOFF_SECONDS", "1.5") or "1.5"))
     litellm_ssl_verify: str | bool | None = Field(default_factory=_default_ssl_verify)
     litellm_model_primary: str = Field(default_factory=lambda: _env("LITELLM_MODEL_PRIMARY", "claude-sonnet-4-5") or "claude-sonnet-4-5")
     litellm_model_fast: str = Field(default_factory=lambda: _env("LITELLM_MODEL_FAST", "claude-haiku-4-5") or "claude-haiku-4-5")

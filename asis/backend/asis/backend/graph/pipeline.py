@@ -458,10 +458,37 @@ class V4EnterpriseWorkflow:
                     "summary": summary,
                     "timestamp_ms": event["timestamp_ms"],
                 },
-            )
+        )
 
         publish_analysis_event(state["analysis_id"], "agent_start", {"agent": agent.agent_id, "timestamp_ms": now_ms()})
-        result = agent.run(state)
+        try:
+            result = agent.run(state)
+        except Exception as exc:
+            result = AgentOutput(
+                agent_id=agent.agent_id,
+                agent_name=agent.agent_name,
+                status="failed",
+                confidence_score=0.0,
+                duration_ms=0,
+                model_used=None,
+                correction_reason=str(exc),
+                data={
+                    "error": str(exc),
+                    "confidence_score": 0.0,
+                    "citations": [],
+                },
+            )
+            self._save_agent_result(state["analysis_id"], result)
+            publish_analysis_event(
+                state["analysis_id"],
+                "agent_failed",
+                {
+                    "agent": agent.agent_id,
+                    "message": str(exc),
+                    "timestamp_ms": now_ms(),
+                },
+            )
+            raise
         self._save_agent_result(state["analysis_id"], result)
         publish_analysis_event(
             state["analysis_id"],

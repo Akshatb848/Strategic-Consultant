@@ -48,6 +48,9 @@ def test_openrouter_free_model_defaults_are_configured(monkeypatch):
     assert settings.openrouter_model_fast == "google/gemma-4-31b-it:free"
     assert settings.openrouter_model_reasoning == "nvidia/nemotron-3-ultra-550b-a55b:free"
     assert settings.openrouter_model_fallback == "openrouter/free"
+    assert "qwen/qwen3-next-80b-a3b-instruct:free" in settings.openrouter_extra_fallback_models
+    assert settings.openrouter_max_concurrency == 1
+    assert settings.openrouter_retry_count == 2
 
 
 def test_agent_model_profiles_expose_open_model_fallbacks(monkeypatch):

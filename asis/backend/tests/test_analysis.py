@@ -516,6 +516,42 @@ async def test_pipeline_failure_message_is_sanitized(client, monkeypatch):
     assert "sqlalche.me" not in analysis["error_message"]
 
 
+@pytest.mark.anyio
+async def test_agent_provider_failure_persists_failed_log(client, monkeypatch):
+    headers = await register_user(client, email="agent-provider-fail@example.com")
+
+    def fail_agent(_state):
+        raise RuntimeError("ASIS could not obtain live model output from the configured LLM providers.")
+
+    monkeypatch.setattr(v4_workflow.market_intel, "run", fail_agent)
+    created = await client.post(
+        "/api/v1/analysis",
+        headers=headers,
+        json={
+            "query": "Should Contoso Mobility launch a battery analytics platform in India by 2027?",
+            "company_context": {
+                "company_name": "Contoso Mobility",
+                "sector": "Automotive technology",
+                "geography": "India",
+            },
+        },
+    )
+    assert created.status_code == 201, created.text
+    analysis_id = created.json()["analysis"]["id"]
+
+    detail = await client.get(f"/api/v1/analysis/{analysis_id}", headers=headers)
+    assert detail.status_code == 200, detail.text
+    analysis = detail.json()["analysis"]
+    assert analysis["status"] == "failed"
+    assert analysis["error_message"] == "ASIS could not obtain live model output from the configured LLM providers."
+
+    failed_market_log = next(
+        log for log in analysis["agent_logs"] if log["agent_id"] == "market_intel" and log["status"] == "failed"
+    )
+    assert failed_market_log["correction_reason"] == analysis["error_message"]
+    assert failed_market_log["parsed_output"]["error"] == analysis["error_message"]
+
+
 def test_synthesis_agent_repairs_partial_live_output_without_fallback(monkeypatch):
     from asis.backend.agents.llm_proxy import llm_proxy
 

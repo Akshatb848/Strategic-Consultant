@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 import time
 from typing import Any
 from uuid import uuid4
@@ -39,6 +40,17 @@ def _estimate_cost(model: str, tokens_in: int, tokens_out: int) -> float:
 
 
 class LiteLLMProxy:
+    _openrouter_semaphore: threading.BoundedSemaphore | None = None
+    _openrouter_semaphore_size: int | None = None
+
+    @classmethod
+    def _openrouter_gate(cls, max_concurrency: int) -> threading.BoundedSemaphore:
+        limit = max(1, int(max_concurrency or 1))
+        if cls._openrouter_semaphore is None or cls._openrouter_semaphore_size != limit:
+            cls._openrouter_semaphore = threading.BoundedSemaphore(limit)
+            cls._openrouter_semaphore_size = limit
+        return cls._openrouter_semaphore
+
     @staticmethod
     def _groq_model_alias(settings, candidate: str, agent_id: str | None) -> str:
         explicit = {
@@ -105,10 +117,10 @@ class LiteLLMProxy:
             elif "/" not in candidate:
                 candidate = settings.openrouter_model_primary
 
-        if candidate.startswith("openrouter/") and candidate != "openrouter/free":
+        if candidate == "openrouter/free":
             return candidate
         if candidate.startswith("openrouter/"):
-            return f"openrouter/{candidate}"
+            return candidate
         return f"openrouter/{candidate}"
 
     @staticmethod
@@ -177,9 +189,9 @@ class LiteLLMProxy:
             provider_candidates = list(candidate_models)
             if provider_mode == "openrouter":
                 provider_candidates.append(settings.openrouter_model_fallback)
+                provider_candidates.extend(settings.openrouter_extra_fallback_models)
 
             for candidate in provider_candidates:
-                t0 = time.perf_counter()
                 runtime_model = candidate
                 try:
                     api_base = settings.litellm_proxy_url
@@ -204,67 +216,94 @@ class LiteLLMProxy:
                         continue
                     attempted.add(dedupe_key)
 
-                    kwargs: dict[str, Any] = {
-                        "model": runtime_model,
-                        "api_base": api_base,
-                        "api_key": api_key,
-                        "messages": [
-                            {"role": "system", "content": system_prompt},
-                            {
-                                "role": "user",
-                                "content": user_prompt + "\nReturn only valid JSON with double-quoted keys.",
-                            },
-                        ],
-                        "temperature": 0.2,
-                    }
-                    if settings.litellm_ssl_verify is not None:
-                        kwargs["ssl_verify"] = settings.litellm_ssl_verify
-                    if extra_headers:
-                        kwargs["extra_headers"] = extra_headers
-                    if langfuse_callbacks:
-                        kwargs["callbacks"] = langfuse_callbacks
+                    retry_count = settings.openrouter_retry_count if provider_mode == "openrouter" else 1
+                    for attempt in range(1, retry_count + 1):
+                        t0 = time.perf_counter()
+                        try:
+                            kwargs: dict[str, Any] = {
+                                "model": runtime_model,
+                                "api_base": api_base,
+                                "api_key": api_key,
+                                "messages": [
+                                    {"role": "system", "content": system_prompt},
+                                    {
+                                        "role": "user",
+                                        "content": user_prompt + "\nReturn only valid JSON with double-quoted keys.",
+                                    },
+                                ],
+                                "temperature": 0.2,
+                            }
+                            if settings.litellm_ssl_verify is not None:
+                                kwargs["ssl_verify"] = settings.litellm_ssl_verify
+                            if extra_headers:
+                                kwargs["extra_headers"] = extra_headers
+                            if langfuse_callbacks:
+                                kwargs["callbacks"] = langfuse_callbacks
 
-                    response = completion(**kwargs)
-                    latency_ms = int((time.perf_counter() - t0) * 1000)
+                            if provider_mode == "openrouter":
+                                gate = self._openrouter_gate(settings.openrouter_max_concurrency)
+                                with gate:
+                                    response = completion(**kwargs)
+                            else:
+                                response = completion(**kwargs)
+                            latency_ms = int((time.perf_counter() - t0) * 1000)
 
-                    content = response["choices"][0]["message"]["content"]
-                    if isinstance(content, list):
-                        text = "".join(part.get("text", "") for part in content if isinstance(part, dict))
-                    else:
-                        text = content
+                            content = response["choices"][0]["message"]["content"]
+                            if isinstance(content, list):
+                                text = "".join(part.get("text", "") for part in content if isinstance(part, dict))
+                            else:
+                                text = content
 
-                    payload = self._extract_json_payload(text)
-                    usage = getattr(response, "usage", None) or {}
-                    if hasattr(usage, "__dict__"):
-                        usage = usage.__dict__
-                    tokens_in = int(usage.get("prompt_tokens") or 0)
-                    tokens_out = int(usage.get("completion_tokens") or 0)
-                    cost_usd = _estimate_cost(runtime_model, tokens_in, tokens_out)
+                            payload = self._extract_json_payload(text)
+                            usage = getattr(response, "usage", None) or {}
+                            if hasattr(usage, "__dict__"):
+                                usage = usage.__dict__
+                            tokens_in = int(usage.get("prompt_tokens") or 0)
+                            tokens_out = int(usage.get("completion_tokens") or 0)
+                            cost_usd = _estimate_cost(runtime_model, tokens_in, tokens_out)
 
-                    payload["_model_used"] = runtime_model
-                    payload["_langfuse_trace_id"] = langfuse_trace_id
-                    payload["_token_usage"] = {
-                        "tokens_in": tokens_in,
-                        "tokens_out": tokens_out,
-                        "cost_usd": cost_usd,
-                        "latency_ms": latency_ms,
-                        "provider_mode": provider_mode,
-                    }
+                            payload["_model_used"] = runtime_model
+                            payload["_langfuse_trace_id"] = langfuse_trace_id
+                            payload["_token_usage"] = {
+                                "tokens_in": tokens_in,
+                                "tokens_out": tokens_out,
+                                "cost_usd": cost_usd,
+                                "latency_ms": latency_ms,
+                                "provider_mode": provider_mode,
+                                "attempt": attempt,
+                            }
 
-                    logger.info(
-                        "llm_call_success",
-                        model=runtime_model,
-                        requested_model=candidate,
-                        provider_mode=provider_mode,
-                        agent_id=agent_id,
-                        analysis_id=analysis_id,
-                        tokens_in=tokens_in,
-                        tokens_out=tokens_out,
-                        cost_usd=cost_usd,
-                        latency_ms=latency_ms,
-                    )
+                            logger.info(
+                                "llm_call_success",
+                                model=runtime_model,
+                                requested_model=candidate,
+                                provider_mode=provider_mode,
+                                agent_id=agent_id,
+                                analysis_id=analysis_id,
+                                tokens_in=tokens_in,
+                                tokens_out=tokens_out,
+                                cost_usd=cost_usd,
+                                latency_ms=latency_ms,
+                                attempt=attempt,
+                            )
 
-                    return payload
+                            return payload
+                        except Exception as exc:
+                            logger.warning(
+                                "litellm_proxy_attempt_failed",
+                                model=runtime_model,
+                                requested_model=candidate,
+                                provider_mode=provider_mode,
+                                agent_id=agent_id,
+                                analysis_id=analysis_id,
+                                attempt=attempt,
+                                max_attempts=retry_count,
+                                error=str(exc),
+                            )
+                            if attempt < retry_count:
+                                time.sleep(max(0.0, settings.openrouter_retry_backoff_seconds) * attempt)
+                                continue
+                            raise
 
                 except Exception as exc:  # pragma: no cover - exercised in live environments
                     logger.warning(

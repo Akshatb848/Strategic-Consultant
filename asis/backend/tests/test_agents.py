@@ -233,9 +233,70 @@ def test_llm_proxy_falls_back_from_openrouter_to_groq(monkeypatch):
 
     assert payload is not None
     assert attempted_models[0] == "openrouter/google/gemma-4-31b-it:free"
-    assert "openrouter/openrouter/free" in attempted_models
+    assert "openrouter/free" in attempted_models
+    assert "openrouter/openrouter/free" not in attempted_models
     assert attempted_models[-1] == "llama-3.1-8b-instant"
     assert payload["_token_usage"]["provider_mode"] == "groq_direct"
+
+
+def test_llm_proxy_retries_and_uses_extra_openrouter_free_models(monkeypatch):
+    monkeypatch.setenv("ASIS_DEMO_MODE", "false")
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("ALLOW_LLM_FALLBACK", "false")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-openrouter-key")
+    monkeypatch.setenv("OPENROUTER_MODEL_PRIMARY", "nvidia/nemotron-3-super-120b-a12b:free")
+    monkeypatch.setenv("OPENROUTER_MODEL_FALLBACK", "openrouter/free")
+    monkeypatch.setenv("OPENROUTER_EXTRA_FALLBACK_MODELS", "qwen/qwen3-next-80b-a3b-instruct:free,meta-llama/llama-3.3-70b-instruct:free")
+    monkeypatch.setenv("OPENROUTER_RETRY_COUNT", "2")
+    monkeypatch.setenv("OPENROUTER_RETRY_BACKOFF_SECONDS", "0")
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.delenv("LITELLM_PROXY_URL", raising=False)
+    monkeypatch.delenv("LITELLM_MASTER_KEY", raising=False)
+    _clear_settings_cache()
+
+    attempted_models: list[str] = []
+
+    class MockResponse(dict):
+        usage = {"prompt_tokens": 17, "completion_tokens": 19}
+
+    def fake_completion(**kwargs):
+        attempted_models.append(str(kwargs["model"]))
+        if kwargs["model"] != "openrouter/qwen/qwen3-next-80b-a3b-instruct:free":
+            raise RuntimeError("provider temporarily unavailable")
+        return MockResponse(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "confidence_score": 0.79,
+                                    "citations": [],
+                                }
+                            )
+                        }
+                    }
+                ]
+            }
+        )
+
+    monkeypatch.setattr("asis.backend.agents.llm_proxy.completion", fake_completion)
+
+    payload = llm_proxy.generate_json(
+        system_prompt="system",
+        user_prompt="user",
+        models=["claude-sonnet-4-5"],
+        agent_id="competitor_analysis",
+        analysis_id="analysis-openrouter-extra-fallbacks",
+    )
+
+    assert payload is not None
+    assert attempted_models.count("openrouter/nvidia/nemotron-3-super-120b-a12b:free") == 2
+    assert attempted_models.count("openrouter/free") == 2
+    assert "openrouter/qwen/qwen3-next-80b-a3b-instruct:free" in attempted_models
+    assert payload["_model_used"] == "openrouter/qwen/qwen3-next-80b-a3b-instruct:free"
+    assert payload["_token_usage"]["attempt"] == 1
+    assert payload["_token_usage"]["provider_mode"] == "openrouter"
 
 
 def test_live_agent_output_is_repaired_against_scaffold(monkeypatch):
