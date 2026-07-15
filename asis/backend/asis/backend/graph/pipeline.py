@@ -336,7 +336,14 @@ class V4EnterpriseWorkflow:
                 "overall_confidence",
                 dependencies,
             )
-            brief = StrategicBriefV4.model_validate(result["synthesis_output"])
+            raw_synthesis_output = dict(result["synthesis_output"])
+            normalized_confidence = self._normalize_confidence(raw_synthesis_output.get("overall_confidence"))
+            raw_synthesis_output["overall_confidence"] = normalized_confidence
+            raw_synthesis_output["decision_confidence"] = normalized_confidence
+            raw_synthesis_output["confidence_score"] = normalized_confidence
+            if isinstance(raw_synthesis_output.get("verification"), dict):
+                raw_synthesis_output["verification"]["overall_verification_score"] = normalized_confidence
+            brief = StrategicBriefV4.model_validate(raw_synthesis_output)
             quality_report = asyncio.run(self.quality_gate.validate(brief, retry_count=attempts, scope="pipeline"))
             final_quality_report = quality_report
             quality_report_payload = quality_report.model_dump(mode="json")
@@ -344,8 +351,9 @@ class V4EnterpriseWorkflow:
             synthesis_output["quality_report"] = quality_report_payload
             synthesis_output["mece_score"] = quality_report.mece_score
             synthesis_output["internal_consistency_score"] = quality_report.internal_consistency_score
-            synthesis_output["decision_confidence"] = self._normalize_confidence(synthesis_output.get("decision_confidence"))
-            synthesis_output["overall_confidence"] = self._normalize_confidence(synthesis_output.get("overall_confidence"))
+            synthesis_output["decision_confidence"] = normalized_confidence
+            synthesis_output["overall_confidence"] = normalized_confidence
+            synthesis_output["confidence_score"] = normalized_confidence
 
             if not self.quality_gate.has_block_failures(quality_report) or attempts >= 2:
                 break

@@ -693,7 +693,8 @@ async def test_materially_different_prompts_do_not_share_financial_or_framework_
     assert "Accenture" in str(pwc_payload["framework_outputs"]["blue_ocean"]["structured_data"])
 
 
-def test_public_sector_cloud_synthesis_avoids_generic_scaffold_language():
+@pytest.mark.anyio
+async def test_public_sector_cloud_synthesis_avoids_generic_scaffold_language():
     query = (
         "Should Oracle strengthen its enterprise AI and cloud infrastructure ecosystem in the public sector "
         "through sovereign cloud deployments, cybersecurity partnerships, and AI-driven analytics platforms; "
@@ -707,7 +708,9 @@ def test_public_sector_cloud_synthesis_avoids_generic_scaffold_language():
         "decision_type": "expand",
     }
     payload = V4SynthesisAgent().local_result(_synthesis_state(query, context))
+    report = await QualityGate().validate(StrategicBriefV4.model_validate(payload), scope="pipeline")
     report_text = str(payload).lower()
+    block_failures = [check.id for check in report.checks if check.level == "BLOCK" and not check.passed]
 
     assert "sovereign-cloud" in report_text or "sovereign cloud" in report_text
     assert "public-sector" in report_text or "public sector" in report_text
@@ -715,6 +718,10 @@ def test_public_sector_cloud_synthesis_avoids_generic_scaffold_language():
     assert "subject to regulatory readiness and partner due diligence" not in report_text
     assert "internal consistency remains strong at 48%" not in report_text
     assert "against realistic sales-cycle and integration assumptions" not in report_text
+    assert not block_failures
+    assert len(payload["decision_statement"].split()) <= 35
+    assert payload["decision_confidence"] == payload["overall_confidence"]
+    assert len(payload["framework_outputs"]["bcg_matrix"]["structured_data"]["business_units"]) >= 2
 
 
 def test_analysis_summary_marks_quality_failures_as_not_board_ready():
