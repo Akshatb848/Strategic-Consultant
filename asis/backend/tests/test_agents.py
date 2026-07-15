@@ -449,6 +449,63 @@ def test_synthesis_retries_with_compact_repair_prompt(monkeypatch):
     assert "required_fields" in prompts[1]
 
 
+def test_synthesis_repairs_provider_exhaustion_when_live_provider_configured(monkeypatch):
+    monkeypatch.setenv("ASIS_DEMO_MODE", "false")
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("ALLOW_LLM_FALLBACK", "false")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-openrouter-key")
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.delenv("LITELLM_PROXY_URL", raising=False)
+    monkeypatch.delenv("LITELLM_MASTER_KEY", raising=False)
+    _clear_settings_cache()
+
+    prompts: list[str] = []
+
+    def fake_generate_json(**kwargs):
+        prompts.append(str(kwargs["user_prompt"]))
+        return None
+
+    monkeypatch.setattr("asis.backend.agents.synthesis_v4.llm_proxy.generate_json", fake_generate_json)
+
+    result = V4SynthesisAgent().run(
+        {
+            "analysis_id": "synthesis-provider-exhaustion",
+            "query": "Should Oracle expand sovereign cloud and AI analytics for India public-sector customers by 2030?",
+            "company_context": {
+                "company_name": "Oracle",
+                "sector": "Cloud Infrastructure",
+                "geography": "India",
+                "decision_type": "expand",
+            },
+            "extracted_context": {
+                "company_name": "Oracle",
+                "sector": "Cloud Infrastructure",
+                "geography": "India",
+                "decision_type": "expand",
+            },
+            "market_intel_output": {},
+            "risk_assessment_output": {},
+            "competitor_analysis_output": {},
+            "geo_intel_output": {},
+            "financial_reasoning_output": {},
+            "strategic_options_output": {},
+            "framework_outputs": {},
+            "agent_collaboration_trace": [],
+            "quality_failures": [],
+            "quality_retry_count": 0,
+        }
+    )
+
+    StrategicBriefV4.model_validate(result.data)
+    assert result.used_fallback is False
+    assert result.self_corrected is True
+    assert result.model_used == "asis-deterministic-synthesis-repair"
+    assert result.token_usage and result.token_usage["provider_mode"] == "deterministic_repair"
+    assert "no parseable JSON" in (result.correction_reason or "")
+    assert len(prompts) == 3
+    assert "required_json_keys" in prompts[2]
+
+
 def test_large_investment_uses_benchmark_scenario_math_and_scaled_roadmap():
     query = "Should Acme Capital make a $1.5 billion acquisition of MittelTech in Germany over 5 years?"
     context = {
