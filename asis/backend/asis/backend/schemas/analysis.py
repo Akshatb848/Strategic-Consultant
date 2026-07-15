@@ -97,6 +97,11 @@ class AnalysisSummary(OrmModel):
     decision_recommendation: str | None
     executive_summary: str | None
     error_message: str | None = None
+    quality_grade: str | None = None
+    quality_blocking: bool = False
+    quality_flags: list[str] = Field(default_factory=list)
+    pdf_status: str | None = None
+    is_board_ready: bool = False
     duration_seconds: float | None
     total_cost_usd: float | None = None
     created_at: datetime

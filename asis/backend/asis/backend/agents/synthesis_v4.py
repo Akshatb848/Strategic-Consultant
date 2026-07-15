@@ -950,13 +950,15 @@ CRITICAL RULES:
         decision_type = self._normalize_decision_type(str(context.get("decision_type") or ""), query)
         target_label = geography if geography and geography != "the target market" else "the target market"
         target_scope = geography if geography and geography != "the target market" else "the business"
+        entry_route = self._entry_route(query=query, context=context, target_label=target_label)
+        entry_condition = self._entry_condition(query=query, context=context)
 
         profiles = {
             "enter": {
                 "decision_type": "enter",
-                "board_action": f"enter {target_label} through a staged, partner-enabled rollout",
-                "default_recommendation": "a staged, partner-enabled rollout",
-                "condition": "subject to regulatory readiness and partner due diligence",
+                "board_action": f"enter {target_label} through {entry_route}",
+                "default_recommendation": entry_route,
+                "condition": entry_condition,
                 "program_label": "market-entry program",
                 "strategic_path": "controlled market development",
                 "capability_focus": "local operating readiness",
@@ -1830,13 +1832,14 @@ CRITICAL RULES:
         aggressive_revenue = self._extract_numeric(aggressive_case.get("revenue_year_3_usd_mn"), base_revenue * 1.35)
         capability_gaps = capability_fit_matrix.get("critical_gaps") or []
         commercial_model = execution_realism.get("commercial_model") or "a mixed consulting and recurring-revenue model"
+        consistency_label = self._consistency_label(internal_consistency_score)
         paragraph_one = (
             f"{company} should receive a {label.lower()} recommendation because the combined market, competitive, risk, and financial evidence supports {profile['strategic_path']} in {geography}, "
             f"provided the company keeps the {profile['program_label']} gated behind {profile['condition']} and follows the primary pathway of {primary_pathway.get('name', profile['default_recommendation'])}."
         )
         paragraph_two = (
             f"The most decisive evidence comes from the convergence of the external attractiveness case, the option analysis, and a bottom-up commercial model that supports roughly ${round(base_revenue, 1)}M of year-three revenue in the base case versus ${round(aggressive_revenue, 1)}M in the upside case. "
-            f"Internal consistency remains strong at {round(internal_consistency_score * 100)}%, but execution still depends on closing {len(capability_gaps)} critical capability gaps and proving {commercial_model.lower()} against realistic sales-cycle and integration assumptions."
+            f"Internal consistency is {consistency_label} at {round(internal_consistency_score * 100)}%, and execution depends on closing {len(capability_gaps)} critical capability gaps while validating {commercial_model.lower()} against named buyer, procurement, and delivery assumptions."
         )
         return f"{paragraph_one}\n\n{paragraph_two}"
 
@@ -3064,14 +3067,14 @@ CRITICAL RULES:
             commercial_model = "Margin and control recovery through phased internal redesign rather than immediate revenue expansion."
             pricing_model = "N/A - value is realized through cost, control, and retention outcomes"
         else:
+            commercial_model = self._commercial_model(query=query, context=context, profile=profile)
+            pricing_model = self._pricing_model(query=query, profile=profile)
             items = [
                 {"factor": "Sales ramp", "baseline": f"{average_sales_cycle:.0f}-{average_sales_cycle + 3:.0f} month enterprise cycle", "risk": "Year-one revenue lags the headline opportunity because lighthouse deals take longer to close.", "mitigation": "Use partner-led pilots and board-backed lighthouse accounts to shorten proof cycles."},
                 {"factor": "Talent build", "baseline": "6-12 specialist hires required before scale", "risk": "Capability gaps delay implementation and customer onboarding.", "mitigation": "Stage hiring against booked demand and partner support."},
-                {"factor": "Client willingness to pay", "baseline": "High in regulated or mission-critical segments; moderate elsewhere", "risk": "Price realization weakens if the proposition looks like generic consulting.", "mitigation": "Bundle differentiated tooling, auditability, and recurring services into the offer."},
+                {"factor": "Client willingness to pay", "baseline": "High in regulated or mission-critical segments; moderate elsewhere", "risk": "Price realization weakens if the proposition looks interchangeable with incumbent offers.", "mitigation": "Bundle differentiated capability, auditability, and recurring outcomes into the offer."},
                 {"factor": "Go-to-market motion", "baseline": str(primary_path), "risk": "Scaling beyond the initial route too early increases execution drag and capital intensity.", "mitigation": "Keep market expansion gated to lighthouse proof points and operating readiness."},
             ]
-            commercial_model = "Consulting-led land strategy with recurring platform, audit, or managed-service attach as credibility grows."
-            pricing_model = self._pricing_model(query=query, profile=profile)
 
         execution_pressure = "Elevated" if top_risk >= 15 else "Moderate" if top_risk >= 10 else "Contained"
         return {
@@ -3194,6 +3197,19 @@ CRITICAL RULES:
         return assumptions
 
     def _pricing_model(self, *, query: str, profile: dict[str, object]) -> str:
+        query_lower = query.lower()
+        if any(keyword in query_lower for keyword in ("sovereign cloud", "public sector", "government", "cybersecurity", "analytics platform", "cloud infrastructure")):
+            return "Sovereign-cloud subscription, implementation fees, and managed security or analytics services"
+        if any(keyword in query_lower for keyword in ("satellite", "connectivity", "internet", "underserved")):
+            return "Tiered connectivity subscriptions plus enterprise and government service contracts"
+        if any(keyword in query_lower for keyword in ("quick commerce", "marketplace", "last-mile", "grocery")):
+            return "Marketplace take rate, retail media, fulfilment fees, and subscription loyalty revenue"
+        if any(keyword in query_lower for keyword in ("fintech", "payments", "upi", "wallet", "banking")):
+            return "Transaction economics, partner revenue share, premium account fees, and embedded-finance attach"
+        if any(keyword in query_lower for keyword in ("education", "university", "student", "transnational")):
+            return "Program fees, pathway partnerships, and student recruitment revenue share"
+        if any(keyword in query_lower for keyword in ("automotive", "mobility", "vehicle", "ev ", "battery", "connected car")):
+            return "Software subscription, data-service attach, and implementation revenue tied to fleet or battery analytics"
         if any(keyword in query.lower() for keyword in ("proprietary ai", "ai platform", "data ecosystem", "m&a and technology services", "technology services")):
             return "Premium advisory plus proprietary platform subscription plus data-enabled managed services"
         if any(keyword in query.lower() for keyword in ("ai governance", "dpdp", "privacy", "compliance", "model risk")):
@@ -3203,6 +3219,64 @@ CRITICAL RULES:
         if str(profile.get("decision_type") or "") in {"acquire", "merge"}:
             return "Retained accounts plus cross-sell plus recurring managed-service attach"
         return "Advisory-led land, followed by implementation and recurring managed-service attach"
+
+    def _commercial_model(self, *, query: str, context: dict, profile: dict[str, object]) -> str:
+        query_lower = query.lower()
+        sector = str(context.get("sector") or "").lower()
+        combined = f"{sector} {query_lower}"
+        if any(keyword in combined for keyword in ("sovereign cloud", "public sector", "government", "cybersecurity", "cloud infrastructure")):
+            return "A sovereign-cloud and public-sector platform model combining compliant cloud capacity, cybersecurity partnerships, analytics workloads, and managed operations revenue."
+        if any(keyword in combined for keyword in ("satellite", "connectivity", "internet", "underserved")):
+            return "A tiered connectivity model combining affordable consumer access, enterprise SLAs, government coverage contracts, and local regulatory partnerships."
+        if any(keyword in combined for keyword in ("quick commerce", "marketplace", "last-mile", "grocery")):
+            return "A dense-urban commerce model combining fulfilment economics, seller services, retail media, and loyalty-driven repeat demand."
+        if any(keyword in combined for keyword in ("fintech", "payments", "upi", "wallet", "banking")):
+            return "A regulated fintech model combining transaction revenue, partner distribution, embedded financial services, and premium-account attach."
+        if any(keyword in combined for keyword in ("education", "university", "student", "transnational")):
+            return "A transnational education model combining program fees, pathway partnerships, local delivery alliances, and student success economics."
+        if any(keyword in combined for keyword in ("automotive", "mobility", "vehicle", "ev ", "battery", "connected car")):
+            return "A mobility data model combining software subscriptions, battery or fleet analytics, dealer adoption incentives, and implementation services."
+        return str(self._pricing_model(query=query, profile=profile))
+
+    @staticmethod
+    def _consistency_label(score: float) -> str:
+        if score >= 0.75:
+            return "strong"
+        if score >= 0.55:
+            return "moderate"
+        if score >= 0.4:
+            return "mixed"
+        return "weak"
+
+    @staticmethod
+    def _entry_route(*, query: str, context: dict, target_label: str) -> str:
+        combined = f"{context.get('sector') or ''} {query}".lower()
+        if any(keyword in combined for keyword in ("sovereign cloud", "public sector", "government", "cybersecurity")):
+            return f"a compliance-first sovereign cloud and cybersecurity partner route in {target_label}"
+        if any(keyword in combined for keyword in ("satellite", "connectivity", "internet", "underserved")):
+            return f"a regulator-backed connectivity route with government, enterprise, and low-cost consumer channels in {target_label}"
+        if any(keyword in combined for keyword in ("quick commerce", "last-mile", "grocery", "marketplace")):
+            return f"a density-led quick-commerce route focused on priority urban clusters in {target_label}"
+        if any(keyword in combined for keyword in ("fintech", "payments", "upi", "wallet", "banking")):
+            return f"a licensed fintech partnership route with bank, payment, and merchant distribution in {target_label}"
+        if any(keyword in combined for keyword in ("education", "university", "student", "transnational")):
+            return f"a regulated education partnership route with local delivery and student-success controls in {target_label}"
+        return f"a sequenced launch route anchored in priority customers, local controls, and named operating milestones in {target_label}"
+
+    @staticmethod
+    def _entry_condition(*, query: str, context: dict) -> str:
+        combined = f"{context.get('sector') or ''} {query}".lower()
+        if any(keyword in combined for keyword in ("sovereign cloud", "public sector", "government", "cybersecurity")):
+            return "subject to procurement readiness, data-residency controls, public-sector security accreditation, and named ecosystem partners"
+        if any(keyword in combined for keyword in ("satellite", "connectivity", "internet", "underserved")):
+            return "subject to landing rights, spectrum and licensing approvals, affordable-unit economics, and local service continuity"
+        if any(keyword in combined for keyword in ("quick commerce", "last-mile", "grocery", "marketplace")):
+            return "subject to city-level density economics, fulfilment reliability, merchant supply, and working-capital controls"
+        if any(keyword in combined for keyword in ("fintech", "payments", "upi", "wallet", "banking")):
+            return "subject to licensing, banking-partner readiness, fraud controls, and compliant customer-acquisition economics"
+        if any(keyword in combined for keyword in ("education", "university", "student", "transnational")):
+            return "subject to accreditation, visa and placement outcomes, partner quality, and student-support capacity"
+        return "subject to explicit regulatory, customer-adoption, unit-economic, and operating-readiness gates"
 
     def _projection_metric(self, financial: dict, year_key: str, field: str, default: float) -> float:
         return self._safe_float((financial.get("financial_projections") or {}).get(year_key, {}).get(field), default)

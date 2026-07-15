@@ -300,6 +300,10 @@ export interface Analysis {
   decision_recommendation?: string | null;
   executive_summary?: string | null;
   error_message?: string | null;
+  quality_grade?: "A" | "B" | "C" | "FAIL" | string | null;
+  quality_blocking?: boolean;
+  quality_flags?: string[];
+  is_board_ready?: boolean;
   board_narrative?: string | null;
   duration_seconds?: number | null;
   total_cost_usd?: number | null;

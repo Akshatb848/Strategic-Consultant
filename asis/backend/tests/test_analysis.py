@@ -6,6 +6,7 @@ import pytest
 
 from asis.backend.db import database as db_state
 from asis.backend.db import models
+from asis.backend.api.routes.analysis import _to_summary
 from asis.backend.agents.types import AgentOutput
 from asis.backend.agents.synthesis_v4 import V4SynthesisAgent
 from asis.backend.graph.pipeline import v4_workflow
@@ -95,6 +96,9 @@ async def test_analysis_lifecycle_and_report_generation(client):
     assert analysis["pipeline_version"] == "4.0.0"
     assert analysis["overall_confidence"] != 85
     assert "total_cost_usd" in analysis
+    assert "quality_grade" in analysis
+    assert "quality_blocking" in analysis
+    assert "is_board_ready" in analysis
     assert analysis["strategic_brief"]["overall_confidence"] == analysis["overall_confidence"]
     assert analysis["strategic_brief"]["verification"]["overall_verification_score"] == analysis["overall_confidence"]
     assert len(analysis["strategic_brief"]["financial_analysis"]["bottom_up_revenue_model"]["sector_build"]) >= 3
@@ -687,6 +691,72 @@ async def test_materially_different_prompts_do_not_share_financial_or_framework_
     assert bain_bcg_units != pwc_bcg_units
     assert "McKinsey & Company" in str(bain_payload["framework_outputs"]["blue_ocean"]["structured_data"])
     assert "Accenture" in str(pwc_payload["framework_outputs"]["blue_ocean"]["structured_data"])
+
+
+def test_public_sector_cloud_synthesis_avoids_generic_scaffold_language():
+    query = (
+        "Should Oracle strengthen its enterprise AI and cloud infrastructure ecosystem in the public sector "
+        "through sovereign cloud deployments, cybersecurity partnerships, and AI-driven analytics platforms; "
+        "and what go-to-market strategy would maximize government adoption while mitigating procurement and "
+        "compliance risks by 2030?"
+    )
+    context = {
+        "company_name": "Oracle",
+        "sector": "Cloud Infrastructure",
+        "geography": "India",
+        "decision_type": "expand",
+    }
+    payload = V4SynthesisAgent().local_result(_synthesis_state(query, context))
+    report_text = str(payload).lower()
+
+    assert "sovereign-cloud" in report_text or "sovereign cloud" in report_text
+    assert "public-sector" in report_text or "public sector" in report_text
+    assert "consulting-led land strategy" not in report_text
+    assert "subject to regulatory readiness and partner due diligence" not in report_text
+    assert "internal consistency remains strong at 48%" not in report_text
+    assert "against realistic sales-cycle and integration assumptions" not in report_text
+
+
+def test_analysis_summary_marks_quality_failures_as_not_board_ready():
+    analysis = models.Analysis(
+        id="quality-fail-analysis",
+        user_id="user-1",
+        query="Should Oracle expand sovereign cloud services for public sector customers?",
+        status="completed",
+        pipeline_version="4.0.0",
+        used_fallback=False,
+        strategic_brief={
+            "quality_report": {
+                "overall_grade": "FAIL",
+                "quality_flags": ["Potential stale-context leakage detected"],
+                "checks": [
+                    {
+                        "id": "framework_structural_depth",
+                        "description": "Incomplete framework data",
+                        "level": "BLOCK",
+                        "passed": False,
+                    }
+                ],
+            },
+            "analysis_meta": {"has_blocking_warnings": True},
+        },
+        created_at=datetime.utcnow(),
+    )
+    analysis.report = models.Report(
+        id="report-1",
+        analysis_id=analysis.id,
+        user_id=analysis.user_id,
+        strategic_brief=analysis.strategic_brief,
+        pdf_status="blocked",
+    )
+
+    summary = _to_summary(analysis)
+
+    assert summary.status == "completed"
+    assert summary.quality_grade == "FAIL"
+    assert summary.quality_blocking is True
+    assert summary.pdf_status == "blocked"
+    assert summary.is_board_ready is False
 
 
 @pytest.mark.anyio
