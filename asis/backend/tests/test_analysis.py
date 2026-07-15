@@ -724,6 +724,40 @@ async def test_public_sector_cloud_synthesis_avoids_generic_scaffold_language():
     assert len(payload["framework_outputs"]["bcg_matrix"]["structured_data"]["business_units"]) >= 2
 
 
+def test_public_sector_cloud_merge_repairs_shallow_live_bcg_output():
+    query = (
+        "Should Oracle strengthen its enterprise AI and cloud infrastructure ecosystem in the public sector "
+        "through sovereign cloud deployments, cybersecurity partnerships, and AI-driven analytics platforms "
+        "in India by 2030?"
+    )
+    context = {
+        "company_name": "Oracle",
+        "sector": "Cloud Infrastructure",
+        "geography": "India",
+        "decision_type": "expand",
+    }
+    agent = V4SynthesisAgent()
+    scaffold = agent.local_result(_synthesis_state(query, context))
+    generated = {
+        "decision_statement": "PROCEED - expand sovereign cloud services in India through certified public-sector partners.",
+        "overall_confidence": 0.8,
+        "framework_outputs": {
+            "bcg_matrix": {
+                **scaffold["framework_outputs"]["bcg_matrix"],
+                "structured_data": {
+                    "business_units": [
+                        {"name": "Oracle Sovereign Cloud & AI for Public Sector", "market_growth_rate": 20, "relative_market_share": 1.0}
+                    ]
+                },
+            }
+        },
+    }
+
+    merged = agent._merge_generated_brief(scaffold, generated)
+
+    assert len(merged["framework_outputs"]["bcg_matrix"]["structured_data"]["business_units"]) >= 2
+
+
 def test_analysis_summary_marks_quality_failures_as_not_board_ready():
     analysis = models.Analysis(
         id="quality-fail-analysis",

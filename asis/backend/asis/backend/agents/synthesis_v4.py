@@ -482,6 +482,8 @@ CRITICAL RULES:
         market_analysis = reconciled.setdefault("market_analysis", {})
         financial_analysis = reconciled.setdefault("financial_analysis", {})
         risk_analysis = reconciled.setdefault("risk_analysis", {})
+        framework_outputs = reconciled.setdefault("framework_outputs", {})
+        scaffold_framework_outputs = scaffold.get("framework_outputs") if isinstance(scaffold.get("framework_outputs"), dict) else {}
 
         for key in ("capability_fit_matrix", "strategic_pathways"):
             if key in scaffold_market:
@@ -498,6 +500,11 @@ CRITICAL RULES:
         primary_pathway = self._primary_pathway(market_analysis.get("strategic_pathways") or {})
         if primary_pathway:
             financial_analysis["recommended_option"] = primary_pathway.get("name")
+
+        bcg_output = framework_outputs.get("bcg_matrix") if isinstance(framework_outputs.get("bcg_matrix"), dict) else {}
+        bcg_units = ((bcg_output.get("structured_data") or {}).get("business_units") or []) if isinstance(bcg_output, dict) else []
+        if len(bcg_units) < 2 and scaffold_framework_outputs.get("bcg_matrix"):
+            framework_outputs["bcg_matrix"] = deepcopy(scaffold_framework_outputs["bcg_matrix"])
 
         if isinstance(reconciled.get("decision_rationale"), str):
             base_case = self._scenario_by_name(
