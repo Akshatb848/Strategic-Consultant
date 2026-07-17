@@ -44,11 +44,11 @@ def test_openrouter_free_model_defaults_are_configured(monkeypatch):
     settings = get_settings()
 
     assert settings.openrouter_api_base == "https://openrouter.ai/api/v1"
-    assert settings.openrouter_model_primary == "nvidia/nemotron-3-super-120b-a12b:free"
-    assert settings.openrouter_model_fast == "google/gemma-4-31b-it:free"
+    assert settings.openrouter_model_primary == "openai/gpt-oss-120b:free"
+    assert settings.openrouter_model_fast == "openai/gpt-oss-20b:free"
     assert settings.openrouter_model_reasoning == "nvidia/nemotron-3-ultra-550b-a55b:free"
     assert settings.openrouter_model_fallback == "openrouter/free"
-    assert "qwen/qwen3-next-80b-a3b-instruct:free" in settings.openrouter_extra_fallback_models
+    assert "openai/gpt-oss-20b:free" in settings.openrouter_extra_fallback_models
     assert settings.openrouter_max_concurrency == 1
     assert settings.openrouter_retry_count == 2
 

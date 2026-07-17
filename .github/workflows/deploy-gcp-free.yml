@@ -95,6 +95,7 @@ jobs:
           OPENROUTER_MODEL_FALLBACK: ${{ vars.OPENROUTER_MODEL_FALLBACK || secrets.OPENROUTER_MODEL_FALLBACK }}
           OPENROUTER_SITE_URL: ${{ vars.OPENROUTER_SITE_URL || secrets.OPENROUTER_SITE_URL }}
           OPENROUTER_APP_TITLE: ${{ vars.OPENROUTER_APP_TITLE || secrets.OPENROUTER_APP_TITLE }}
+          TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPEN_MODEL_API_BASE: ${{ vars.OPEN_MODEL_API_BASE || secrets.OPEN_MODEL_API_BASE }}
@@ -102,6 +103,15 @@ jobs:
         run: |
           set -euo pipefail
           trap 'echo "::error::Deploy runner failed at line ${LINENO}: ${BASH_COMMAND}"' ERR
+
+          if [[ -z "${OPENROUTER_API_KEY}" ]]; then
+            echo "::error::OPENROUTER_API_KEY is required for production deployment."
+            exit 1
+          fi
+          if [[ -z "${TAVILY_API_KEY}" ]]; then
+            echo "::error::TAVILY_API_KEY is required for production deployment because ASIS refuses unverified/static evidence."
+            exit 1
+          fi
 
           install -m 700 -d ~/.ssh
           key_file=~/.ssh/gcp_free_vm_key
@@ -178,6 +188,7 @@ jobs:
             "OPENROUTER_MODEL_FALLBACK=${OPENROUTER_MODEL_FALLBACK:-}"
             "OPENROUTER_SITE_URL=${OPENROUTER_SITE_URL:-}"
             "OPENROUTER_APP_TITLE=${OPENROUTER_APP_TITLE:-}"
+            "TAVILY_API_KEY=${TAVILY_API_KEY:-}"
             "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}"
             "OPENAI_API_KEY=${OPENAI_API_KEY:-}"
             "OPEN_MODEL_API_BASE=${OPEN_MODEL_API_BASE:-}"
@@ -447,6 +458,9 @@ jobs:
           ENVIRONMENT=production
           ASIS_DEMO_MODE=false
           ALLOW_LLM_FALLBACK=false
+          ALLOW_DETERMINISTIC_REPAIR=false
+          ASIS_REQUIRED_LLM_PROVIDER=openrouter
+          REQUIRE_LIVE_EVIDENCE=true
           RUN_ANALYSES_INLINE=false
           ENABLE_AUTO_SCHEMA=true
           SECURE_COOKIES=false
@@ -465,12 +479,14 @@ jobs:
           GROQ_MODEL_REASONING=${GROQ_MODEL_REASONING:-llama-3.3-70b-versatile}
           OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
           OPENROUTER_API_BASE=${OPENROUTER_API_BASE:-https://openrouter.ai/api/v1}
-          OPENROUTER_MODEL_PRIMARY=${OPENROUTER_MODEL_PRIMARY:-nvidia/nemotron-3-super-120b-a12b:free}
-          OPENROUTER_MODEL_FAST=${OPENROUTER_MODEL_FAST:-google/gemma-4-31b-it:free}
+          OPENROUTER_MODEL_PRIMARY=${OPENROUTER_MODEL_PRIMARY:-openai/gpt-oss-120b:free}
+          OPENROUTER_MODEL_FAST=${OPENROUTER_MODEL_FAST:-openai/gpt-oss-20b:free}
           OPENROUTER_MODEL_REASONING=${OPENROUTER_MODEL_REASONING:-nvidia/nemotron-3-ultra-550b-a55b:free}
           OPENROUTER_MODEL_FALLBACK=${OPENROUTER_MODEL_FALLBACK:-openrouter/free}
           OPENROUTER_SITE_URL=${OPENROUTER_SITE_URL:-http://${VM_HOST}:3001}
           OPENROUTER_APP_TITLE=${OPENROUTER_APP_TITLE:-ASIS Strategic Consultant}
+          TAVILY_API_KEY=${TAVILY_API_KEY:-}
+          TAVILY_API_BASE=https://api.tavily.com
           ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
           ANTHROPIC_MAX_TOKENS=4096
           OPENAI_API_KEY=${OPENAI_API_KEY:-}

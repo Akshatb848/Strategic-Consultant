@@ -175,7 +175,7 @@ def test_llm_proxy_uses_openrouter_before_direct_groq(monkeypatch):
     assert payload is not None
     assert captured["api_key"] == "test-openrouter-key"
     assert captured["api_base"] == "https://openrouter.ai/api/v1"
-    assert captured["model"] == "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
+    assert captured["model"] == "openrouter/openai/gpt-oss-120b:free"
     assert captured["extra_headers"] == {
         "HTTP-Referer": "https://asis.example.com",
         "X-OpenRouter-Title": "ASIS Test",
@@ -232,7 +232,7 @@ def test_llm_proxy_falls_back_from_openrouter_to_groq(monkeypatch):
     )
 
     assert payload is not None
-    assert attempted_models[0] == "openrouter/google/gemma-4-31b-it:free"
+    assert attempted_models[0] == "openrouter/openai/gpt-oss-20b:free"
     assert "openrouter/free" in attempted_models
     assert "openrouter/openrouter/free" not in attempted_models
     assert attempted_models[-1] == "llama-3.1-8b-instant"

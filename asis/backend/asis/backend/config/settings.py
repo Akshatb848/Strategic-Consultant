@@ -125,12 +125,12 @@ class Settings(BaseModel):
     openrouter_api_key: str | None = Field(default_factory=lambda: _env("OPENROUTER_API_KEY"))
     openrouter_api_base: str = Field(default_factory=lambda: _env("OPENROUTER_API_BASE", "https://openrouter.ai/api/v1") or "https://openrouter.ai/api/v1")
     openrouter_model_primary: str = Field(
-        default_factory=lambda: _env("OPENROUTER_MODEL_PRIMARY", "nvidia/nemotron-3-super-120b-a12b:free")
-        or "nvidia/nemotron-3-super-120b-a12b:free"
+        default_factory=lambda: _env("OPENROUTER_MODEL_PRIMARY", "openai/gpt-oss-120b:free")
+        or "openai/gpt-oss-120b:free"
     )
     openrouter_model_fast: str = Field(
-        default_factory=lambda: _env("OPENROUTER_MODEL_FAST", "google/gemma-4-31b-it:free")
-        or "google/gemma-4-31b-it:free"
+        default_factory=lambda: _env("OPENROUTER_MODEL_FAST", "openai/gpt-oss-20b:free")
+        or "openai/gpt-oss-20b:free"
     )
     openrouter_model_reasoning: str = Field(
         default_factory=lambda: _env("OPENROUTER_MODEL_REASONING", "nvidia/nemotron-3-ultra-550b-a55b:free")
@@ -141,9 +141,9 @@ class Settings(BaseModel):
         default_factory=lambda: _env_list(
             "OPENROUTER_EXTRA_FALLBACK_MODELS",
             [
-                "qwen/qwen3-next-80b-a3b-instruct:free",
+                "openai/gpt-oss-20b:free",
+                "nvidia/nemotron-3-super-120b-a12b:free",
                 "meta-llama/llama-3.3-70b-instruct:free",
-                "qwen/qwen3-coder:free",
                 "nvidia/nemotron-3-nano-30b-a3b:free",
             ],
         )
@@ -153,6 +153,29 @@ class Settings(BaseModel):
     openrouter_max_concurrency: int = Field(default_factory=lambda: max(1, _env_int("OPENROUTER_MAX_CONCURRENCY", 1)))
     openrouter_retry_count: int = Field(default_factory=lambda: max(1, _env_int("OPENROUTER_RETRY_COUNT", 2)))
     openrouter_retry_backoff_seconds: float = Field(default_factory=lambda: float(_env("OPENROUTER_RETRY_BACKOFF_SECONDS", "1.5") or "1.5"))
+    required_llm_provider: str = Field(
+        default_factory=lambda: _env(
+            "ASIS_REQUIRED_LLM_PROVIDER",
+            "openrouter" if (_env("ENVIRONMENT", _env("NODE_ENV", "development")) == "production") else "any",
+        )
+        or "any"
+    )
+    allow_deterministic_repair: bool = Field(
+        default_factory=lambda: _env_bool("ALLOW_DETERMINISTIC_REPAIR", False)
+    )
+    require_live_evidence: bool = Field(
+        default_factory=lambda: _env_bool(
+            "REQUIRE_LIVE_EVIDENCE",
+            _env("ENVIRONMENT", _env("NODE_ENV", "development")) == "production",
+        )
+    )
+    tavily_api_base: str = Field(
+        default_factory=lambda: _env("TAVILY_API_BASE", "https://api.tavily.com") or "https://api.tavily.com"
+    )
+    evidence_max_results: int = Field(default_factory=lambda: max(3, _env_int("EVIDENCE_MAX_RESULTS", 8)))
+    evidence_request_timeout_seconds: float = Field(
+        default_factory=lambda: max(5.0, float(_env("EVIDENCE_REQUEST_TIMEOUT_SECONDS", "20") or "20"))
+    )
     litellm_ssl_verify: str | bool | None = Field(default_factory=_default_ssl_verify)
     litellm_model_primary: str = Field(default_factory=lambda: _env("LITELLM_MODEL_PRIMARY", "claude-sonnet-4-5") or "claude-sonnet-4-5")
     litellm_model_fast: str = Field(default_factory=lambda: _env("LITELLM_MODEL_FAST", "claude-haiku-4-5") or "claude-haiku-4-5")

@@ -5,6 +5,7 @@ from statistics import mean
 from typing import Any, Literal
 
 from asis.backend.graph.context import extract_query_facts
+from asis.backend.config.settings import get_settings
 from asis.backend.schemas.v4 import QualityCheckResult, QualityReport, StrategicBriefV4
 
 _URL_PATTERN = re.compile(
@@ -49,6 +50,8 @@ class QualityGate:
             self._check_citation_density(brief),
             self._check_citation_url_format(brief),
             self._check_citation_verifiability(brief),
+            self._check_live_evidence_provenance(brief),
+            self._check_report_template_contract(brief),
             self._check_source_role_relevance(brief),
             self._check_framework_completeness(brief),
             self._check_framework_structural_depth(brief),
@@ -69,6 +72,7 @@ class QualityGate:
             self._check_financial_input_ranges(brief),
             self._check_bottom_up_formula_integrity(brief),
             self._check_numeric_evidence_contract(brief),
+            self._check_strict_calculation_provenance(brief),
             self._check_scenario_duplicate_guard(brief),
             self._check_red_team_materiality(brief),
             self._check_confidence_calibration(brief),
@@ -119,10 +123,11 @@ class QualityGate:
         )
 
     def _check_citation_density(self, brief: StrategicBriefV4) -> QualityCheckResult:
-        passed = all(len(output.citations) >= 5 for output in brief.framework_outputs.values())
+        minimum = 5 if get_settings().require_live_evidence else 1
+        passed = all(len(output.citations) >= minimum for output in brief.framework_outputs.values())
         return QualityCheckResult(
             id="citation_density",
-            description="Every framework narrative must contain at least 1 citation per 100 words, with a minimum of 5 citations per framework",
+            description=f"Every framework narrative must contain at least 1 citation per 100 words, with a minimum of {minimum} citations per framework",
             level="BLOCK",
             passed=passed,
             notes=None if passed else "One or more framework sections do not meet minimum citation density.",
@@ -470,6 +475,87 @@ class QualityGate:
             notes=None if passed else f"Unverifiable citations detected: {'; '.join(unverifiable[:6])}.",
         )
 
+    def _check_live_evidence_provenance(self, brief: StrategicBriefV4) -> QualityCheckResult:
+        """Production reports must carry citations retrieved and URL-verified at run time."""
+        if not get_settings().require_live_evidence:
+            return QualityCheckResult(
+                id="live_evidence_provenance",
+                description="Production reports must use live URL-verified evidence",
+                level="BLOCK",
+                passed=True,
+                notes="Live evidence enforcement is disabled outside production.",
+            )
+        citations = self._all_citations(brief)
+        failures: list[str] = []
+        if len(citations) < 5:
+            failures.append(f"only {len(citations)} citations are present; at least 5 are required")
+        for index, citation in enumerate(citations):
+            if not getattr(citation, "id", None):
+                failures.append(f"citation {index + 1} has no stable citation id")
+            if not getattr(citation, "url", None):
+                failures.append(f"citation {index + 1} has no source URL")
+            if getattr(citation, "verification_status", "unverified") != "verified":
+                failures.append(f"citation {index + 1} is not marked verified")
+            if not getattr(citation, "retrieved_at", None):
+                failures.append(f"citation {index + 1} has no retrieved_at timestamp")
+            if not getattr(citation, "retrieval_query", None):
+                failures.append(f"citation {index + 1} has no retrieval query")
+            if getattr(citation, "source_type", "") != "live_web":
+                failures.append(f"citation {index + 1} is not a live_web source")
+        provenance = brief.evidence_provenance or {}
+        if provenance.get("provider") != "live_web" or provenance.get("all_sources_verified") is not True:
+            failures.append("evidence_provenance does not confirm a verified live_web evidence base")
+        return QualityCheckResult(
+            id="live_evidence_provenance",
+            description="Every production citation must be retrieved from a live source, URL-verified, and tied to the retrieval query",
+            level="BLOCK",
+            passed=not failures,
+            notes=None if not failures else f"Live evidence provenance failures: {'; '.join(failures[:8])}.",
+        )
+
+    def _check_report_template_contract(self, brief: StrategicBriefV4) -> QualityCheckResult:
+        """Keep report shape stable for cross-scenario dissertation and client comparison."""
+        if not get_settings().require_live_evidence:
+            return QualityCheckResult(
+                id="report_template_contract",
+                description="Report must conform to ASIS-SIR v1.0",
+                level="BLOCK",
+                passed=True,
+                notes="Template enforcement is disabled outside production.",
+            )
+        expected = [
+            "cover_page",
+            "executive_summary",
+            "scenario_context",
+            "evidence_base",
+            "multi_agent_analysis",
+            "strategic_intelligence_dashboard",
+            "strategic_insights",
+            "executive_recommendations",
+            "strategic_roadmap",
+            "evidence_traceability_matrix",
+            "risk_matrix",
+            "opportunity_matrix",
+            "benchmark_comparison_sheet",
+            "citation_register",
+            "appendices",
+        ]
+        metadata = brief.report_metadata
+        failures: list[str] = []
+        if metadata.template_version != "ASIS-SIR v1.0":
+            failures.append(f"template version is {metadata.template_version!r}")
+        if metadata.section_order != expected:
+            failures.append("section order does not match ASIS-SIR v1.0")
+        if len(brief.executive_recommendations) != 5:
+            failures.append(f"exactly five executive recommendations are required, found {len(brief.executive_recommendations)}")
+        return QualityCheckResult(
+            id="report_template_contract",
+            description="Report must use the fixed ASIS-SIR v1.0 section order and exactly five recommendations",
+            level="BLOCK",
+            passed=not failures,
+            notes=None if not failures else f"Report template failures: {'; '.join(failures)}.",
+        )
+
     def _check_source_role_relevance(self, brief: StrategicBriefV4) -> QualityCheckResult:
         """Material reports need sources relevant to market, competitor, and financial claims."""
         facts = extract_query_facts(str(brief.report_metadata.query or ""))
@@ -793,6 +879,65 @@ class QualityGate:
             level="BLOCK",
             passed=passed,
             notes=None if passed else f"Numeric evidence contract failures: {'; '.join(failures[:8])}.",
+        )
+
+    def _check_strict_calculation_provenance(self, brief: StrategicBriefV4) -> QualityCheckResult:
+        """Block calculated figures that cannot be tied to the verified evidence register."""
+        if not get_settings().require_live_evidence:
+            return QualityCheckResult(
+                id="strict_calculation_provenance",
+                description="Production financial calculations must be traceable to verified live evidence",
+                level="BLOCK",
+                passed=True,
+                notes=None,
+            )
+
+        financial = brief.financial_analysis or {}
+        provenance = financial.get("calculation_provenance") or {}
+        citations = brief.citations or []
+        verified_urls = {
+            str(getattr(citation, "url", "") or "").strip()
+            for citation in citations
+            if getattr(citation, "verification_status", None) == "verified"
+        }
+        failures: list[str] = []
+        method = str(provenance.get("method") or "").lower()
+        if method not in {"live_evidence_derived", "live_llm_evidence"}:
+            failures.append("financial_analysis.calculation_provenance.method must identify live evidence derivation")
+        source_urls = {str(value).strip() for value in (provenance.get("source_urls") or []) if str(value).strip()}
+        if len(source_urls) < 3:
+            failures.append("calculation_provenance.source_urls must contain at least 3 URLs")
+        if not source_urls.issubset(verified_urls):
+            failures.append("calculation provenance references a URL outside the verified citation register")
+        if not provenance.get("formulas") or not provenance.get("assumptions"):
+            failures.append("calculation provenance must include formulas and assumptions")
+
+        bottom_up = financial.get("bottom_up_revenue_model") or {}
+        for index, row in enumerate(bottom_up.get("sector_build") or []):
+            if not isinstance(row, dict):
+                continue
+            if row.get("calculation_origin") not in {"live_evidence_derived", "live_llm_evidence"}:
+                failures.append(f"bottom-up row {index + 1}: calculation_origin is not live")
+            refs = {str(value).strip() for value in (row.get("evidence_refs") or []) if str(value).strip()}
+            if not refs or not refs.issubset(verified_urls):
+                failures.append(f"bottom-up row {index + 1}: evidence_refs do not resolve to verified citations")
+
+        scenarios = (financial.get("scenario_analysis") or {}).get("scenarios") or []
+        for index, scenario in enumerate(scenarios):
+            if not isinstance(scenario, dict):
+                continue
+            if scenario.get("calculation_origin") not in {"live_evidence_derived", "live_llm_evidence"}:
+                failures.append(f"scenario {index + 1}: calculation_origin is not live")
+            refs = {str(value).strip() for value in (scenario.get("evidence_refs") or []) if str(value).strip()}
+            if not refs or not refs.issubset(verified_urls):
+                failures.append(f"scenario {index + 1}: evidence_refs do not resolve to verified citations")
+
+        return QualityCheckResult(
+            id="strict_calculation_provenance",
+            description="Production financial calculations must identify live derivation and resolve every numeric row to verified sources",
+            level="BLOCK",
+            passed=not failures,
+            notes=None if not failures else f"Calculation provenance failures: {'; '.join(failures[:8])}.",
         )
 
     def _check_scenario_duplicate_guard(self, brief: StrategicBriefV4) -> QualityCheckResult:

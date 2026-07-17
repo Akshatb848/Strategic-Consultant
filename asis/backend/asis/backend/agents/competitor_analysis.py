@@ -13,10 +13,12 @@ class CompetitorAnalysisAgent(BaseAgent):
     agent_id = "competitor_analysis"
     agent_name = "Competitor Analysis"
     framework = "Porter's Five Forces + competitor profiling"
+    required_live_keys = ("competitor_profiles", "top_competitors", "competitive_positioning_insight", "citations")
 
     def system_prompt(self) -> str:
         return """You are the Competitor Analysis agent for ASIS v4.0.
 Profile the key competitors and assess competitive dynamics for the target market.
+Return a complete JSON object for this agent. Do not return a patch or deterministic scaffold content.
 Return a JSON patch enriching the precomputed scaffold. JSON only, no markdown.
 
 Required patch shape:
@@ -55,7 +57,7 @@ Rules:
         return (
             f"Strategic question:\n{state['query']}\n\n"
             f"Context:\n{json.dumps(summary, ensure_ascii=False)}\n\n"
-            "Identify and profile the real competitors in this market. Return the JSON patch."
+            "Identify and profile the real competitors in this market. Return the complete JSON object."
         )
 
     def merge_generated_output(self, scaffold: dict, generated: dict) -> dict:

@@ -37,16 +37,9 @@ def ensure_minimum_citations(context: dict, citations: list[dict] | None = None,
     if len(merged) >= minimum:
         return merged
 
-    # Duplicate only as a last resort, making the provenance explicit via title suffixing.
-    expanded = list(merged)
-    seed = list(merged)
-    index = 1
-    while len(expanded) < minimum:
-        item = dict(seed[(index - 1) % len(seed)])
-        item["title"] = f"{item.get('title', 'Source')} (Supporting Reference {index})"
-        expanded.append(item)
-        index += 1
-    return expanded
+    # Never duplicate a citation to satisfy a density threshold. Repetition
+    # would make an evidence register look stronger without adding evidence.
+    return merged
 
 
 def build_framework_output(

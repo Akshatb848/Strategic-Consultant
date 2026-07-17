@@ -12,10 +12,12 @@ class StrategicOptionsAgent(BaseAgent):
     agent_id = "strategic_options"
     agent_name = "Strategic Options"
     framework = "Ansoff Matrix + Blue Ocean + McKinsey 7S"
+    required_live_keys = ("ansoff_quadrant", "strategic_options", "blue_ocean_factors", "mckinsey_7s_fit_score", "recommended_option", "option_rationale", "citations")
 
     def system_prompt(self) -> str:
         return """You are the Strategic Options agent for ASIS v4.0.
 Score and rank strategic options using Ansoff Matrix, Blue Ocean Strategy, and McKinsey 7S.
+Return a complete JSON object. Do not return a patch or deterministic scaffold content.
 You have access to all 5 upstream agent outputs. Return a JSON patch enriching the scaffold.
 JSON only, no markdown.
 
@@ -85,7 +87,7 @@ Rules:
             f"Strategic question:\n{state['query']}\n\n"
             f"Company:\n{json.dumps(company_info, ensure_ascii=False)}\n\n"
             f"Upstream intelligence:\n{json.dumps(upstream, ensure_ascii=False)}\n\n"
-            "Score and rank the strategic options using Ansoff, Blue Ocean, and 7S. Return the JSON patch."
+            "Score and rank the strategic options using Ansoff, Blue Ocean, and 7S. Return the complete JSON object."
         )
 
     def local_result(self, state) -> dict:

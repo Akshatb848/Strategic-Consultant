@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from asis.backend.schemas.common import Citation
+from asis.backend.config.settings import get_settings
 
 
 GENERAL_REFERENCES = [
@@ -182,6 +183,11 @@ def infer_geography_key(context: dict) -> str | None:
 
 
 def build_citations(context: dict, limit: int = 4) -> list[dict]:
+    live = context.get("_live_citations") if isinstance(context, dict) else None
+    if isinstance(live, list):
+        return [dict(item) for item in live[:limit] if isinstance(item, dict)]
+    if get_settings().require_live_evidence:
+        return []
     items = list(GENERAL_REFERENCES)
     sector_key = infer_sector_key(context)
     if sector_key:

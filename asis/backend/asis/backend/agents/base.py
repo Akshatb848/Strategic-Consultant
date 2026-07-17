@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from abc import ABC, abstractmethod
+import json
 from time import perf_counter
 
 from asis.backend.agents.llm_proxy import llm_proxy
@@ -15,6 +16,7 @@ class BaseAgent(ABC):
     agent_name: str
     framework: str
     llm_model: str | list[str] | None = None
+    required_live_keys: tuple[str, ...] = ()
 
     def run(self, state: PipelineState) -> AgentOutput:
         start = perf_counter()
@@ -48,15 +50,27 @@ class BaseAgent(ABC):
         scaffold = self.local_result(state)
         proxy_output = None
         settings = get_settings()
+        live_state = dict(state)
+        live_context = dict(state.get("extracted_context") or state.get("company_context") or {})
+        evidence_base = state.get("evidence_base") or live_context.get("_live_citations") or []
+        if evidence_base:
+            live_context["_live_citations"] = evidence_base
+        live_state["extracted_context"] = live_context
         if not settings.demo_mode:
+            provider_prompt = self.user_prompt(live_state)
+            if evidence_base:
+                provider_prompt += "\n\nVerified evidence base. Copy source URLs exactly when citing:\n" + json.dumps(evidence_base, ensure_ascii=False, default=str)
             proxy_output = llm_proxy.generate_json(
                 system_prompt=self.system_prompt(),
-                user_prompt=self.user_prompt(state),
+                user_prompt=provider_prompt,
                 models=self.resolve_models(),
                 agent_id=self.agent_id,
                 analysis_id=state.get("analysis_id"),
             )
         if proxy_output:
+            self._assert_live_output_contract(proxy_output, settings)
+            if settings.require_live_evidence:
+                return self._prepare_strict_live_output(proxy_output, live_state, settings)
             merged = self.merge_generated_output(scaffold, proxy_output)
             merged["citations"] = merged.get("citations") or scaffold.get("citations") or build_citations(
                 state.get("extracted_context") or state.get("company_context") or {}
@@ -72,7 +86,7 @@ class BaseAgent(ABC):
         if settings.allow_llm_fallback or settings.demo_mode:
             scaffold["_used_fallback"] = True
             return scaffold
-        if self._has_live_provider_config(settings):
+        if settings.allow_deterministic_repair and self._has_live_provider_config(settings):
             scaffold["_used_fallback"] = False
             scaffold["_self_corrected"] = True
             scaffold["_model_used"] = f"asis-deterministic-{self.agent_id}-repair"
@@ -90,7 +104,54 @@ class BaseAgent(ABC):
                 "failing the analysis."
             )
             return scaffold
-        raise RuntimeError("ASIS could not obtain live model output from the configured LLM providers.")
+        raise RuntimeError(
+            f"LIVE_LLM_OUTPUT_UNAVAILABLE: {self.agent_id} received no parseable live model output; "
+            "ASIS will not publish deterministic repair data as a client report."
+        )
+
+    def _assert_live_output_contract(self, output: dict, settings) -> None:
+        if not settings.require_live_evidence or not self.required_live_keys:
+            return
+        missing = [
+            key
+            for key in self.required_live_keys
+            if key != "citations"
+            if key not in output or output.get(key) in (None, "", [], {})
+        ]
+        if missing:
+            raise RuntimeError(
+                f"LIVE_LLM_OUTPUT_INCOMPLETE: {self.agent_id} omitted required live fields: "
+                f"{', '.join(missing)}. ASIS will not fill them from a deterministic scaffold."
+            )
+
+    def _prepare_strict_live_output(self, output: dict, state: PipelineState, settings) -> dict:
+        """Return provider data without allowing the deterministic scaffold to fill gaps."""
+        required = {key for key in self.required_live_keys if key != "citations"} | {"confidence_score"}
+        missing = [key for key in sorted(required) if output.get(key) in (None, "", [], {})]
+        if missing:
+            raise RuntimeError(
+                f"LIVE_LLM_OUTPUT_INCOMPLETE: {self.agent_id} omitted provider-owned fields: "
+                f"{', '.join(missing)}. Deterministic scaffold completion is disabled."
+            )
+
+        evidence_base = state.get("evidence_base") or []
+        if not evidence_base or any(item.get("verification_status") != "verified" for item in evidence_base if isinstance(item, dict)):
+            raise RuntimeError(
+                f"LIVE_EVIDENCE_BLOCKED: {self.agent_id} cannot publish without an exclusively verified evidence base."
+            )
+
+        # The evidence provider, not the language model, is authoritative for
+        # source identity. The model may use these sources, but cannot invent a
+        # citation record that passes the production gate.
+        prepared = deepcopy(output)
+        prepared["confidence_score"] = self._normalize_confidence(prepared.get("confidence_score"))
+        prepared["citations"] = deepcopy(evidence_base)
+        if isinstance(prepared.get("framework_outputs"), dict):
+            for framework in prepared["framework_outputs"].values():
+                if isinstance(framework, dict):
+                    framework["citations"] = deepcopy(evidence_base)
+        prepared["_used_fallback"] = False
+        return prepared
 
     def resolve_models(self) -> list[str]:
         settings = get_settings()

@@ -163,6 +163,19 @@ class LiteLLMProxy:
             providers.append("openrouter")
         if use_direct_groq:
             providers.append("groq_direct")
+        configured_providers = list(providers)
+        required_provider = str(settings.required_llm_provider or "any").lower()
+        if required_provider in {"litellm_proxy", "openrouter", "groq_direct"}:
+            providers = [provider for provider in providers if provider == required_provider]
+            if not providers:
+                logger.error(
+                    "required_llm_provider_unavailable",
+                    required_provider=required_provider,
+                    configured_providers=configured_providers,
+                    agent_id=agent_id,
+                    analysis_id=analysis_id,
+                )
+                return None
 
         langfuse_trace_id: str | None = None
         langfuse_callbacks: list = []

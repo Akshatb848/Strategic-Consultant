@@ -30,6 +30,19 @@ class V4SynthesisAgent(BaseAgent):
     agent_id = "synthesis"
     agent_name = "Synthesis"
     framework = "StrategicBriefV4 board synthesis"
+    required_live_keys = (
+        "decision_statement",
+        "executive_summary",
+        "board_narrative",
+        "framework_outputs",
+        "financial_analysis",
+        "implementation_roadmap",
+        "balanced_scorecard",
+        "citations",
+        "executive_recommendations",
+        "evidence_provenance",
+        "evidence_contract",
+    )
     _SCHEMA_SENSITIVE_KEYS = {
         "agent_collaboration_trace",
         "balanced_scorecard",
@@ -140,14 +153,31 @@ CRITICAL RULES:
       investment/partnership, and organic/build alternatives where available.
     - If you update executive_summary, it must remain an object with the full
       ExecutiveSummary shape.
+    - Return a complete StrategicBriefV4 object, not a patch and not a scaffold.
+    - Return exactly five executive_recommendations with priority, recommendation,
+      expected_impact, and time_horizon.
     - If you update framework_outputs, include only valid framework names.
+13. CALCULATION PROVENANCE:
+    - financial_analysis.calculation_provenance must contain method
+      "live_evidence_derived" or "live_llm_evidence", at least 3 source_urls,
+      formulas, and assumptions.
+    - Every bottom_up_revenue_model.sector_build row and every scenario must
+      contain calculation_origin, evidence_refs, formula_basis, and
+      source_or_assumption. Every evidence_refs URL must be copied exactly from
+      the verified evidence base supplied in this prompt.
         """.strip()
 
     def user_prompt(self, state) -> str:
         return self._live_user_prompt(state, self.local_result(state))
 
     def _generate(self, state) -> dict:
-        scaffold = self.local_result(state)
+        live_state = dict(state)
+        live_context = dict(state.get("extracted_context") or state.get("company_context") or {})
+        evidence_base = state.get("evidence_base") or live_context.get("_live_citations") or []
+        if evidence_base:
+            live_context["_live_citations"] = evidence_base
+        live_state["extracted_context"] = live_context
+        scaffold = self.local_result(live_state)
         settings = get_settings()
         if settings.demo_mode:
             scaffold["_used_fallback"] = True
@@ -155,7 +185,7 @@ CRITICAL RULES:
 
         proxy_output = llm_proxy.generate_json(
             system_prompt=self.system_prompt(),
-            user_prompt=self._live_user_prompt(state, scaffold),
+            user_prompt=self._live_user_prompt(live_state, scaffold),
             models=self.resolve_models(),
             agent_id=self.agent_id,
             analysis_id=state.get("analysis_id"),
@@ -163,7 +193,7 @@ CRITICAL RULES:
         if not proxy_output:
             proxy_output = llm_proxy.generate_json(
                 system_prompt=self.system_prompt(),
-                user_prompt=self._repair_user_prompt(state, scaffold),
+                user_prompt=self._repair_user_prompt(live_state, scaffold),
                 models=self.resolve_models(),
                 agent_id=self.agent_id,
                 analysis_id=state.get("analysis_id"),
@@ -171,7 +201,7 @@ CRITICAL RULES:
         if not proxy_output:
             proxy_output = llm_proxy.generate_json(
                 system_prompt=self.system_prompt(),
-                user_prompt=self._minimal_live_user_prompt(state, scaffold),
+                user_prompt=self._minimal_live_user_prompt(live_state, scaffold),
                 models=self.resolve_models(),
                 agent_id=self.agent_id,
                 analysis_id=state.get("analysis_id"),
@@ -180,16 +210,22 @@ CRITICAL RULES:
             if settings.allow_llm_fallback:
                 scaffold["_used_fallback"] = True
                 return scaffold
-            if self._has_live_provider_config(settings):
+            if settings.allow_deterministic_repair and self._has_live_provider_config(settings):
                 return self._provider_exhaustion_repair(scaffold)
-            raise RuntimeError("ASIS could not obtain live synthesis output from the configured LLM providers.")
+            raise RuntimeError(
+                "LIVE_LLM_OUTPUT_UNAVAILABLE: synthesis returned no parseable live synthesis output; "
+                "ASIS will not publish deterministic repair data as a client report."
+            )
+
+        if settings.require_live_evidence:
+            return self._prepare_strict_live_brief(proxy_output, live_state, settings)
 
         try:
             merged = self._merge_generated_brief(scaffold, proxy_output)
         except Exception as first_exc:
             repair_output = llm_proxy.generate_json(
                 system_prompt=self.system_prompt(),
-                user_prompt=self._repair_user_prompt(state, scaffold, validation_error=str(first_exc)),
+                user_prompt=self._repair_user_prompt(live_state, scaffold, validation_error=str(first_exc)),
                 models=self.resolve_models(),
                 agent_id=self.agent_id,
                 analysis_id=state.get("analysis_id"),
@@ -202,12 +238,13 @@ CRITICAL RULES:
                     if settings.allow_llm_fallback:
                         scaffold["_used_fallback"] = True
                         return scaffold
-                    raise RuntimeError(f"ASIS could not validate live synthesis output: {repair_exc}") from repair_exc
+                    raise RuntimeError(f"LIVE_LLM_OUTPUT_INVALID: {repair_exc}") from repair_exc
             elif settings.allow_llm_fallback:
                 scaffold["_used_fallback"] = True
                 return scaffold
             else:
-                raise RuntimeError(f"ASIS could not validate live synthesis output: {first_exc}") from first_exc
+                raise RuntimeError(f"LIVE_LLM_OUTPUT_INVALID: {first_exc}") from first_exc
+        self._assert_live_output_contract(proxy_output, settings)
         for metadata_key in ("_model_used", "_tools_called", "_langfuse_trace_id", "_token_usage"):
             if metadata_key in proxy_output:
                 merged[metadata_key] = proxy_output[metadata_key]
@@ -402,6 +439,37 @@ CRITICAL RULES:
                 merged["executive_summary"] = deepcopy(scaffold_summary)
                 merged["executive_summary"]["headline"] = merged["decision_statement"]
         return merged
+
+    def _prepare_strict_live_brief(self, output: dict, state: dict, settings) -> dict:
+        """Validate the complete live synthesis without scaffold repair or prose substitution."""
+        self._assert_live_output_contract(output, settings)
+        evidence_base = state.get("evidence_base") or []
+        if not evidence_base or any(item.get("verification_status") != "verified" for item in evidence_base if isinstance(item, dict)):
+            raise RuntimeError("LIVE_EVIDENCE_BLOCKED: synthesis has no exclusively verified evidence base.")
+        prepared = deepcopy(output)
+        prepared["citations"] = deepcopy(evidence_base)
+        framework_outputs = prepared.get("framework_outputs")
+        if not isinstance(framework_outputs, dict):
+            raise RuntimeError("LIVE_LLM_OUTPUT_INCOMPLETE: synthesis.framework_outputs must be a complete object.")
+        for framework, value in framework_outputs.items():
+            if isinstance(value, dict):
+                value["citations"] = deepcopy(evidence_base)
+        try:
+            brief = StrategicBriefV4.model_validate(prepared).model_dump(mode="json")
+        except ValidationError as exc:
+            summary = self._validation_summary(exc)
+            detail = "; ".join(f"{item['field']}: {item['message']}" for item in summary)
+            raise RuntimeError(
+                f"LIVE_LLM_OUTPUT_INVALID: complete synthesis failed StrategicBriefV4 validation: {detail}"
+            ) from exc
+        for key in ("_model_used", "_tools_called", "_langfuse_trace_id", "_token_usage"):
+            if key in output:
+                brief[key] = output[key]
+        brief["confidence_score"] = self._normalize_confidence(
+            output.get("confidence_score") or output.get("overall_confidence")
+        )
+        brief["_used_fallback"] = False
+        return brief
 
     def _enforce_confidence_contract(self, scaffold: dict, merged: dict) -> dict:
         confidence = self._extract_numeric(merged.get("overall_confidence"), self._extract_numeric(scaffold.get("overall_confidence"), 0.68))
@@ -650,10 +718,13 @@ CRITICAL RULES:
             }
             for name, output in framework_outputs.items()
         }
-        scenario_analysis = (scaffold.get("financial_analysis") or {}).get("scenario_analysis") or {}
-        strategic_pathways = (scaffold.get("market_analysis") or {}).get("strategic_pathways") or {}
-        execution_realism = (scaffold.get("risk_analysis") or {}).get("execution_realism") or {}
-        risk_register = (scaffold.get("risk_analysis") or {}).get("risk_register") or []
+        financial_output = state.get("financial_reasoning_output") or {}
+        strategic_output = state.get("strategic_options_output") or {}
+        risk_output = state.get("risk_assessment_output") or {}
+        scenario_analysis = financial_output.get("scenario_analysis") or (scaffold.get("financial_analysis") or {}).get("scenario_analysis") or {}
+        strategic_pathways = strategic_output.get("strategic_pathways") or (scaffold.get("market_analysis") or {}).get("strategic_pathways") or {}
+        execution_realism = risk_output.get("execution_realism") or (scaffold.get("risk_analysis") or {}).get("execution_realism") or {}
+        risk_register = risk_output.get("risk_register") or (scaffold.get("risk_analysis") or {}).get("risk_register") or []
         prompt_context = state.get("extracted_context") or state.get("company_context") or {}
         company = prompt_context.get("company_name") or "the organisation"
         geography = prompt_context.get("geography") or "the target market"
@@ -682,16 +753,24 @@ CRITICAL RULES:
             },
             "quality_failures": state.get("quality_failures") or [],
             "quality_retry_count": state.get("quality_retry_count") or 0,
-            "scaffold_excerpt": {
-                "decision_statement": scaffold.get("decision_statement"),
-                "recommendation": scaffold.get("recommendation"),
-                "overall_confidence": scaffold.get("overall_confidence"),
-                "executive_summary": scaffold.get("executive_summary"),
-                "board_narrative": scaffold.get("board_narrative"),
-                "decision_evidence": scaffold.get("decision_evidence"),
-                "section_action_titles": scaffold.get("section_action_titles"),
-                "frameworks_applied": scaffold.get("frameworks_applied"),
-                "implementation_roadmap": scaffold.get("implementation_roadmap"),
+            "verified_evidence_base": state.get("evidence_base") or [],
+            "provider_output_contract": {
+                "return_type": "complete StrategicBriefV4 JSON object",
+                "must_not_use": ["deterministic scaffold", "fallback prose", "illustrative financial values"],
+                "required_reconciliation": [
+                    "decision_statement",
+                    "executive_summary",
+                    "board_narrative",
+                    "framework_outputs",
+                    "financial_analysis",
+                    "implementation_roadmap",
+                    "balanced_scorecard",
+                    "quality_report",
+                    "report_metadata",
+                    "citations",
+                    "evidence_contract",
+                    "evidence_provenance",
+                ],
             },
             "agent_highlights": {
                 "market_intel": {
@@ -712,7 +791,7 @@ CRITICAL RULES:
                     "cage_distance_analysis": (state.get("geo_intel_output") or {}).get("cage_distance_analysis"),
                 },
                 "financial_reasoning": {
-                    "financial_projections": (state.get("financial_reasoning_output") or {}).get("financial_projections"),
+                    "financial_projections": financial_output.get("financial_projections"),
                     "scenario_analysis": {
                         "recommended_case": scenario_analysis.get("recommended_case"),
                         "decision_rule": scenario_analysis.get("decision_rule"),
@@ -720,9 +799,9 @@ CRITICAL RULES:
                     },
                 },
                 "strategic_options": {
-                    "recommended_option": (state.get("strategic_options_output") or {}).get("recommended_option"),
-                    "option_rationale": (state.get("strategic_options_output") or {}).get("option_rationale"),
-                    "options": (state.get("strategic_options_output") or {}).get("strategic_options", [])[:3],
+                    "recommended_option": strategic_output.get("recommended_option"),
+                    "option_rationale": strategic_output.get("option_rationale"),
+                    "options": strategic_output.get("strategic_options", [])[:3],
                     "strategic_pathways": {
                         "recommended_option": strategic_pathways.get("recommended_option"),
                         "verdict": strategic_pathways.get("verdict"),
@@ -739,13 +818,16 @@ CRITICAL RULES:
                 "financial_reasoning": self._compress_agent_output(state.get("financial_reasoning_output") or {}),
                 "strategic_options": self._compress_agent_output(state.get("strategic_options_output") or {}),
             },
-            "framework_highlights": framework_highlights,
+            "framework_highlights": framework_highlights if not get_settings().require_live_evidence else {},
         }
         return json.dumps(payload, indent=2, default=str)
 
     def _repair_user_prompt(self, state, scaffold: dict, validation_error: str | None = None) -> str:
         payload = {
-            "task": "Return a minimal JSON patch that fixes validation and consistency failures without changing structured financial totals or option tables.",
+            "task": (
+                "Return a complete StrategicBriefV4 JSON object that fixes the validation and consistency failures. "
+                "Do not return a patch and do not use a deterministic scaffold."
+            ),
             "query": state.get("query"),
             "immutable_query_facts": extract_query_facts(state.get("query") or ""),
             "company_context": state.get("extracted_context") or state.get("company_context"),
@@ -758,16 +840,10 @@ CRITICAL RULES:
                 "section_action_titles",
                 "so_what_callouts",
                 "implementation_roadmap",
+                "executive_recommendations",
             ],
-            "current_scaffold": {
-                "decision_statement": scaffold.get("decision_statement"),
-                "executive_summary": scaffold.get("executive_summary"),
-                "board_narrative": scaffold.get("board_narrative"),
-                "recommendation": scaffold.get("recommendation"),
-                "section_action_titles": scaffold.get("section_action_titles"),
-                "so_what_callouts": scaffold.get("so_what_callouts"),
-                "implementation_roadmap": scaffold.get("implementation_roadmap"),
-            },
+            "provider_output_contract": "Return the complete StrategicBriefV4 object; no scaffold fields may be copied as evidence.",
+            "verified_evidence_base": state.get("evidence_base") or [],
         }
         return json.dumps(payload, indent=2, default=str)
 
@@ -778,8 +854,8 @@ CRITICAL RULES:
         risk = scaffold.get("risk_analysis") or {}
         payload = {
             "task": (
-                "Return only a small valid JSON object. Do not return markdown. "
-                "Rewrite only board-facing prose fields using the query and evidence."
+                "Return a complete valid StrategicBriefV4 JSON object. Do not return markdown, a patch, "
+                "or any deterministic scaffold content. Use only the query and verified evidence."
             ),
             "query": state.get("query"),
             "company_context": context,
@@ -791,6 +867,15 @@ CRITICAL RULES:
                 "decision_rationale",
                 "section_action_titles",
                 "so_what_callouts",
+                "executive_recommendations",
+                "framework_outputs",
+                "financial_analysis",
+                "balanced_scorecard",
+                "quality_report",
+                "report_metadata",
+                "citations",
+                "evidence_contract",
+                "evidence_provenance",
             ],
             "constraints": {
                 "decision_statement": "Must start with PROCEED, CONDITIONAL PROCEED, or DO NOT PROCEED and be 35 words or fewer.",
@@ -798,12 +883,13 @@ CRITICAL RULES:
                 "specificity": "Use the actual company, geography, sector, and strategic constraints. Avoid generic scaffold phrases.",
             },
             "evidence": {
-                "current_decision": scaffold.get("decision_statement"),
-                "recommended_pathway": (market.get("strategic_pathways") or {}).get("recommended_option"),
-                "financial_recommendation": (financial.get("scenario_analysis") or {}).get("recommended_case"),
-                "top_risks": (risk.get("risk_register") or [])[:3],
-                "roadmap": (scaffold.get("implementation_roadmap") or [])[:3],
+                "current_decision": (state.get("strategic_options_output") or {}).get("recommended_option"),
+                "recommended_pathway": (state.get("strategic_options_output") or {}).get("recommended_option"),
+                "financial_recommendation": (state.get("financial_reasoning_output") or {}).get("scenario_analysis"),
+                "top_risks": (state.get("risk_assessment_output") or {}).get("risk_register", [])[:3],
+                "roadmap": "Build from the verified evidence and current agent outputs; do not copy a scaffold roadmap.",
             },
+            "verified_evidence_base": state.get("evidence_base") or [],
         }
         return json.dumps(payload, indent=2, default=str)
 
@@ -850,6 +936,10 @@ CRITICAL RULES:
             or build_citations(context, limit=6),
             minimum=6,
         )
+        if get_settings().require_live_evidence and not citations:
+            raise RuntimeError(
+                "LIVE_EVIDENCE_BLOCKED: synthesis has no verified evidence base and cannot build a report."
+            )
 
         framework_outputs = self._build_framework_outputs(
             state=state,
@@ -1002,7 +1092,7 @@ CRITICAL RULES:
             "checks": [],
             "quality_flags": quality_flags,
             "mece_score": mece_score,
-            "citation_density_score": 1.0,
+            "citation_density_score": self._citation_strength(framework_outputs),
             "internal_consistency_score": internal_consistency_score,
             "context_specificity_score": self._query_specificity(query, context),
             "financial_grounding_score": self._commercial_rigor_signal(bottom_up_revenue_model, scenario_analysis),
@@ -1057,6 +1147,24 @@ CRITICAL RULES:
             "asis_version": "4.0.0",
             "confidentiality_level": "STRICTLY CONFIDENTIAL",
             "disclaimer": "This report is decision-support material and should be reviewed by qualified human experts before implementation.",
+            "template_version": "ASIS-SIR v1.0",
+            "section_order": [
+                "cover_page",
+                "executive_summary",
+                "scenario_context",
+                "evidence_base",
+                "multi_agent_analysis",
+                "strategic_intelligence_dashboard",
+                "strategic_insights",
+                "executive_recommendations",
+                "strategic_roadmap",
+                "evidence_traceability_matrix",
+                "risk_matrix",
+                "opportunity_matrix",
+                "benchmark_comparison_sheet",
+                "citation_register",
+                "appendices",
+            ],
         }
         red_team = self._build_red_team_challenges(
             query=query,
@@ -1074,6 +1182,28 @@ CRITICAL RULES:
             commercial_rigor_score=commercial_rigor_score,
             internal_consistency_score=internal_consistency_score,
         )
+        executive_recommendations = self._build_executive_recommendations(
+            company=company,
+            geography=geography,
+            profile=profile,
+            strategic_pathway=primary_pathway,
+            normalized_risks=normalized_risks,
+        )
+        evidence_provenance = {
+            "provider": "live_web",
+            "verified_source_count": len(citations),
+            "all_sources_verified": bool(citations) and all(
+                item.get("verification_status") == "verified" for item in citations
+            ),
+            "retrieval_queries": sorted(
+                {
+                    str(item.get("retrieval_query"))
+                    for item in citations
+                    if item.get("retrieval_query")
+                }
+            ),
+        }
+        context.pop("_live_citations", None)
 
         return {
             "decision_statement": decision_statement,
@@ -1082,6 +1212,7 @@ CRITICAL RULES:
             "decision_evidence": decision_evidence,
             "framework_outputs": framework_outputs,
             "executive_summary": executive_summary,
+            "executive_recommendations": executive_recommendations,
             "section_action_titles": section_action_titles,
             "so_what_callouts": so_what_callouts,
             "agent_collaboration_trace": collaboration_trace,
@@ -1106,7 +1237,53 @@ CRITICAL RULES:
             "citations": citations,
             "confidence_score": overall_confidence,
             "evidence_contract": evidence_contract,
+            "evidence_provenance": evidence_provenance,
         }
+
+    def _build_executive_recommendations(
+        self,
+        *,
+        company: str,
+        geography: str,
+        profile: dict[str, object],
+        strategic_pathway: dict[str, object] | None,
+        normalized_risks: list[dict],
+    ) -> list[dict[str, str]]:
+        pathway_name = str((strategic_pathway or {}).get("name") or profile.get("default_recommendation") or "the recommended pathway")
+        top_risk = str((normalized_risks[0] if normalized_risks else {}).get("description") or "the highest-ranked execution risk")
+        program = str(profile.get("program_label") or "the program")
+        return [
+            {
+                "priority": "1",
+                "recommendation": f"Approve {pathway_name} for {company} in {geography} with explicit board gates.",
+                "expected_impact": "Creates a controlled decision path while preserving the option to stop before full-scale capital commitment.",
+                "time_horizon": "Immediate: 0-3 months",
+            },
+            {
+                "priority": "2",
+                "recommendation": f"Validate the live evidence, customer demand, and operating assumptions behind {program} before release of the next tranche.",
+                "expected_impact": "Reduces the risk that scenario economics are mistaken for observed performance.",
+                "time_horizon": "Short-term: 3-12 months",
+            },
+            {
+                "priority": "3",
+                "recommendation": f"Close the highest-priority capability gaps that could prevent {company} from executing in {geography}.",
+                "expected_impact": "Improves readiness, delivery reliability, and the probability of converting the strategy into measurable outcomes.",
+                "time_horizon": "Short-term: 3-12 months",
+            },
+            {
+                "priority": "4",
+                "recommendation": f"Use a balanced scorecard to track financial, customer, process, and capability outcomes for {program}.",
+                "expected_impact": "Makes value capture visible and creates an auditable basis for continue, pause, or re-scope decisions.",
+                "time_horizon": "Medium-term: 1-3 years",
+            },
+            {
+                "priority": "5",
+                "recommendation": f"Keep the board-level downside trigger tied to {top_risk} and review it before each expansion step.",
+                "expected_impact": "Prevents optimistic upside assumptions from outrunning risk controls and evidence quality.",
+                "time_horizon": "Long-term: 3-5 years",
+            },
+        ]
 
     def _analysis_profile(self, *, company: str, geography: str, context: dict, query: str, recommendation: str | None) -> dict[str, object]:
         decision_type = self._normalize_decision_type(str(context.get("decision_type") or ""), query)
@@ -1511,6 +1688,7 @@ CRITICAL RULES:
         return calibrated
 
     def _build_framework_outputs(self, *, state, context, citations, market, risk, competitor, geo, financial, strategic, profile) -> dict[str, dict]:
+        citation_slots = [citations[index % len(citations)] for index in range(4)] if citations else []
         named_competitors = context.get("named_competitors") or extract_query_facts(state.get("query") or "").get("named_competitors") or []
         competitor_profiles = self._named_competitor_profiles(named_competitors) if named_competitors else competitor.get("competitor_profiles") or []
         program_label = str(profile["program_label"])
@@ -1720,13 +1898,13 @@ CRITICAL RULES:
                     "point": "The capital case supports phased investment with attractive medium-term returns.",
                     "source_agent": AgentName.FINANCIAL_REASONING.value,
                     "evidence": "Projected IRR and staged payback remain attractive under disciplined deployment.",
-                    "citation": citations[0]["title"],
+                    "citation": citation_slots[0]["title"],
                 },
                 {
                     "point": "The proposition can differentiate on trust, governance, and partner leverage.",
                     "source_agent": AgentName.MARKET_INTELLIGENCE.value,
                     "evidence": "Market and Blue Ocean analysis both reward a reliability-led proposition.",
-                    "citation": citations[1]["title"],
+                    "citation": citation_slots[1]["title"],
                 },
             ],
             "weaknesses": [
@@ -1734,13 +1912,13 @@ CRITICAL RULES:
                     "point": "Local systems, staff, and execution authority are not yet fully built for scale.",
                     "source_agent": AgentName.STRATEGIC_OPTIONS.value,
                     "evidence": "McKinsey 7S identifies critical gaps in staff, systems, and structure.",
-                    "citation": citations[2]["title"],
+                    "citation": citation_slots[2]["title"],
                 },
                 {
                     "point": "Incumbents retain stronger distribution depth and local market familiarity.",
                     "source_agent": AgentName.COMPETITOR_ANALYSIS.value,
                     "evidence": "Competitor profiling shows incumbents defend core segments effectively.",
-                    "citation": citations[3]["title"],
+                    "citation": citation_slots[3]["title"],
                 },
             ],
             "opportunities": [
@@ -1748,13 +1926,13 @@ CRITICAL RULES:
                     "point": "The external opportunity is material enough to justify a measured strategic move.",
                     "source_agent": AgentName.MARKET_INTELLIGENCE.value,
                     "evidence": market.get("market_size_summary", {}).get("headline", "Demand growth remains attractive."),
-                    "citation": citations[0]["title"],
+                    "citation": citation_slots[0]["title"],
                 },
                 {
                     "point": f"{strategic_path.capitalize()} offers the strongest risk-adjusted path.",
                     "source_agent": AgentName.STRATEGIC_OPTIONS.value,
                     "evidence": strategic.get("option_rationale", f"{strategic_path.capitalize()} is the recommended route."),
-                    "citation": citations[1]["title"],
+                    "citation": citation_slots[1]["title"],
                 },
             ],
             "threats": [
@@ -1762,13 +1940,13 @@ CRITICAL RULES:
                     "point": "Regulatory delay can invalidate timing assumptions and extend the payback period.",
                     "source_agent": AgentName.RISK_ASSESSMENT.value,
                     "evidence": "The risk register ranks regulatory delay as the highest-risk item.",
-                    "citation": citations[2]["title"],
+                    "citation": citation_slots[2]["title"],
                 },
                 {
                     "point": f"Administrative distance and competitive retaliation can disrupt {program_label} execution.",
                     "source_agent": AgentName.GEO_INTEL.value,
                     "evidence": "CAGE distance and Porter's forces both point to execution friction.",
-                    "citation": citations[3]["title"],
+                    "citation": citation_slots[3]["title"],
                 },
             ],
             "action_title": f"The company has enough strategic upside to proceed, but only if it addresses capability gaps and risk gating before accelerating the {program_label}.",
