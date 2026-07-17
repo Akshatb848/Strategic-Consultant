@@ -11,11 +11,16 @@ class OrmModel(BaseModel):
 
 
 class Citation(BaseModel):
+    id: str | None = None
     title: str
     source: str
     url: str
     published_at: str
     excerpt: str
+    verification_status: str = "unverified"
+    retrieved_at: str | None = None
+    retrieval_query: str | None = None
+    source_type: str = "web"
 
 
 class MessageResponse(BaseModel):

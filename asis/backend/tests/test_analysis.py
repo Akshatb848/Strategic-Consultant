@@ -6,6 +6,7 @@ import pytest
 
 from asis.backend.db import database as db_state
 from asis.backend.db import models
+from asis.backend.api.routes.analysis import _to_summary
 from asis.backend.agents.types import AgentOutput
 from asis.backend.agents.synthesis_v4 import V4SynthesisAgent
 from asis.backend.graph.pipeline import v4_workflow
@@ -95,6 +96,9 @@ async def test_analysis_lifecycle_and_report_generation(client):
     assert analysis["pipeline_version"] == "4.0.0"
     assert analysis["overall_confidence"] != 85
     assert "total_cost_usd" in analysis
+    assert "quality_grade" in analysis
+    assert "quality_blocking" in analysis
+    assert "is_board_ready" in analysis
     assert analysis["strategic_brief"]["overall_confidence"] == analysis["overall_confidence"]
     assert analysis["strategic_brief"]["verification"]["overall_verification_score"] == analysis["overall_confidence"]
     assert len(analysis["strategic_brief"]["financial_analysis"]["bottom_up_revenue_model"]["sector_build"]) >= 3
@@ -516,6 +520,42 @@ async def test_pipeline_failure_message_is_sanitized(client, monkeypatch):
     assert "sqlalche.me" not in analysis["error_message"]
 
 
+@pytest.mark.anyio
+async def test_agent_provider_failure_persists_failed_log(client, monkeypatch):
+    headers = await register_user(client, email="agent-provider-fail@example.com")
+
+    def fail_agent(_state):
+        raise RuntimeError("ASIS could not obtain live model output from the configured LLM providers.")
+
+    monkeypatch.setattr(v4_workflow.market_intel, "run", fail_agent)
+    created = await client.post(
+        "/api/v1/analysis",
+        headers=headers,
+        json={
+            "query": "Should Contoso Mobility launch a battery analytics platform in India by 2027?",
+            "company_context": {
+                "company_name": "Contoso Mobility",
+                "sector": "Automotive technology",
+                "geography": "India",
+            },
+        },
+    )
+    assert created.status_code == 201, created.text
+    analysis_id = created.json()["analysis"]["id"]
+
+    detail = await client.get(f"/api/v1/analysis/{analysis_id}", headers=headers)
+    assert detail.status_code == 200, detail.text
+    analysis = detail.json()["analysis"]
+    assert analysis["status"] == "failed"
+    assert analysis["error_message"] == "ASIS could not obtain live model output from the configured LLM providers."
+
+    failed_market_log = next(
+        log for log in analysis["agent_logs"] if log["agent_id"] == "market_intel" and log["status"] == "failed"
+    )
+    assert failed_market_log["correction_reason"] == analysis["error_message"]
+    assert failed_market_log["parsed_output"]["error"] == analysis["error_message"]
+
+
 def test_synthesis_agent_repairs_partial_live_output_without_fallback(monkeypatch):
     from asis.backend.agents.llm_proxy import llm_proxy
 
@@ -651,6 +691,113 @@ async def test_materially_different_prompts_do_not_share_financial_or_framework_
     assert bain_bcg_units != pwc_bcg_units
     assert "McKinsey & Company" in str(bain_payload["framework_outputs"]["blue_ocean"]["structured_data"])
     assert "Accenture" in str(pwc_payload["framework_outputs"]["blue_ocean"]["structured_data"])
+
+
+@pytest.mark.anyio
+async def test_public_sector_cloud_synthesis_avoids_generic_scaffold_language():
+    query = (
+        "Should Oracle strengthen its enterprise AI and cloud infrastructure ecosystem in the public sector "
+        "through sovereign cloud deployments, cybersecurity partnerships, and AI-driven analytics platforms; "
+        "and what go-to-market strategy would maximize government adoption while mitigating procurement and "
+        "compliance risks by 2030?"
+    )
+    context = {
+        "company_name": "Oracle",
+        "sector": "Cloud Infrastructure",
+        "geography": "India",
+        "decision_type": "expand",
+    }
+    payload = V4SynthesisAgent().local_result(_synthesis_state(query, context))
+    report = await QualityGate().validate(StrategicBriefV4.model_validate(payload), scope="pipeline")
+    report_text = str(payload).lower()
+    block_failures = [check.id for check in report.checks if check.level == "BLOCK" and not check.passed]
+
+    assert "sovereign-cloud" in report_text or "sovereign cloud" in report_text
+    assert "public-sector" in report_text or "public sector" in report_text
+    assert "consulting-led land strategy" not in report_text
+    assert "subject to regulatory readiness and partner due diligence" not in report_text
+    assert "internal consistency remains strong at 48%" not in report_text
+    assert "against realistic sales-cycle and integration assumptions" not in report_text
+    assert not block_failures
+    assert len(payload["decision_statement"].split()) <= 35
+    assert payload["decision_confidence"] == payload["overall_confidence"]
+    assert len(payload["framework_outputs"]["bcg_matrix"]["structured_data"]["business_units"]) >= 2
+
+
+def test_public_sector_cloud_merge_repairs_shallow_live_bcg_output():
+    query = (
+        "Should Oracle strengthen its enterprise AI and cloud infrastructure ecosystem in the public sector "
+        "through sovereign cloud deployments, cybersecurity partnerships, and AI-driven analytics platforms "
+        "in India by 2030?"
+    )
+    context = {
+        "company_name": "Oracle",
+        "sector": "Cloud Infrastructure",
+        "geography": "India",
+        "decision_type": "expand",
+    }
+    agent = V4SynthesisAgent()
+    scaffold = agent.local_result(_synthesis_state(query, context))
+    generated = {
+        "decision_statement": "PROCEED - expand sovereign cloud services in India through certified public-sector partners.",
+        "overall_confidence": 0.8,
+        "framework_outputs": {
+            "bcg_matrix": {
+                **scaffold["framework_outputs"]["bcg_matrix"],
+                "structured_data": {
+                    "business_units": [
+                        {"name": "Oracle Sovereign Cloud & AI for Public Sector", "market_growth_rate": 20, "relative_market_share": 1.0}
+                    ]
+                },
+            }
+        },
+    }
+
+    merged = agent._merge_generated_brief(scaffold, generated)
+
+    assert len(merged["framework_outputs"]["bcg_matrix"]["structured_data"]["business_units"]) >= 2
+
+
+def test_analysis_summary_marks_quality_failures_as_not_board_ready():
+    analysis = models.Analysis(
+        id="quality-fail-analysis",
+        user_id="user-1",
+        query="Should Oracle expand sovereign cloud services for public sector customers?",
+        status="completed",
+        pipeline_version="4.0.0",
+        used_fallback=False,
+        strategic_brief={
+            "quality_report": {
+                "overall_grade": "FAIL",
+                "quality_flags": ["Potential stale-context leakage detected"],
+                "checks": [
+                    {
+                        "id": "framework_structural_depth",
+                        "description": "Incomplete framework data",
+                        "level": "BLOCK",
+                        "passed": False,
+                    }
+                ],
+            },
+            "analysis_meta": {"has_blocking_warnings": True},
+        },
+        created_at=datetime.utcnow(),
+    )
+    analysis.report = models.Report(
+        id="report-1",
+        analysis_id=analysis.id,
+        user_id=analysis.user_id,
+        strategic_brief=analysis.strategic_brief,
+        pdf_status="blocked",
+    )
+
+    summary = _to_summary(analysis)
+
+    assert summary.status == "completed"
+    assert summary.quality_grade == "FAIL"
+    assert summary.quality_blocking is True
+    assert summary.pdf_status == "blocked"
+    assert summary.is_board_ready is False
 
 
 @pytest.mark.anyio

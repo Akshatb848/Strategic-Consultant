@@ -7,13 +7,30 @@ from pathlib import Path
 import pytest
 import httpx
 
+# Keep route modules imported during collection on isolated in-memory test
+# infrastructure; production deployment supplies its own explicit environment.
+os.environ["ENVIRONMENT"] = "test"
+os.environ["ASIS_DEMO_MODE"] = "true"
+os.environ["REDIS_URL"] = "memory://"
+
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 
 @pytest.fixture(autouse=True)
-def clear_settings_cache_between_tests():
+def default_offline_test_settings(monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "test")
+    monkeypatch.setenv("ASIS_DEMO_MODE", "true")
+    monkeypatch.setenv("ALLOW_LLM_FALLBACK", "true")
+    # Existing unit tests exercise deterministic fixtures explicitly. Production
+    # defaults remain strict: live evidence is enabled whenever ENVIRONMENT is
+    # production outside this test harness.
+    monkeypatch.setenv("REQUIRE_LIVE_EVIDENCE", "false")
+    monkeypatch.setenv("ALLOW_DETERMINISTIC_REPAIR", "true")
+    monkeypatch.setenv("ASIS_REQUIRED_LLM_PROVIDER", "any")
+    monkeypatch.setenv("REDIS_URL", "memory://")
+
     from asis.backend.config.settings import get_settings
 
     get_settings.cache_clear()

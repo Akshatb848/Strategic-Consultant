@@ -12,10 +12,12 @@ class RiskAssessmentAgent(BaseAgent):
     agent_id = "risk_assessment"
     agent_name = "Risk Assessment"
     framework = "Enterprise risk register + PESTLE social/environmental"
+    required_live_keys = ("risk_register", "social_exposure", "environmental_exposure", "citations")
 
     def system_prompt(self) -> str:
         return """You are the Risk Assessment agent for ASIS v4.0.
 Build a comprehensive enterprise risk register and assess social/environmental (PESTLE S+E) exposure.
+Return a complete JSON object for this agent. Do not return a patch or deterministic scaffold content.
 Return a JSON patch enriching the precomputed scaffold. JSON only, no markdown.
 
 Required patch shape:
@@ -66,7 +68,7 @@ Rules:
         return (
             f"Strategic question:\n{state['query']}\n\n"
             f"Context:\n{json.dumps(summary, ensure_ascii=False)}\n\n"
-            "Identify all material risks for this specific decision. Return the JSON patch."
+            "Identify all material risks for this specific decision. Return the complete JSON object."
         )
 
     def local_result(self, state) -> dict:

@@ -4,6 +4,7 @@ interface ReportCoverPageProps {
   client: string;
   date: string;
   confidentiality?: string;
+  metadata?: Array<{ label: string; value: string }>;
 }
 
 export function ReportCoverPage({
@@ -12,6 +13,7 @@ export function ReportCoverPage({
   client,
   date,
   confidentiality = "Strictly confidential",
+  metadata = [],
 }: ReportCoverPageProps) {
   return (
     <section className="report-section report-section--cover flex min-h-[70vh] flex-col justify-between py-16">
@@ -36,6 +38,14 @@ export function ReportCoverPage({
           <div className="mt-2 text-base text-[var(--c-text)]">{date}</div>
           <div className="mt-1">{confidentiality}</div>
         </div>
+        {metadata.map((item) => (
+          <div key={item.label}>
+            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--c-text-faint)]">
+              {item.label}
+            </div>
+            <div className="mt-2 text-base text-[var(--c-text)]">{item.value}</div>
+          </div>
+        ))}
       </div>
     </section>
   );

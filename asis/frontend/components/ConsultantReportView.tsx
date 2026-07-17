@@ -1,7 +1,5 @@
 "use client";
 
-import { Fragment } from "react";
-
 import type { AnalysisMeta, FrameworkOutput, ReportTheme, StrategicBriefV4 } from "@/lib/api";
 
 import { DecisionStatementBox } from "@/components/report/DecisionStatementBox";
@@ -12,15 +10,13 @@ import { ReportExecutiveSummary } from "@/components/report/ReportExecutiveSumma
 import { ReportSection } from "@/components/report/ReportSection";
 import { ReportTable, type ReportTableColumn } from "@/components/report/ReportTable";
 import { ReportTableOfContents } from "@/components/report/ReportTableOfContents";
-import { SectionLayout } from "@/components/report/SectionLayout";
+import { StatCallout } from "@/components/report/StatCallout";
 import {
   ensureFindingTitle,
   reportAnalysisMeta,
   reportCompanyName,
   reportFrameworkEntries,
   reportFrameworkSource,
-  reportIsMnaMode,
-  reportPriorityActions,
   reportSections,
   reportSubtitle,
   reportTopFindings,
@@ -243,182 +239,181 @@ function renderAppendix(brief: StrategicBriefV4, compactAppendix: boolean) {
   );
 }
 
-export function ConsultantReportView({
-  brief,
-  theme,
-  compactAppendix = false,
-}: ConsultantReportViewProps) {
+function evidenceRows(brief: StrategicBriefV4) {
+  return (brief.citations || []).map((citation) => ({
+    id: String(citation.id || ""),
+    title: toDisplay(citation.title || citation.source),
+    source: toDisplay(citation.source),
+    status: toDisplay(citation.verification_status || ""),
+    retrieved: toDisplay(citation.retrieved_at || ""),
+    url: toDisplay(citation.url),
+  }));
+}
+
+function reportRiskRows(brief: StrategicBriefV4) {
+  const risks = objectRows(brief.risk_analysis?.risk_register || brief.risk_analysis?.summary);
+  return risks.map((risk, index) => ({
+    id: toDisplay(risk.risk_id || risk.id || `R${index + 1}`),
+    category: toDisplay(risk.category),
+    description: toDisplay(risk.description || risk.risk),
+    score: toDisplay(risk.inherent_score || risk.score),
+    mitigation: toDisplay(risk.mitigation || risk.response),
+  }));
+}
+
+function reportOpportunityRows(brief: StrategicBriefV4) {
+  const opportunities = objectRows(brief.market_analysis?.opportunities || brief.framework_outputs?.swot?.structured_data?.opportunities);
+  return opportunities.map((item, index) => ({
+    id: `O${index + 1}`,
+    opportunity: toDisplay(item.opportunity || item.description || item.name || item),
+    evidence: toDisplay(item.evidence || item.rationale || item.implication),
+    action: toDisplay(item.action || item.recommended_action),
+  }));
+}
+
+function reportInsightRows(brief: StrategicBriefV4) {
+  return reportTopFindings(brief).slice(0, 8).map((finding, index) => ({ id: String(index + 1), finding }));
+}
+
+function reportRecommendationRows(brief: StrategicBriefV4) {
+  return (brief.executive_recommendations || []).slice(0, 5).map((item, index) => ({
+    priority: toDisplay(item.priority || index + 1),
+    recommendation: toDisplay(item.recommendation),
+    impact: toDisplay(item.expected_impact),
+    horizon: toDisplay(item.time_horizon),
+  }));
+}
+
+export function ConsultantReportView({ brief, theme, compactAppendix = false }: ConsultantReportViewProps) {
   const analysisMeta = reportAnalysisMeta(brief);
-  const topFindings = reportTopFindings(brief);
-  const priorityActions = reportPriorityActions(brief);
   const tocItems = reportSections(brief);
   const frameworkEntries = reportFrameworkEntries(brief);
-  const mnaMode = reportIsMnaMode(brief);
+  const evidence = evidenceRows(brief);
+  const sourceColumns: Array<ReportTableColumn<(typeof evidence)[number]>> = [
+    { key: "id", label: "ID", render: (row) => row.id },
+    { key: "title", label: "Source", render: (row) => row.title },
+    { key: "source", label: "Publisher", render: (row) => row.source },
+    { key: "status", label: "Status", render: (row) => row.status },
+    { key: "retrieved", label: "Retrieved", render: (row) => row.retrieved },
+  ];
 
   return (
     <div className="report-root" data-report-theme={theme}>
       <div className="report-page py-10">
         <ReportCoverPage
-          title="Strategic decision report"
+          title="ASIS Strategic Intelligence Report"
           subtitle={brief.report_metadata?.query || reportSubtitle(brief)}
           client={reportCompanyName(brief)}
           date={new Date(brief.report_metadata.generated_at).toLocaleDateString()}
           confidentiality={brief.report_metadata.confidentiality_level || "Strictly confidential"}
+          metadata={[
+            { label: "Report ID", value: toDisplay(brief.report_metadata.analysis_id) },
+            { label: "Scenario ID", value: toDisplay(brief.context?.scenario_id || brief.context?.scenario) },
+            { label: "Industry", value: toDisplay(brief.context?.industry || brief.context?.sector) },
+            { label: "Country / Region", value: toDisplay(brief.context?.country || brief.context?.geography) },
+            { label: "Report version", value: toDisplay(brief.report_metadata.template_version || brief.report_metadata.asis_version) },
+            { label: "Confidence level", value: `${Math.round(brief.decision_confidence * 100)}%` },
+            { label: "Executive classification", value: toDisplay(brief.report_metadata.confidentiality_level) },
+          ]}
         />
-
         <ReportTableOfContents items={tocItems} />
 
-        <ReportExecutiveSummary
-          brief={brief}
-          topFindings={topFindings}
-          priorityActions={priorityActions}
-          analysisMeta={analysisMeta}
-        />
+        <ReportExecutiveSummary brief={brief} />
 
-        <section id="decision" className="report-section py-12">
-          <div className="rpt-section-header">2. Decision statement</div>
-          <DecisionStatementBox brief={brief} analysisMeta={analysisMeta} />
-        </section>
+        <ReportSection id="scenario-context" number="2" title="Scenario Context" narrative={brief.decision_rationale}>
+          <div className="grid gap-6 lg:grid-cols-[1fr,1fr]">
+            <DecisionStatementBox brief={brief} analysisMeta={analysisMeta} />
+            <ReportTable
+              columns={[
+                { key: "field", label: "Context", render: (row: { field: string; value: string }) => row.field },
+                { key: "value", label: "Value", render: (row: { field: string; value: string }) => row.value },
+              ]}
+              rows={[
+                { field: "Company", value: reportCompanyName(brief) },
+                { field: "Sector", value: toDisplay(brief.context?.sector || brief.context?.industry) },
+                { field: "Geography", value: toDisplay(brief.context?.geography) },
+                { field: "Decision type", value: toDisplay(brief.context?.decision_type) },
+                { field: "Time horizon", value: toDisplay(brief.context?.time_horizon_years) },
+              ]}
+            />
+          </div>
+        </ReportSection>
 
-        <ReportSection
-          id="market-landscape"
-          number="3"
-          title="Market landscape and sizing"
-          narrative={brief.market_analysis?.strategic_implication as string | undefined}
-        >
-          <SectionLayout
-            aside={
-              reportCompanyName(brief) ? (
-                <div className="rounded-[18px] border border-[var(--c-divider)] bg-[var(--c-surface)] p-5">
-                  <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--c-text-faint)]">
-                    Context
-                  </div>
-                  <div className="mt-3 space-y-2 text-sm text-[var(--c-text)]">
-                    <div>{reportCompanyName(brief)}</div>
-                    <div>{reportSubtitle(brief)}</div>
-                    <div>{String(brief.context?.decision_type || "General strategy")}</div>
-                  </div>
-                </div>
-              ) : null
-            }
-          >
-            <ExhibitContainer
-              exhibitNumber={1}
-              title={ensureFindingTitle(
-                "The quantified addressable market supports a staged strategic commitment.",
-                "The quantified addressable market supports a staged strategic commitment."
-              )}
-              source="Source: ASIS quant and market-intelligence synthesis."
-            >
+        <ReportSection id="evidence-base" number="3" title="Evidence Base" narrative="Only verified live sources recorded by the evidence provider are eligible for this report.">
+          <ReportTable columns={sourceColumns} rows={evidence} emptyMessage="No verified evidence was retrieved; this report is not publishable." />
+          <div className="mt-5 text-sm text-[var(--c-text-muted)]">
+            Provider: {toDisplay(brief.evidence_provenance?.provider)} · Verified sources: {toDisplay(brief.evidence_provenance?.verified_source_count)}
+          </div>
+        </ReportSection>
+
+        <ReportSection id="multi-agent-analysis" number="4" title="Multi-Agent Analysis" narrative={brief.board_narrative}>
+          <div className="space-y-8">
+            {frameworkEntries.map(([key, output]) => (
+              <ExhibitContainer key={key} exhibitNumber={output.exhibit_number} title={ensureFindingTitle(output.exhibit_title, `${output.framework_name} produces a query-specific finding.`)} source={reportFrameworkSource(output)}>
+                <ReportSection id={`framework-${key}`} number={String(output.exhibit_number)} title={output.framework_name} narrative={output.narrative} callout={brief.so_what_callouts?.[key]}>
+                  {renderFrameworkBody(output)}
+                </ReportSection>
+              </ExhibitContainer>
+            ))}
+          </div>
+        </ReportSection>
+
+        <ReportSection id="strategic-intelligence-dashboard" number="5" title="Strategic Intelligence Dashboard">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <StatCallout label="Decision confidence" value={`${Math.round(brief.decision_confidence * 100)}%`} detail="Evidence-calibrated" />
+            <StatCallout label="Quality grade" value={brief.quality_report?.overall_grade || "FAIL"} detail="Quality gate result" />
+            <StatCallout label="Frameworks" value={String(frameworkEntries.length)} detail="Completed analytical lenses" />
+            <StatCallout label="Verified sources" value={String(evidence.length)} detail="Live source register" />
+          </div>
+          <div className="mt-6">
+            <ExhibitContainer exhibitNumber={0} title="The decision is governed by evidence, risk, economics, and execution readiness." source="Source: ASIS quality-gated synthesis.">
               {renderMarketSizing(brief)}
             </ExhibitContainer>
-            {renderCompetitorProfiles(brief) ? (
-              <ExhibitContainer
-                exhibitNumber={2}
-                title={ensureFindingTitle(
-                  "Named competitors reveal where the client is over- and under-positioned.",
-                  "Named competitors reveal where the client is over- and under-positioned."
-                )}
-                source="Source: ASIS competitor and market-intelligence outputs."
-              >
-                {renderCompetitorProfiles(brief)}
-              </ExhibitContainer>
-            ) : null}
-          </SectionLayout>
+          </div>
         </ReportSection>
 
-        {frameworkEntries.map(([key, output]) => (
-          <ReportSection
-            key={key}
-            id={`framework-${key}`}
-            number={String(output.exhibit_number + 2)}
-            title={output.framework_name}
-            narrative={output.narrative}
-            callout={brief.so_what_callouts?.[key]}
-          >
-            <ExhibitContainer
-              exhibitNumber={output.exhibit_number + 2}
-              title={ensureFindingTitle(
-                output.exhibit_title,
-                `${output.framework_name} sharpens the recommended course of action.`
-              )}
-              source={reportFrameworkSource(output)}
-            >
-              {renderFrameworkBody(output)}
-            </ExhibitContainer>
-          </ReportSection>
-        ))}
-
-        <ReportSection
-          id="strategic-options"
-          number={String(frameworkEntries.length + 4)}
-          title="Strategic options"
-          narrative={String(brief.board_narrative || "")}
-        >
-          <ExhibitContainer
-            exhibitNumber={frameworkEntries.length + 4}
-            title={ensureFindingTitle(
-              "The option set favors the path with the strongest value-to-risk trade-off.",
-              "The option set favors the path with the strongest value-to-risk trade-off."
-            )}
-            source="Source: ASIS synthesis and quant outputs."
-          >
-            {renderStrategicOptions(analysisMeta, brief) || (
-              <div className="text-sm text-[var(--c-text-muted)]">No structured strategic options were returned.</div>
-            )}
-          </ExhibitContainer>
-          {analysisMeta.build_vs_buy_verdict ? (
-            <div className="so-what-callout">
-              <div className="so-what-label">Build versus buy verdict</div>
-              <div className="so-what-body">{analysisMeta.build_vs_buy_verdict}</div>
-            </div>
-          ) : null}
+        <ReportSection id="strategic-insights" number="6" title="Strategic Insights">
+          <ReportTable columns={[{ key: "id", label: "No.", render: (row) => row.id }, { key: "finding", label: "Finding", render: (row) => row.finding }]} rows={reportInsightRows(brief)} />
         </ReportSection>
 
-        <ReportSection
-          id="roadmap"
-          number={String(frameworkEntries.length + 5)}
-          title="Implementation roadmap"
-          narrative="Execution is sequenced to protect speed, governance, and measurable milestones."
-        >
+        <ReportSection id="executive-recommendations" number="7" title="Executive Recommendations" narrative="Five actions are required; no additional recommendations are presented in the formal deliverable.">
+          <ReportTable
+            columns={[
+              { key: "priority", label: "Priority", render: (row) => row.priority },
+              { key: "recommendation", label: "Recommendation", render: (row) => row.recommendation },
+              { key: "impact", label: "Expected impact", render: (row) => row.impact },
+              { key: "horizon", label: "Time horizon", render: (row) => row.horizon },
+            ]}
+            rows={reportRecommendationRows(brief)}
+            emptyMessage="No recommendations were returned; the report is not publishable."
+          />
+        </ReportSection>
+
+        <ReportSection id="strategic-roadmap" number="8" title="Strategic Roadmap">
           <GanttRoadmap roadmap={brief.implementation_roadmap || []} />
         </ReportSection>
 
-        {mnaMode ? (
-          <ReportSection
-            id="mna"
-            number={String(frameworkEntries.length + 6)}
-            title="M&A and build-versus-buy"
-            narrative="Acquisition-mode analyses require an explicit counterfactual before capital is committed."
-          >
-            <div className="grid gap-4 lg:grid-cols-2">
-              <div className="rounded-[18px] border border-[var(--c-divider)] bg-[var(--c-surface)] p-5">
-                <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--c-text-faint)]">
-                  Recommendation shift
-                </div>
-                <p className="mt-3 text-sm text-[var(--c-text)]">
-                  {analysisMeta.recommendation_downgraded
-                    ? `The recommendation was adjusted from ${analysisMeta.original_recommendation || "the initial position"} after red-team review.`
-                    : "No forced downgrade was applied by the red-team response."}
-                </p>
-              </div>
-              <div className="rounded-[18px] border border-[var(--c-divider)] bg-[var(--c-surface)] p-5">
-                <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--c-text-faint)]">
-                  Build-versus-buy verdict
-                </div>
-                <p className="mt-3 text-sm text-[var(--c-text)]">
-                  {analysisMeta.build_vs_buy_verdict || "No explicit build-versus-buy verdict was returned."}
-                </p>
-              </div>
-            </div>
-          </ReportSection>
-        ) : null}
+        <ReportSection id="evidence-traceability" number="9" title="Evidence Traceability Matrix">
+          <ReportTable columns={[{ key: "framework", label: "Framework", render: (row) => row.framework }, { key: "sources", label: "Source IDs", render: (row) => row.sources }, { key: "finding", label: "Finding", render: (row) => row.finding }]} rows={frameworkEntries.map(([key, output]) => ({ framework: output.framework_name || key, sources: (output.citations || []).map((item) => toDisplay(item.id)).join(", "), finding: output.narrative }))} />
+        </ReportSection>
 
-        <ReportSection
-          id="appendix"
-          number={String(frameworkEntries.length + (mnaMode ? 7 : 6))}
-          title="Appendix: methodology and sources"
-        >
+        <ReportSection id="risk-matrix" number="10" title="Risk Matrix">
+          <ReportTable columns={[{ key: "id", label: "ID", render: (row) => row.id }, { key: "category", label: "Category", render: (row) => row.category }, { key: "description", label: "Risk", render: (row) => row.description }, { key: "score", label: "Score", render: (row) => row.score }, { key: "mitigation", label: "Mitigation", render: (row) => row.mitigation }]} rows={reportRiskRows(brief)} />
+        </ReportSection>
+
+        <ReportSection id="opportunity-matrix" number="11" title="Opportunity Matrix">
+          <ReportTable columns={[{ key: "id", label: "ID", render: (row) => row.id }, { key: "opportunity", label: "Opportunity", render: (row) => row.opportunity }, { key: "evidence", label: "Evidence", render: (row) => row.evidence }, { key: "action", label: "Action", render: (row) => row.action }]} rows={reportOpportunityRows(brief)} />
+        </ReportSection>
+
+        <ReportSection id="benchmark-comparison" number="12" title="Benchmark Comparison Sheet" narrative="Reserved for post-generation comparison. This section is intentionally blank during generation.">
+          <div className="min-h-32 border border-dashed border-[var(--c-divider)]" aria-label="Blank benchmark comparison sheet" />
+        </ReportSection>
+
+        <ReportSection id="citation-register" number="13" title="Citation Register">
+          <ReportTable columns={sourceColumns} rows={evidence} emptyMessage="No citation register is available." />
+        </ReportSection>
+
+        <ReportSection id="appendices" number="14" title="Appendices">
           {renderAppendix(brief, compactAppendix)}
         </ReportSection>
       </div>

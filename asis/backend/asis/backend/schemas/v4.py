@@ -202,6 +202,15 @@ class ReportMetadata(BaseModel):
     asis_version: str = "4.0.0"
     confidentiality_level: str = "STRICTLY CONFIDENTIAL"
     disclaimer: str
+    template_version: str = "ASIS-SIR v1.0"
+    section_order: list[str] = Field(default_factory=list)
+
+
+class ExecutiveRecommendation(BaseModel):
+    priority: str
+    recommendation: str
+    expected_impact: str
+    time_horizon: str
 
 
 class StrategicBriefV4(StrategicBrief):
@@ -211,6 +220,7 @@ class StrategicBriefV4(StrategicBrief):
     decision_evidence: list[str] = Field(default_factory=list)
     framework_outputs: dict[str, FrameworkOutput]
     executive_summary: ExecutiveSummary
+    executive_recommendations: list[ExecutiveRecommendation] = Field(default_factory=list)
     section_action_titles: dict[str, str] = Field(default_factory=dict)
     so_what_callouts: dict[str, SoWhatCallout] = Field(default_factory=dict)
     agent_collaboration_trace: list[AgentCollaborationEvent] = Field(default_factory=list)
@@ -234,6 +244,7 @@ class StrategicBriefV4(StrategicBrief):
     roadmap: list[RoadmapItem] = Field(default_factory=list)
     citations: list[Citation] = Field(default_factory=list)
     evidence_contract: dict[str, Any] = Field(default_factory=dict)
+    evidence_provenance: dict[str, Any] = Field(default_factory=dict)
     export_validation: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("decision_statement")

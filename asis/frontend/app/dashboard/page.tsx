@@ -11,7 +11,7 @@ import {
   LogOut,
   Plus,
   Search,
-  Sparkles,
+  ShieldCheck,
   TrendingUp,
 } from "lucide-react";
 
@@ -89,14 +89,13 @@ function DashboardShell() {
   }, [analyses, search]);
 
   const completed = analyses.filter((item) => item.status === "completed").length;
+  const boardReady = analyses.filter((item) => item.is_board_ready).length;
   const confidenceValues = analyses
     .filter((item) => item.overall_confidence != null)
     .map((item) => normalizedPercent(item.overall_confidence));
   const avgConfidence = confidenceValues.length
     ? Math.round(confidenceValues.reduce((sum, value) => sum + value, 0) / confidenceValues.length)
     : 0;
-  const proceedCount = analyses.filter((item) => item.decision_recommendation === "PROCEED").length;
-
   async function persistProfileMemory(key: string, value: Record<string, any>) {
     try {
       await memoryAPI.upsert({ scope: "profile", key, value });
@@ -108,9 +107,9 @@ function DashboardShell() {
 
   const stats = [
     { label: "Total analyses", value: String(analyses.length), detail: "All strategic decisions", icon: FileText },
-    { label: "Completed", value: String(completed), detail: "Finished briefs", icon: TrendingUp },
+    { label: "Board-ready", value: String(boardReady), detail: "Live, quality-cleared briefs", icon: ShieldCheck },
+    { label: "Completed", value: String(completed), detail: "Pipeline-finished runs", icon: TrendingUp },
     { label: "Avg confidence", value: analyses.length ? `${avgConfidence}%` : "--", detail: "Across completed runs", icon: BarChart3 },
-    { label: "PROCEED verdicts", value: String(proceedCount), detail: "Positive recommendations", icon: Sparkles },
   ];
 
   const name = user ? `${user.first_name} ${user.last_name}`.trim() : "Strategist";
@@ -312,6 +311,25 @@ function DashboardShell() {
                             {analysis.used_fallback ? (
                               <span className="rounded-full border border-amber-400/25 bg-amber-400/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-amber-100">
                                 Template mode
+                              </span>
+                            ) : null}
+                            {analysis.quality_blocking ? (
+                              <span className="rounded-full border border-rose-400/30 bg-rose-400/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-rose-100">
+                                Quality blocked
+                              </span>
+                            ) : analysis.is_board_ready ? (
+                              <span className="rounded-full border border-emerald-300/25 bg-emerald-300/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-emerald-100">
+                                Board-ready
+                              </span>
+                            ) : null}
+                            {analysis.pdf_status === "blocked" ? (
+                              <span className="rounded-full border border-rose-400/30 bg-rose-400/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-rose-100">
+                                PDF blocked
+                              </span>
+                            ) : null}
+                            {analysis.quality_grade ? (
+                              <span className="rounded-full border border-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                                Quality {analysis.quality_grade}
                               </span>
                             ) : null}
                             {analysis.decision_recommendation && analysis.status !== 'failed' ? (

@@ -128,58 +128,28 @@ export function reportIsMnaMode(brief: StrategicBriefV4): boolean {
 }
 
 export function reportSections(brief: StrategicBriefV4): NormalizedReportSection[] {
-  const sections: NormalizedReportSection[] = [
-    { id: "executive-summary", number: "1", title: "Executive summary", renderMode: "appendix" },
-    { id: "decision", number: "2", title: "Decision statement", renderMode: "appendix" },
-    { id: "market-landscape", number: "3", title: "Market landscape and sizing", renderMode: "market" },
-  ];
-
-  for (const [key, output] of reportFrameworkEntries(brief)) {
-    if (key === "market_sizing") continue;
-    sections.push({
-      id: `framework-${key}`,
-      number: String(sections.length + 1),
-      title: frameworkDisplayName(key),
-      frameworkKey: key,
-      narrative: output.narrative,
-      source: reportFrameworkSource(output),
-      callout: brief.so_what_callouts?.[key],
-      renderMode: "framework",
-    });
-  }
-
-  sections.push(
-    {
-      id: "strategic-options",
-      number: String(sections.length + 1),
-      title: "Strategic options",
-      renderMode: "options",
-    },
-    {
-      id: "roadmap",
-      number: String(sections.length + 1),
-      title: "Implementation roadmap",
-      renderMode: "roadmap",
-    }
-  );
-
-  if (reportIsMnaMode(brief)) {
-    sections.push({
-      id: "mna",
-      number: String(sections.length + 1),
-      title: "M&A and build-versus-buy",
-      renderMode: "options",
-    });
-  }
-
-  sections.push({
-    id: "appendix",
-    number: String(sections.length + 1),
-    title: "Appendix: methodology and sources",
-    renderMode: "appendix",
-  });
-
-  return sections;
+  const titles = [
+    ["executive-summary", "Executive Summary"],
+    ["scenario-context", "Scenario Context"],
+    ["evidence-base", "Evidence Base"],
+    ["multi-agent-analysis", "Multi-Agent Analysis"],
+    ["strategic-intelligence-dashboard", "Strategic Intelligence Dashboard"],
+    ["strategic-insights", "Strategic Insights"],
+    ["executive-recommendations", "Executive Recommendations"],
+    ["strategic-roadmap", "Strategic Roadmap"],
+    ["evidence-traceability", "Evidence Traceability Matrix"],
+    ["risk-matrix", "Risk Matrix"],
+    ["opportunity-matrix", "Opportunity Matrix"],
+    ["benchmark-comparison", "Benchmark Comparison Sheet"],
+    ["citation-register", "Citation Register"],
+    ["appendices", "Appendices"],
+  ] as const;
+  return titles.map(([id, title], index) => ({
+    id,
+    number: String(index + 1),
+    title,
+    renderMode: id === "strategic-roadmap" ? "roadmap" : id === "multi-agent-analysis" ? "framework" : "appendix",
+  }));
 }
 
 export function reportConfidenceLabel(score: number): string {

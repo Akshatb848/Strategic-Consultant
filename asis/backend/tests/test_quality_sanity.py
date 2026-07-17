@@ -34,15 +34,23 @@ class TestSystemSanity:
         settings = get_settings()
         assert settings.groq_api_key, "GROQ_API_KEY must be loaded"
 
-    def test_production_mode_disabled_demo(self):
+    def test_production_mode_disabled_demo(self, monkeypatch):
         """Verify demo mode is disabled."""
         from asis.backend.config.settings import get_settings
+        monkeypatch.setenv("ENVIRONMENT", "production")
+        monkeypatch.setenv("ASIS_DEMO_MODE", "false")
+        monkeypatch.setenv("ALLOW_LLM_FALLBACK", "false")
+        get_settings.cache_clear()
         settings = get_settings()
         assert not settings.demo_mode, "Demo mode must be disabled"
 
-    def test_production_mode_no_fallback(self):
+    def test_production_mode_no_fallback(self, monkeypatch):
         """Verify LLM fallback is disabled."""
         from asis.backend.config.settings import get_settings
+        monkeypatch.setenv("ENVIRONMENT", "production")
+        monkeypatch.setenv("ASIS_DEMO_MODE", "false")
+        monkeypatch.setenv("ALLOW_LLM_FALLBACK", "false")
+        get_settings.cache_clear()
         settings = get_settings()
         assert not settings.allow_llm_fallback, "LLM fallback must be disabled"
 

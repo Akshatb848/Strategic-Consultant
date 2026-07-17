@@ -7,6 +7,7 @@ on:
       - main
       - develop
       - "claude/**"
+      - "akshatbanga/**"
 
 jobs:
   # ── Backend: lint + type-check + unit tests ───────────────────────────────

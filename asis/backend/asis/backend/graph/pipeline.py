@@ -19,10 +19,12 @@ from asis.backend.agents.strategic_options import StrategicOptionsAgent
 from asis.backend.agents.synthesis_v4 import V4SynthesisAgent
 from asis.backend.agents.types import AgentOutput, now_ms
 from asis.backend.config.logging import logger
+from asis.backend.config.settings import get_settings
 from asis.backend.db import database as db_state
 from asis.backend.db import models
 from asis.backend.evaluation.baseline import SingleAgentBaseline
 from asis.backend.evaluation.engine import EvaluationEngine
+from asis.backend.evidence import retrieve_live_evidence
 from asis.backend.graph.context import extract_problem_context
 from asis.backend.graph.state import V4PipelineState
 from asis.backend.memory.store import memory_store
@@ -85,12 +87,33 @@ class V4EnterpriseWorkflow:
             analysis.pipeline_version = "4.0.0"
             db.commit()
             bound_logger.info("pipeline_started", user_id=analysis.user_id)
+            settings = get_settings()
+            if settings.environment == "production" and (
+                settings.demo_mode
+                or settings.allow_llm_fallback
+                or settings.allow_deterministic_repair
+            ):
+                raise RuntimeError(
+                    "PRODUCTION_CONFIGURATION_INVALID: demo mode, LLM fallback, and deterministic repair must all be disabled."
+                )
+            extracted_context = extract_problem_context(
+                analysis.query,
+                analysis.company_context or {},
+            )
+            evidence_base = []
+            if settings.require_live_evidence:
+                evidence_base = retrieve_live_evidence(
+                    query=analysis.query,
+                    context=extracted_context,
+                    limit=settings.evidence_max_results,
+                )
             initial_state: V4PipelineState = {
                 "analysis_id": analysis_id,
                 "user_id": analysis.user_id,
                 "query": analysis.query,
                 "company_context": analysis.company_context or {},
-                "extracted_context": analysis.extracted_context or {},
+                "extracted_context": extracted_context,
+                "evidence_base": evidence_base,
                 "framework_outputs": {},
                 "framework_citations": {},
                 "agent_collaboration_trace": [],
@@ -111,6 +134,21 @@ class V4EnterpriseWorkflow:
             analysis = db.get(models.Analysis, analysis_id)
             if analysis:
                 synthesis_output = StrategicBriefV4.model_validate(final_state.get("synthesis_output") or {}).model_dump(mode="json")
+                final_quality = asyncio.run(self.quality_gate.validate(
+                    StrategicBriefV4.model_validate(synthesis_output),
+                    retry_count=int(final_state.get("quality_retry_count") or 0),
+                    scope="pipeline",
+                ))
+                if self.quality_gate.has_block_failures(final_quality):
+                    failed_checks = [
+                        check.id
+                        for check in final_quality.checks
+                        if check.level == "BLOCK" and not check.passed
+                    ]
+                    raise RuntimeError(
+                        "QUALITY_GATE_BLOCKED: trusted report withheld because "
+                        f"{', '.join(failed_checks[:8])}."
+                    )
                 duration = round(perf_counter() - started, 3)
                 analysis.status = "completed"
                 analysis.current_agent = None
@@ -336,7 +374,14 @@ class V4EnterpriseWorkflow:
                 "overall_confidence",
                 dependencies,
             )
-            brief = StrategicBriefV4.model_validate(result["synthesis_output"])
+            raw_synthesis_output = dict(result["synthesis_output"])
+            normalized_confidence = self._normalize_confidence(raw_synthesis_output.get("overall_confidence"))
+            raw_synthesis_output["overall_confidence"] = normalized_confidence
+            raw_synthesis_output["decision_confidence"] = normalized_confidence
+            raw_synthesis_output["confidence_score"] = normalized_confidence
+            if isinstance(raw_synthesis_output.get("verification"), dict):
+                raw_synthesis_output["verification"]["overall_verification_score"] = normalized_confidence
+            brief = StrategicBriefV4.model_validate(raw_synthesis_output)
             quality_report = asyncio.run(self.quality_gate.validate(brief, retry_count=attempts, scope="pipeline"))
             final_quality_report = quality_report
             quality_report_payload = quality_report.model_dump(mode="json")
@@ -344,8 +389,9 @@ class V4EnterpriseWorkflow:
             synthesis_output["quality_report"] = quality_report_payload
             synthesis_output["mece_score"] = quality_report.mece_score
             synthesis_output["internal_consistency_score"] = quality_report.internal_consistency_score
-            synthesis_output["decision_confidence"] = self._normalize_confidence(synthesis_output.get("decision_confidence"))
-            synthesis_output["overall_confidence"] = self._normalize_confidence(synthesis_output.get("overall_confidence"))
+            synthesis_output["decision_confidence"] = normalized_confidence
+            synthesis_output["overall_confidence"] = normalized_confidence
+            synthesis_output["confidence_score"] = normalized_confidence
 
             if not self.quality_gate.has_block_failures(quality_report) or attempts >= 2:
                 break
@@ -458,10 +504,38 @@ class V4EnterpriseWorkflow:
                     "summary": summary,
                     "timestamp_ms": event["timestamp_ms"],
                 },
-            )
+        )
 
         publish_analysis_event(state["analysis_id"], "agent_start", {"agent": agent.agent_id, "timestamp_ms": now_ms()})
-        result = agent.run(state)
+        try:
+            result = agent.run(state)
+            self._assert_live_agent_provenance(result)
+        except Exception as exc:
+            result = AgentOutput(
+                agent_id=agent.agent_id,
+                agent_name=agent.agent_name,
+                status="failed",
+                confidence_score=0.0,
+                duration_ms=0,
+                model_used=None,
+                correction_reason=str(exc),
+                data={
+                    "error": str(exc),
+                    "confidence_score": 0.0,
+                    "citations": [],
+                },
+            )
+            self._save_agent_result(state["analysis_id"], result)
+            publish_analysis_event(
+                state["analysis_id"],
+                "agent_failed",
+                {
+                    "agent": agent.agent_id,
+                    "message": str(exc),
+                    "timestamp_ms": now_ms(),
+                },
+            )
+            raise
         self._save_agent_result(state["analysis_id"], result)
         publish_analysis_event(
             state["analysis_id"],
@@ -491,6 +565,31 @@ class V4EnterpriseWorkflow:
             "framework_citations": framework_citations,
             "agent_collaboration_trace": collaboration_trace,
         }
+
+    @staticmethod
+    def _assert_live_agent_provenance(result: AgentOutput) -> None:
+        settings = get_settings()
+        if not settings.require_live_evidence:
+            return
+        if result.used_fallback or str(result.model_used or "").startswith("asis-deterministic-"):
+            raise RuntimeError(
+                f"LIVE_PROVENANCE_BLOCKED: {result.agent_id} produced deterministic repair data."
+            )
+        usage = result.token_usage if isinstance(result.token_usage, dict) else {}
+        provider_mode = str(usage.get("provider_mode") or "")
+        required_provider = str(settings.required_llm_provider or "any").lower()
+        if required_provider != "any" and provider_mode != required_provider:
+            raise RuntimeError(
+                f"LIVE_PROVIDER_MISMATCH: {result.agent_id} used {provider_mode or 'unknown'}; "
+                f"required {required_provider}."
+            )
+        if not result.model_used or not provider_mode:
+            raise RuntimeError(f"LIVE_PROVENANCE_MISSING: {result.agent_id} has no provider metadata.")
+        citations = result.citations or result.data.get("citations") or []
+        if not citations or any(item.get("verification_status") != "verified" for item in citations if isinstance(item, dict)):
+            raise RuntimeError(
+                f"LIVE_EVIDENCE_BLOCKED: {result.agent_id} did not carry exclusively verified citations."
+            )
 
     def _save_agent_result(self, analysis_id: str, result: AgentOutput) -> None:
         with db_state.SessionLocal() as db:

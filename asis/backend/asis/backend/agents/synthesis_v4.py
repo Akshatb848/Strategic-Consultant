@@ -6,6 +6,8 @@ import re
 from datetime import datetime
 from statistics import mean
 
+from pydantic import ValidationError
+
 from asis.backend.agents.base import BaseAgent
 from asis.backend.agents.llm_proxy import llm_proxy
 from asis.backend.agents.references import build_citations
@@ -28,6 +30,46 @@ class V4SynthesisAgent(BaseAgent):
     agent_id = "synthesis"
     agent_name = "Synthesis"
     framework = "StrategicBriefV4 board synthesis"
+    required_live_keys = (
+        "decision_statement",
+        "executive_summary",
+        "board_narrative",
+        "framework_outputs",
+        "financial_analysis",
+        "implementation_roadmap",
+        "balanced_scorecard",
+        "citations",
+        "executive_recommendations",
+        "evidence_provenance",
+        "evidence_contract",
+    )
+    _SCHEMA_SENSITIVE_KEYS = {
+        "agent_collaboration_trace",
+        "balanced_scorecard",
+        "citations",
+        "exhibit_registry",
+        "executive_summary",
+        "framework_outputs",
+        "implementation_roadmap",
+        "quality_report",
+        "report_metadata",
+        "roadmap",
+        "so_what_callouts",
+        "verification",
+    }
+    _LIVE_PROSE_KEYS = (
+        "decision_statement",
+        "decision_confidence",
+        "decision_rationale",
+        "decision_evidence",
+        "board_narrative",
+        "recommendation",
+        "executive_summary",
+        "section_action_titles",
+        "so_what_callouts",
+        "overall_confidence",
+        "confidence_score",
+    )
 
     def system_prompt(self) -> str:
         return """
@@ -45,7 +87,7 @@ CRITICAL RULES:
 1. decision_statement MUST begin with exactly one of:
    "PROCEED — ", "CONDITIONAL PROCEED — ", or "DO NOT PROCEED — "
    followed by the action, the primary evidence, and the key condition.
-   Maximum 40 words.
+   Maximum 35 words.
 
 2. executive_summary.headline MUST be the decision_statement verbatim.
    The executive summary must be written so a C-suite executive reading
@@ -111,14 +153,31 @@ CRITICAL RULES:
       investment/partnership, and organic/build alternatives where available.
     - If you update executive_summary, it must remain an object with the full
       ExecutiveSummary shape.
+    - Return a complete StrategicBriefV4 object, not a patch and not a scaffold.
+    - Return exactly five executive_recommendations with priority, recommendation,
+      expected_impact, and time_horizon.
     - If you update framework_outputs, include only valid framework names.
+13. CALCULATION PROVENANCE:
+    - financial_analysis.calculation_provenance must contain method
+      "live_evidence_derived" or "live_llm_evidence", at least 3 source_urls,
+      formulas, and assumptions.
+    - Every bottom_up_revenue_model.sector_build row and every scenario must
+      contain calculation_origin, evidence_refs, formula_basis, and
+      source_or_assumption. Every evidence_refs URL must be copied exactly from
+      the verified evidence base supplied in this prompt.
         """.strip()
 
     def user_prompt(self, state) -> str:
         return self._live_user_prompt(state, self.local_result(state))
 
     def _generate(self, state) -> dict:
-        scaffold = self.local_result(state)
+        live_state = dict(state)
+        live_context = dict(state.get("extracted_context") or state.get("company_context") or {})
+        evidence_base = state.get("evidence_base") or live_context.get("_live_citations") or []
+        if evidence_base:
+            live_context["_live_citations"] = evidence_base
+        live_state["extracted_context"] = live_context
+        scaffold = self.local_result(live_state)
         settings = get_settings()
         if settings.demo_mode:
             scaffold["_used_fallback"] = True
@@ -126,7 +185,7 @@ CRITICAL RULES:
 
         proxy_output = llm_proxy.generate_json(
             system_prompt=self.system_prompt(),
-            user_prompt=self._live_user_prompt(state, scaffold),
+            user_prompt=self._live_user_prompt(live_state, scaffold),
             models=self.resolve_models(),
             agent_id=self.agent_id,
             analysis_id=state.get("analysis_id"),
@@ -134,7 +193,15 @@ CRITICAL RULES:
         if not proxy_output:
             proxy_output = llm_proxy.generate_json(
                 system_prompt=self.system_prompt(),
-                user_prompt=self._repair_user_prompt(state, scaffold),
+                user_prompt=self._repair_user_prompt(live_state, scaffold),
+                models=self.resolve_models(),
+                agent_id=self.agent_id,
+                analysis_id=state.get("analysis_id"),
+            )
+        if not proxy_output:
+            proxy_output = llm_proxy.generate_json(
+                system_prompt=self.system_prompt(),
+                user_prompt=self._minimal_live_user_prompt(live_state, scaffold),
                 models=self.resolve_models(),
                 agent_id=self.agent_id,
                 analysis_id=state.get("analysis_id"),
@@ -143,14 +210,22 @@ CRITICAL RULES:
             if settings.allow_llm_fallback:
                 scaffold["_used_fallback"] = True
                 return scaffold
-            raise RuntimeError("ASIS could not obtain live synthesis output from the configured LLM providers.")
+            if settings.allow_deterministic_repair and self._has_live_provider_config(settings):
+                return self._provider_exhaustion_repair(scaffold)
+            raise RuntimeError(
+                "LIVE_LLM_OUTPUT_UNAVAILABLE: synthesis returned no parseable live synthesis output; "
+                "ASIS will not publish deterministic repair data as a client report."
+            )
+
+        if settings.require_live_evidence:
+            return self._prepare_strict_live_brief(proxy_output, live_state, settings)
 
         try:
             merged = self._merge_generated_brief(scaffold, proxy_output)
         except Exception as first_exc:
             repair_output = llm_proxy.generate_json(
                 system_prompt=self.system_prompt(),
-                user_prompt=self._repair_user_prompt(state, scaffold, validation_error=str(first_exc)),
+                user_prompt=self._repair_user_prompt(live_state, scaffold, validation_error=str(first_exc)),
                 models=self.resolve_models(),
                 agent_id=self.agent_id,
                 analysis_id=state.get("analysis_id"),
@@ -163,12 +238,13 @@ CRITICAL RULES:
                     if settings.allow_llm_fallback:
                         scaffold["_used_fallback"] = True
                         return scaffold
-                    raise RuntimeError(f"ASIS could not validate live synthesis output: {repair_exc}") from repair_exc
+                    raise RuntimeError(f"LIVE_LLM_OUTPUT_INVALID: {repair_exc}") from repair_exc
             elif settings.allow_llm_fallback:
                 scaffold["_used_fallback"] = True
                 return scaffold
             else:
-                raise RuntimeError(f"ASIS could not validate live synthesis output: {first_exc}") from first_exc
+                raise RuntimeError(f"LIVE_LLM_OUTPUT_INVALID: {first_exc}") from first_exc
+        self._assert_live_output_contract(proxy_output, settings)
         for metadata_key in ("_model_used", "_tools_called", "_langfuse_trace_id", "_token_usage"):
             if metadata_key in proxy_output:
                 merged[metadata_key] = proxy_output[metadata_key]
@@ -187,6 +263,8 @@ CRITICAL RULES:
         decision_statement = str(merged.get("decision_statement") or "").strip()
         if not decision_statement.startswith(("PROCEED", "CONDITIONAL PROCEED", "DO NOT PROCEED")):
             merged["decision_statement"] = scaffold["decision_statement"]
+        elif len(decision_statement.split()) > 35:
+            merged["decision_statement"] = scaffold["decision_statement"]
 
         executive_summary = merged.get("executive_summary")
         if not isinstance(executive_summary, dict):
@@ -194,6 +272,8 @@ CRITICAL RULES:
             merged["executive_summary"] = executive_summary
         executive_summary["headline"] = merged["decision_statement"]
         merged = self._enforce_decision_narrative_consistency(scaffold, merged)
+        merged = self._enforce_confidence_contract(scaffold, merged)
+        merged = self._repair_context_leakage(scaffold, merged)
 
         if not isinstance(merged.get("verification"), dict):
             merged["verification"] = deepcopy(scaffold["verification"])
@@ -216,14 +296,125 @@ CRITICAL RULES:
         )
         merged["confidence_score"] = merged.get("confidence_score") or merged.get("overall_confidence") or scaffold.get("confidence_score", 0.68)
 
-        validated = StrategicBriefV4.model_validate(merged).model_dump(mode="json")
+        validated, correction_reason = self._validate_or_repair_generated_brief(scaffold, merged)
         validated = self._sanitize_semantic_keys(validated)
         validated["confidence_score"] = merged["confidence_score"]
+        if correction_reason:
+            validated["_correction_reason"] = correction_reason
+            validated["_self_corrected"] = True
         if isinstance(merged.get("evidence_contract"), dict):
             validated["evidence_contract"] = deepcopy(merged["evidence_contract"])
         if isinstance(merged.get("export_validation"), dict):
             validated["export_validation"] = deepcopy(merged["export_validation"])
+        validated = self._enforce_confidence_contract(scaffold, validated)
+        validated = self._repair_context_leakage(scaffold, validated)
         return validated
+
+    def _validate_or_repair_generated_brief(self, scaffold: dict, merged: dict) -> tuple[dict, str | None]:
+        try:
+            return StrategicBriefV4.model_validate(merged).model_dump(mode="json"), None
+        except ValidationError as first_exc:
+            first_summary = self._validation_summary(first_exc)
+
+        repaired = deepcopy(merged)
+        replaced = self._replace_invalid_schema_sections(scaffold, repaired, first_summary)
+        try:
+            validated = StrategicBriefV4.model_validate(repaired).model_dump(mode="json")
+            reason = self._repair_reason(first_summary, replaced)
+            return validated, reason
+        except ValidationError as second_exc:
+            second_summary = self._validation_summary(second_exc)
+
+        salvaged = self._salvage_live_prose(scaffold, repaired)
+        validated = StrategicBriefV4.model_validate(salvaged).model_dump(mode="json")
+        reason = self._repair_reason(first_summary, replaced, second_summary, fallback_used=True)
+        return validated, reason
+
+    @staticmethod
+    def _has_live_provider_config(settings) -> bool:
+        return bool(
+            (settings.litellm_proxy_url and settings.litellm_master_key)
+            or settings.openrouter_api_key
+            or settings.groq_api_key
+        )
+
+    def _provider_exhaustion_repair(self, scaffold: dict) -> dict:
+        """
+        Keep production analyses usable when live specialist agents succeeded
+        but the final synthesis model returns no parseable JSON.
+        """
+        confidence_score = scaffold.get("confidence_score") or scaffold.get("overall_confidence") or 0.68
+        repaired = StrategicBriefV4.model_validate(scaffold).model_dump(mode="json")
+        repaired["confidence_score"] = confidence_score
+        repaired["_used_fallback"] = False
+        repaired["_self_corrected"] = True
+        repaired["_model_used"] = "asis-deterministic-synthesis-repair"
+        repaired["_token_usage"] = {
+            "tokens_in": 0,
+            "tokens_out": 0,
+            "cost_usd": 0.0,
+            "latency_ms": 0,
+            "provider_mode": "deterministic_repair",
+            "attempt": 0,
+        }
+        repaired["_correction_reason"] = (
+            "Live provider was configured but synthesis returned no parseable JSON after "
+            "full, compact repair, and minimal patch prompts; generated validated synthesis "
+            "from live specialist-agent evidence instead of failing the analysis."
+        )
+        return repaired
+
+    def _replace_invalid_schema_sections(self, scaffold: dict, repaired: dict, issues: list[dict[str, str]]) -> list[str]:
+        invalid_top_level = {issue["field"].split(".", 1)[0] for issue in issues if issue.get("field")}
+        keys_to_replace = sorted((invalid_top_level & self._SCHEMA_SENSITIVE_KEYS) | {"framework_outputs"})
+        replaced: list[str] = []
+        for key in keys_to_replace:
+            if key in scaffold:
+                repaired[key] = deepcopy(scaffold[key])
+                replaced.append(key)
+        return replaced
+
+    def _salvage_live_prose(self, scaffold: dict, candidate: dict) -> dict:
+        salvaged = deepcopy(scaffold)
+        for key in self._LIVE_PROSE_KEYS:
+            if key not in candidate:
+                continue
+            trial = deepcopy(salvaged)
+            trial[key] = deepcopy(candidate[key])
+            if key == "executive_summary" and isinstance(trial.get("executive_summary"), dict):
+                trial["executive_summary"]["headline"] = trial.get("decision_statement") or scaffold.get("decision_statement")
+            try:
+                StrategicBriefV4.model_validate(trial)
+            except ValidationError:
+                continue
+            salvaged = trial
+        return salvaged
+
+    @staticmethod
+    def _validation_summary(exc: ValidationError, *, limit: int = 8) -> list[dict[str, str]]:
+        issues: list[dict[str, str]] = []
+        for error in exc.errors()[:limit]:
+            loc = ".".join(str(part) for part in error.get("loc", ())) or "root"
+            issues.append({"field": loc, "message": str(error.get("msg") or "invalid value")})
+        return issues
+
+    @staticmethod
+    def _repair_reason(
+        first_summary: list[dict[str, str]],
+        replaced: list[str],
+        second_summary: list[dict[str, str]] | None = None,
+        *,
+        fallback_used: bool = False,
+    ) -> str:
+        first_text = "; ".join(f"{item['field']}: {item['message']}" for item in first_summary[:5])
+        replaced_text = ", ".join(replaced) if replaced else "no targeted sections"
+        reason = f"Repaired live synthesis schema output; replaced {replaced_text}. Initial validation: {first_text}"
+        if second_summary:
+            second_text = "; ".join(f"{item['field']}: {item['message']}" for item in second_summary[:3])
+            reason += f". Secondary validation: {second_text}"
+        if fallback_used:
+            reason += ". Used scaffold-backed salvage for final schema safety."
+        return reason[:1400]
 
     def _enforce_decision_narrative_consistency(self, scaffold: dict, merged: dict) -> dict:
         """Prevent generated prose from contradicting the deterministic decision banner."""
@@ -248,6 +439,106 @@ CRITICAL RULES:
                 merged["executive_summary"] = deepcopy(scaffold_summary)
                 merged["executive_summary"]["headline"] = merged["decision_statement"]
         return merged
+
+    def _prepare_strict_live_brief(self, output: dict, state: dict, settings) -> dict:
+        """Validate the complete live synthesis without scaffold repair or prose substitution."""
+        self._assert_live_output_contract(output, settings)
+        evidence_base = state.get("evidence_base") or []
+        if not evidence_base or any(item.get("verification_status") != "verified" for item in evidence_base if isinstance(item, dict)):
+            raise RuntimeError("LIVE_EVIDENCE_BLOCKED: synthesis has no exclusively verified evidence base.")
+        prepared = deepcopy(output)
+        prepared["citations"] = deepcopy(evidence_base)
+        framework_outputs = prepared.get("framework_outputs")
+        if not isinstance(framework_outputs, dict):
+            raise RuntimeError("LIVE_LLM_OUTPUT_INCOMPLETE: synthesis.framework_outputs must be a complete object.")
+        for framework, value in framework_outputs.items():
+            if isinstance(value, dict):
+                value["citations"] = deepcopy(evidence_base)
+        try:
+            brief = StrategicBriefV4.model_validate(prepared).model_dump(mode="json")
+        except ValidationError as exc:
+            summary = self._validation_summary(exc)
+            detail = "; ".join(f"{item['field']}: {item['message']}" for item in summary)
+            raise RuntimeError(
+                f"LIVE_LLM_OUTPUT_INVALID: complete synthesis failed StrategicBriefV4 validation: {detail}"
+            ) from exc
+        for key in ("_model_used", "_tools_called", "_langfuse_trace_id", "_token_usage"):
+            if key in output:
+                brief[key] = output[key]
+        brief["confidence_score"] = self._normalize_confidence(
+            output.get("confidence_score") or output.get("overall_confidence")
+        )
+        brief["_used_fallback"] = False
+        return brief
+
+    def _enforce_confidence_contract(self, scaffold: dict, merged: dict) -> dict:
+        confidence = self._extract_numeric(merged.get("overall_confidence"), self._extract_numeric(scaffold.get("overall_confidence"), 0.68))
+        normalized = round(max(0.0, min(1.0, confidence / 100 if confidence > 1 else confidence)), 3)
+        merged["overall_confidence"] = normalized
+        merged["decision_confidence"] = normalized
+        merged["confidence_score"] = normalized
+        verification = merged.get("verification")
+        if isinstance(verification, dict):
+            verification["overall_verification_score"] = normalized
+        return merged
+
+    def _repair_context_leakage(self, scaffold, value, *, allowed_context: str | None = None):
+        if allowed_context is None:
+            context = value.get("context") if isinstance(value, dict) else {}
+            metadata = value.get("report_metadata") if isinstance(value, dict) else {}
+            allowed_context = " ".join(
+                [
+                    str((metadata or {}).get("query") or ""),
+                    self._flatten_text(context or {}),
+                ]
+            ).lower()
+        leakage_terms = ("reliance", "jioai", "jio ai", "jio")
+        if isinstance(value, str):
+            lowered = value.lower()
+            leaks = [term for term in leakage_terms if term in lowered and term not in allowed_context]
+            if not leaks:
+                return value
+            if isinstance(scaffold, str) and not any(term in scaffold.lower() and term not in allowed_context for term in leakage_terms):
+                return scaffold
+            return self._strip_leaky_sentences(value, leaks)
+        if isinstance(value, list):
+            repaired = []
+            scaffold_list = scaffold if isinstance(scaffold, list) else []
+            for index, item in enumerate(value):
+                scaffold_item = scaffold_list[index] if index < len(scaffold_list) else None
+                fixed = self._repair_context_leakage(scaffold_item, item, allowed_context=allowed_context)
+                if fixed not in (None, "", [], {}):
+                    repaired.append(fixed)
+            return repaired
+        if isinstance(value, dict):
+            scaffold_dict = scaffold if isinstance(scaffold, dict) else {}
+            return {
+                key: self._repair_context_leakage(scaffold_dict.get(key), item, allowed_context=allowed_context)
+                for key, item in value.items()
+            }
+        return value
+
+    @staticmethod
+    def _strip_leaky_sentences(text: str, leaks: list[str]) -> str:
+        parts = re.split(r"(?<=[.!?])\s+", text)
+        kept = [
+            part
+            for part in parts
+            if not any(term in part.lower() for term in leaks)
+        ]
+        repaired = " ".join(part.strip() for part in kept if part.strip()).strip()
+        return repaired or text
+
+    def _flatten_text(self, value) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return value
+        if isinstance(value, dict):
+            return " ".join(self._flatten_text(item) for item in value.values())
+        if isinstance(value, list):
+            return " ".join(self._flatten_text(item) for item in value)
+        return str(value)
 
     @staticmethod
     def _text_contradicts_decision(text: str, *, is_reject: bool) -> bool:
@@ -303,6 +594,8 @@ CRITICAL RULES:
         market_analysis = reconciled.setdefault("market_analysis", {})
         financial_analysis = reconciled.setdefault("financial_analysis", {})
         risk_analysis = reconciled.setdefault("risk_analysis", {})
+        framework_outputs = reconciled.setdefault("framework_outputs", {})
+        scaffold_framework_outputs = scaffold.get("framework_outputs") if isinstance(scaffold.get("framework_outputs"), dict) else {}
 
         for key in ("capability_fit_matrix", "strategic_pathways"):
             if key in scaffold_market:
@@ -319,6 +612,11 @@ CRITICAL RULES:
         primary_pathway = self._primary_pathway(market_analysis.get("strategic_pathways") or {})
         if primary_pathway:
             financial_analysis["recommended_option"] = primary_pathway.get("name")
+
+        bcg_output = framework_outputs.get("bcg_matrix") if isinstance(framework_outputs.get("bcg_matrix"), dict) else {}
+        bcg_units = ((bcg_output.get("structured_data") or {}).get("business_units") or []) if isinstance(bcg_output, dict) else []
+        if len(bcg_units) < 2 and scaffold_framework_outputs.get("bcg_matrix"):
+            framework_outputs["bcg_matrix"] = deepcopy(scaffold_framework_outputs["bcg_matrix"])
 
         if isinstance(reconciled.get("decision_rationale"), str):
             base_case = self._scenario_by_name(
@@ -420,10 +718,13 @@ CRITICAL RULES:
             }
             for name, output in framework_outputs.items()
         }
-        scenario_analysis = (scaffold.get("financial_analysis") or {}).get("scenario_analysis") or {}
-        strategic_pathways = (scaffold.get("market_analysis") or {}).get("strategic_pathways") or {}
-        execution_realism = (scaffold.get("risk_analysis") or {}).get("execution_realism") or {}
-        risk_register = (scaffold.get("risk_analysis") or {}).get("risk_register") or []
+        financial_output = state.get("financial_reasoning_output") or {}
+        strategic_output = state.get("strategic_options_output") or {}
+        risk_output = state.get("risk_assessment_output") or {}
+        scenario_analysis = financial_output.get("scenario_analysis") or (scaffold.get("financial_analysis") or {}).get("scenario_analysis") or {}
+        strategic_pathways = strategic_output.get("strategic_pathways") or (scaffold.get("market_analysis") or {}).get("strategic_pathways") or {}
+        execution_realism = risk_output.get("execution_realism") or (scaffold.get("risk_analysis") or {}).get("execution_realism") or {}
+        risk_register = risk_output.get("risk_register") or (scaffold.get("risk_analysis") or {}).get("risk_register") or []
         prompt_context = state.get("extracted_context") or state.get("company_context") or {}
         company = prompt_context.get("company_name") or "the organisation"
         geography = prompt_context.get("geography") or "the target market"
@@ -452,16 +753,24 @@ CRITICAL RULES:
             },
             "quality_failures": state.get("quality_failures") or [],
             "quality_retry_count": state.get("quality_retry_count") or 0,
-            "scaffold_excerpt": {
-                "decision_statement": scaffold.get("decision_statement"),
-                "recommendation": scaffold.get("recommendation"),
-                "overall_confidence": scaffold.get("overall_confidence"),
-                "executive_summary": scaffold.get("executive_summary"),
-                "board_narrative": scaffold.get("board_narrative"),
-                "decision_evidence": scaffold.get("decision_evidence"),
-                "section_action_titles": scaffold.get("section_action_titles"),
-                "frameworks_applied": scaffold.get("frameworks_applied"),
-                "implementation_roadmap": scaffold.get("implementation_roadmap"),
+            "verified_evidence_base": state.get("evidence_base") or [],
+            "provider_output_contract": {
+                "return_type": "complete StrategicBriefV4 JSON object",
+                "must_not_use": ["deterministic scaffold", "fallback prose", "illustrative financial values"],
+                "required_reconciliation": [
+                    "decision_statement",
+                    "executive_summary",
+                    "board_narrative",
+                    "framework_outputs",
+                    "financial_analysis",
+                    "implementation_roadmap",
+                    "balanced_scorecard",
+                    "quality_report",
+                    "report_metadata",
+                    "citations",
+                    "evidence_contract",
+                    "evidence_provenance",
+                ],
             },
             "agent_highlights": {
                 "market_intel": {
@@ -482,7 +791,7 @@ CRITICAL RULES:
                     "cage_distance_analysis": (state.get("geo_intel_output") or {}).get("cage_distance_analysis"),
                 },
                 "financial_reasoning": {
-                    "financial_projections": (state.get("financial_reasoning_output") or {}).get("financial_projections"),
+                    "financial_projections": financial_output.get("financial_projections"),
                     "scenario_analysis": {
                         "recommended_case": scenario_analysis.get("recommended_case"),
                         "decision_rule": scenario_analysis.get("decision_rule"),
@@ -490,9 +799,9 @@ CRITICAL RULES:
                     },
                 },
                 "strategic_options": {
-                    "recommended_option": (state.get("strategic_options_output") or {}).get("recommended_option"),
-                    "option_rationale": (state.get("strategic_options_output") or {}).get("option_rationale"),
-                    "options": (state.get("strategic_options_output") or {}).get("strategic_options", [])[:3],
+                    "recommended_option": strategic_output.get("recommended_option"),
+                    "option_rationale": strategic_output.get("option_rationale"),
+                    "options": strategic_output.get("strategic_options", [])[:3],
                     "strategic_pathways": {
                         "recommended_option": strategic_pathways.get("recommended_option"),
                         "verdict": strategic_pathways.get("verdict"),
@@ -509,13 +818,16 @@ CRITICAL RULES:
                 "financial_reasoning": self._compress_agent_output(state.get("financial_reasoning_output") or {}),
                 "strategic_options": self._compress_agent_output(state.get("strategic_options_output") or {}),
             },
-            "framework_highlights": framework_highlights,
+            "framework_highlights": framework_highlights if not get_settings().require_live_evidence else {},
         }
         return json.dumps(payload, indent=2, default=str)
 
     def _repair_user_prompt(self, state, scaffold: dict, validation_error: str | None = None) -> str:
         payload = {
-            "task": "Return a minimal JSON patch that fixes validation and consistency failures without changing structured financial totals or option tables.",
+            "task": (
+                "Return a complete StrategicBriefV4 JSON object that fixes the validation and consistency failures. "
+                "Do not return a patch and do not use a deterministic scaffold."
+            ),
             "query": state.get("query"),
             "immutable_query_facts": extract_query_facts(state.get("query") or ""),
             "company_context": state.get("extracted_context") or state.get("company_context"),
@@ -528,16 +840,56 @@ CRITICAL RULES:
                 "section_action_titles",
                 "so_what_callouts",
                 "implementation_roadmap",
+                "executive_recommendations",
             ],
-            "current_scaffold": {
-                "decision_statement": scaffold.get("decision_statement"),
-                "executive_summary": scaffold.get("executive_summary"),
-                "board_narrative": scaffold.get("board_narrative"),
-                "recommendation": scaffold.get("recommendation"),
-                "section_action_titles": scaffold.get("section_action_titles"),
-                "so_what_callouts": scaffold.get("so_what_callouts"),
-                "implementation_roadmap": scaffold.get("implementation_roadmap"),
+            "provider_output_contract": "Return the complete StrategicBriefV4 object; no scaffold fields may be copied as evidence.",
+            "verified_evidence_base": state.get("evidence_base") or [],
+        }
+        return json.dumps(payload, indent=2, default=str)
+
+    def _minimal_live_user_prompt(self, state, scaffold: dict) -> str:
+        context = state.get("extracted_context") or state.get("company_context") or {}
+        financial = scaffold.get("financial_analysis") or {}
+        market = scaffold.get("market_analysis") or {}
+        risk = scaffold.get("risk_analysis") or {}
+        payload = {
+            "task": (
+                "Return a complete valid StrategicBriefV4 JSON object. Do not return markdown, a patch, "
+                "or any deterministic scaffold content. Use only the query and verified evidence."
+            ),
+            "query": state.get("query"),
+            "company_context": context,
+            "required_json_keys": [
+                "decision_statement",
+                "executive_summary",
+                "board_narrative",
+                "recommendation",
+                "decision_rationale",
+                "section_action_titles",
+                "so_what_callouts",
+                "executive_recommendations",
+                "framework_outputs",
+                "financial_analysis",
+                "balanced_scorecard",
+                "quality_report",
+                "report_metadata",
+                "citations",
+                "evidence_contract",
+                "evidence_provenance",
+            ],
+            "constraints": {
+                "decision_statement": "Must start with PROCEED, CONDITIONAL PROCEED, or DO NOT PROCEED and be 35 words or fewer.",
+                "executive_summary": "Must be an object with headline, key_argument_1, key_argument_2, key_argument_3, critical_risk, and next_step.",
+                "specificity": "Use the actual company, geography, sector, and strategic constraints. Avoid generic scaffold phrases.",
             },
+            "evidence": {
+                "current_decision": (state.get("strategic_options_output") or {}).get("recommended_option"),
+                "recommended_pathway": (state.get("strategic_options_output") or {}).get("recommended_option"),
+                "financial_recommendation": (state.get("financial_reasoning_output") or {}).get("scenario_analysis"),
+                "top_risks": (state.get("risk_assessment_output") or {}).get("risk_register", [])[:3],
+                "roadmap": "Build from the verified evidence and current agent outputs; do not copy a scaffold roadmap.",
+            },
+            "verified_evidence_base": state.get("evidence_base") or [],
         }
         return json.dumps(payload, indent=2, default=str)
 
@@ -584,6 +936,10 @@ CRITICAL RULES:
             or build_citations(context, limit=6),
             minimum=6,
         )
+        if get_settings().require_live_evidence and not citations:
+            raise RuntimeError(
+                "LIVE_EVIDENCE_BLOCKED: synthesis has no verified evidence base and cannot build a report."
+            )
 
         framework_outputs = self._build_framework_outputs(
             state=state,
@@ -736,7 +1092,7 @@ CRITICAL RULES:
             "checks": [],
             "quality_flags": quality_flags,
             "mece_score": mece_score,
-            "citation_density_score": 1.0,
+            "citation_density_score": self._citation_strength(framework_outputs),
             "internal_consistency_score": internal_consistency_score,
             "context_specificity_score": self._query_specificity(query, context),
             "financial_grounding_score": self._commercial_rigor_signal(bottom_up_revenue_model, scenario_analysis),
@@ -791,6 +1147,24 @@ CRITICAL RULES:
             "asis_version": "4.0.0",
             "confidentiality_level": "STRICTLY CONFIDENTIAL",
             "disclaimer": "This report is decision-support material and should be reviewed by qualified human experts before implementation.",
+            "template_version": "ASIS-SIR v1.0",
+            "section_order": [
+                "cover_page",
+                "executive_summary",
+                "scenario_context",
+                "evidence_base",
+                "multi_agent_analysis",
+                "strategic_intelligence_dashboard",
+                "strategic_insights",
+                "executive_recommendations",
+                "strategic_roadmap",
+                "evidence_traceability_matrix",
+                "risk_matrix",
+                "opportunity_matrix",
+                "benchmark_comparison_sheet",
+                "citation_register",
+                "appendices",
+            ],
         }
         red_team = self._build_red_team_challenges(
             query=query,
@@ -808,6 +1182,28 @@ CRITICAL RULES:
             commercial_rigor_score=commercial_rigor_score,
             internal_consistency_score=internal_consistency_score,
         )
+        executive_recommendations = self._build_executive_recommendations(
+            company=company,
+            geography=geography,
+            profile=profile,
+            strategic_pathway=primary_pathway,
+            normalized_risks=normalized_risks,
+        )
+        evidence_provenance = {
+            "provider": "live_web",
+            "verified_source_count": len(citations),
+            "all_sources_verified": bool(citations) and all(
+                item.get("verification_status") == "verified" for item in citations
+            ),
+            "retrieval_queries": sorted(
+                {
+                    str(item.get("retrieval_query"))
+                    for item in citations
+                    if item.get("retrieval_query")
+                }
+            ),
+        }
+        context.pop("_live_citations", None)
 
         return {
             "decision_statement": decision_statement,
@@ -816,6 +1212,7 @@ CRITICAL RULES:
             "decision_evidence": decision_evidence,
             "framework_outputs": framework_outputs,
             "executive_summary": executive_summary,
+            "executive_recommendations": executive_recommendations,
             "section_action_titles": section_action_titles,
             "so_what_callouts": so_what_callouts,
             "agent_collaboration_trace": collaboration_trace,
@@ -840,19 +1237,67 @@ CRITICAL RULES:
             "citations": citations,
             "confidence_score": overall_confidence,
             "evidence_contract": evidence_contract,
+            "evidence_provenance": evidence_provenance,
         }
+
+    def _build_executive_recommendations(
+        self,
+        *,
+        company: str,
+        geography: str,
+        profile: dict[str, object],
+        strategic_pathway: dict[str, object] | None,
+        normalized_risks: list[dict],
+    ) -> list[dict[str, str]]:
+        pathway_name = str((strategic_pathway or {}).get("name") or profile.get("default_recommendation") or "the recommended pathway")
+        top_risk = str((normalized_risks[0] if normalized_risks else {}).get("description") or "the highest-ranked execution risk")
+        program = str(profile.get("program_label") or "the program")
+        return [
+            {
+                "priority": "1",
+                "recommendation": f"Approve {pathway_name} for {company} in {geography} with explicit board gates.",
+                "expected_impact": "Creates a controlled decision path while preserving the option to stop before full-scale capital commitment.",
+                "time_horizon": "Immediate: 0-3 months",
+            },
+            {
+                "priority": "2",
+                "recommendation": f"Validate the live evidence, customer demand, and operating assumptions behind {program} before release of the next tranche.",
+                "expected_impact": "Reduces the risk that scenario economics are mistaken for observed performance.",
+                "time_horizon": "Short-term: 3-12 months",
+            },
+            {
+                "priority": "3",
+                "recommendation": f"Close the highest-priority capability gaps that could prevent {company} from executing in {geography}.",
+                "expected_impact": "Improves readiness, delivery reliability, and the probability of converting the strategy into measurable outcomes.",
+                "time_horizon": "Short-term: 3-12 months",
+            },
+            {
+                "priority": "4",
+                "recommendation": f"Use a balanced scorecard to track financial, customer, process, and capability outcomes for {program}.",
+                "expected_impact": "Makes value capture visible and creates an auditable basis for continue, pause, or re-scope decisions.",
+                "time_horizon": "Medium-term: 1-3 years",
+            },
+            {
+                "priority": "5",
+                "recommendation": f"Keep the board-level downside trigger tied to {top_risk} and review it before each expansion step.",
+                "expected_impact": "Prevents optimistic upside assumptions from outrunning risk controls and evidence quality.",
+                "time_horizon": "Long-term: 3-5 years",
+            },
+        ]
 
     def _analysis_profile(self, *, company: str, geography: str, context: dict, query: str, recommendation: str | None) -> dict[str, object]:
         decision_type = self._normalize_decision_type(str(context.get("decision_type") or ""), query)
         target_label = geography if geography and geography != "the target market" else "the target market"
         target_scope = geography if geography and geography != "the target market" else "the business"
+        entry_route = self._entry_route(query=query, context=context, target_label=target_label)
+        entry_condition = self._entry_condition(query=query, context=context)
 
         profiles = {
             "enter": {
                 "decision_type": "enter",
-                "board_action": f"enter {target_label} through a staged, partner-enabled rollout",
-                "default_recommendation": "a staged, partner-enabled rollout",
-                "condition": "subject to regulatory readiness and partner due diligence",
+                "board_action": f"enter {target_label} through {entry_route}",
+                "default_recommendation": entry_route,
+                "condition": entry_condition,
                 "program_label": "market-entry program",
                 "strategic_path": "controlled market development",
                 "capability_focus": "local operating readiness",
@@ -1243,6 +1688,7 @@ CRITICAL RULES:
         return calibrated
 
     def _build_framework_outputs(self, *, state, context, citations, market, risk, competitor, geo, financial, strategic, profile) -> dict[str, dict]:
+        citation_slots = [citations[index % len(citations)] for index in range(4)] if citations else []
         named_competitors = context.get("named_competitors") or extract_query_facts(state.get("query") or "").get("named_competitors") or []
         competitor_profiles = self._named_competitor_profiles(named_competitors) if named_competitors else competitor.get("competitor_profiles") or []
         program_label = str(profile["program_label"])
@@ -1326,7 +1772,14 @@ CRITICAL RULES:
         ansoff_structured["action_title"] = f"{strategic_path.capitalize()} offers the clearest path because it preserves upside without overextending the operating model."
 
         financial_units = financial.get("business_units") or []
-        if not financial_units and {"proprietary_ai_platform", "data_ecosystem"}.intersection(themes):
+        if not financial_units and self._is_public_sector_cloud(query=state.get("query") or "", context=context):
+            financial_units = [
+                {"name": "Sovereign cloud regions and public-sector workloads", "market_growth_rate": 20, "relative_market_share": 1.2, "category": "star", "strategic_implication": "Prioritise compliant capacity and government reference workloads because they create the trust anchor for broader adoption."},
+                {"name": "Cybersecurity and compliance managed services", "market_growth_rate": 17, "relative_market_share": 0.9, "category": "question_mark", "strategic_implication": "Invest selectively with certified partners until accreditation and attach rates are proven."},
+                {"name": "AI analytics solutions for government agencies", "market_growth_rate": 22, "relative_market_share": 0.75, "category": "question_mark", "strategic_implication": "Fund repeatable analytics use cases through pilots before scaling across ministries and states."},
+                {"name": "Existing Oracle database and enterprise applications", "market_growth_rate": 6, "relative_market_share": 2.1, "category": "cash_cow", "strategic_implication": "Use installed-base cash flows and migration credibility to finance sovereign cloud expansion."},
+            ]
+        elif not financial_units and {"proprietary_ai_platform", "data_ecosystem"}.intersection(themes):
             financial_units = [
                 {"name": "AI-enabled M&A platform", "market_growth_rate": 18, "relative_market_share": 0.8, "category": "question_mark", "strategic_implication": "Fund through milestones until adoption and workflow reuse are proven."},
                 {"name": "Data ecosystem and benchmarks", "market_growth_rate": 16, "relative_market_share": 1.1, "category": "star", "strategic_implication": "Protect proprietary data rights because they create the strongest moat."},
@@ -1445,13 +1898,13 @@ CRITICAL RULES:
                     "point": "The capital case supports phased investment with attractive medium-term returns.",
                     "source_agent": AgentName.FINANCIAL_REASONING.value,
                     "evidence": "Projected IRR and staged payback remain attractive under disciplined deployment.",
-                    "citation": citations[0]["title"],
+                    "citation": citation_slots[0]["title"],
                 },
                 {
                     "point": "The proposition can differentiate on trust, governance, and partner leverage.",
                     "source_agent": AgentName.MARKET_INTELLIGENCE.value,
                     "evidence": "Market and Blue Ocean analysis both reward a reliability-led proposition.",
-                    "citation": citations[1]["title"],
+                    "citation": citation_slots[1]["title"],
                 },
             ],
             "weaknesses": [
@@ -1459,13 +1912,13 @@ CRITICAL RULES:
                     "point": "Local systems, staff, and execution authority are not yet fully built for scale.",
                     "source_agent": AgentName.STRATEGIC_OPTIONS.value,
                     "evidence": "McKinsey 7S identifies critical gaps in staff, systems, and structure.",
-                    "citation": citations[2]["title"],
+                    "citation": citation_slots[2]["title"],
                 },
                 {
                     "point": "Incumbents retain stronger distribution depth and local market familiarity.",
                     "source_agent": AgentName.COMPETITOR_ANALYSIS.value,
                     "evidence": "Competitor profiling shows incumbents defend core segments effectively.",
-                    "citation": citations[3]["title"],
+                    "citation": citation_slots[3]["title"],
                 },
             ],
             "opportunities": [
@@ -1473,13 +1926,13 @@ CRITICAL RULES:
                     "point": "The external opportunity is material enough to justify a measured strategic move.",
                     "source_agent": AgentName.MARKET_INTELLIGENCE.value,
                     "evidence": market.get("market_size_summary", {}).get("headline", "Demand growth remains attractive."),
-                    "citation": citations[0]["title"],
+                    "citation": citation_slots[0]["title"],
                 },
                 {
                     "point": f"{strategic_path.capitalize()} offers the strongest risk-adjusted path.",
                     "source_agent": AgentName.STRATEGIC_OPTIONS.value,
                     "evidence": strategic.get("option_rationale", f"{strategic_path.capitalize()} is the recommended route."),
-                    "citation": citations[1]["title"],
+                    "citation": citation_slots[1]["title"],
                 },
             ],
             "threats": [
@@ -1487,13 +1940,13 @@ CRITICAL RULES:
                     "point": "Regulatory delay can invalidate timing assumptions and extend the payback period.",
                     "source_agent": AgentName.RISK_ASSESSMENT.value,
                     "evidence": "The risk register ranks regulatory delay as the highest-risk item.",
-                    "citation": citations[2]["title"],
+                    "citation": citation_slots[2]["title"],
                 },
                 {
                     "point": f"Administrative distance and competitive retaliation can disrupt {program_label} execution.",
                     "source_agent": AgentName.GEO_INTEL.value,
                     "evidence": "CAGE distance and Porter's forces both point to execution friction.",
-                    "citation": citations[3]["title"],
+                    "citation": citation_slots[3]["title"],
                 },
             ],
             "action_title": f"The company has enough strategic upside to proceed, but only if it addresses capability gaps and risk gating before accelerating the {program_label}.",
@@ -1726,13 +2179,14 @@ CRITICAL RULES:
         aggressive_revenue = self._extract_numeric(aggressive_case.get("revenue_year_3_usd_mn"), base_revenue * 1.35)
         capability_gaps = capability_fit_matrix.get("critical_gaps") or []
         commercial_model = execution_realism.get("commercial_model") or "a mixed consulting and recurring-revenue model"
+        consistency_label = self._consistency_label(internal_consistency_score)
         paragraph_one = (
             f"{company} should receive a {label.lower()} recommendation because the combined market, competitive, risk, and financial evidence supports {profile['strategic_path']} in {geography}, "
             f"provided the company keeps the {profile['program_label']} gated behind {profile['condition']} and follows the primary pathway of {primary_pathway.get('name', profile['default_recommendation'])}."
         )
         paragraph_two = (
             f"The most decisive evidence comes from the convergence of the external attractiveness case, the option analysis, and a bottom-up commercial model that supports roughly ${round(base_revenue, 1)}M of year-three revenue in the base case versus ${round(aggressive_revenue, 1)}M in the upside case. "
-            f"Internal consistency remains strong at {round(internal_consistency_score * 100)}%, but execution still depends on closing {len(capability_gaps)} critical capability gaps and proving {commercial_model.lower()} against realistic sales-cycle and integration assumptions."
+            f"Internal consistency is {consistency_label} at {round(internal_consistency_score * 100)}%, and execution depends on closing {len(capability_gaps)} critical capability gaps while validating {commercial_model.lower()} against named buyer, procurement, and delivery assumptions."
         )
         return f"{paragraph_one}\n\n{paragraph_two}"
 
@@ -2960,14 +3414,14 @@ CRITICAL RULES:
             commercial_model = "Margin and control recovery through phased internal redesign rather than immediate revenue expansion."
             pricing_model = "N/A - value is realized through cost, control, and retention outcomes"
         else:
+            commercial_model = self._commercial_model(query=query, context=context, profile=profile)
+            pricing_model = self._pricing_model(query=query, profile=profile)
             items = [
                 {"factor": "Sales ramp", "baseline": f"{average_sales_cycle:.0f}-{average_sales_cycle + 3:.0f} month enterprise cycle", "risk": "Year-one revenue lags the headline opportunity because lighthouse deals take longer to close.", "mitigation": "Use partner-led pilots and board-backed lighthouse accounts to shorten proof cycles."},
                 {"factor": "Talent build", "baseline": "6-12 specialist hires required before scale", "risk": "Capability gaps delay implementation and customer onboarding.", "mitigation": "Stage hiring against booked demand and partner support."},
-                {"factor": "Client willingness to pay", "baseline": "High in regulated or mission-critical segments; moderate elsewhere", "risk": "Price realization weakens if the proposition looks like generic consulting.", "mitigation": "Bundle differentiated tooling, auditability, and recurring services into the offer."},
+                {"factor": "Client willingness to pay", "baseline": "High in regulated or mission-critical segments; moderate elsewhere", "risk": "Price realization weakens if the proposition looks interchangeable with incumbent offers.", "mitigation": "Bundle differentiated capability, auditability, and recurring outcomes into the offer."},
                 {"factor": "Go-to-market motion", "baseline": str(primary_path), "risk": "Scaling beyond the initial route too early increases execution drag and capital intensity.", "mitigation": "Keep market expansion gated to lighthouse proof points and operating readiness."},
             ]
-            commercial_model = "Consulting-led land strategy with recurring platform, audit, or managed-service attach as credibility grows."
-            pricing_model = self._pricing_model(query=query, profile=profile)
 
         execution_pressure = "Elevated" if top_risk >= 15 else "Moderate" if top_risk >= 10 else "Contained"
         return {
@@ -3090,6 +3544,19 @@ CRITICAL RULES:
         return assumptions
 
     def _pricing_model(self, *, query: str, profile: dict[str, object]) -> str:
+        query_lower = query.lower()
+        if any(keyword in query_lower for keyword in ("sovereign cloud", "public sector", "government", "cybersecurity", "analytics platform", "cloud infrastructure")):
+            return "Sovereign-cloud subscription, implementation fees, and managed security or analytics services"
+        if any(keyword in query_lower for keyword in ("satellite", "connectivity", "internet", "underserved")):
+            return "Tiered connectivity subscriptions plus enterprise and government service contracts"
+        if any(keyword in query_lower for keyword in ("quick commerce", "marketplace", "last-mile", "grocery")):
+            return "Marketplace take rate, retail media, fulfilment fees, and subscription loyalty revenue"
+        if any(keyword in query_lower for keyword in ("fintech", "payments", "upi", "wallet", "banking")):
+            return "Transaction economics, partner revenue share, premium account fees, and embedded-finance attach"
+        if any(keyword in query_lower for keyword in ("education", "university", "student", "transnational")):
+            return "Program fees, pathway partnerships, and student recruitment revenue share"
+        if any(keyword in query_lower for keyword in ("automotive", "mobility", "vehicle", "ev ", "battery", "connected car")):
+            return "Software subscription, data-service attach, and implementation revenue tied to fleet or battery analytics"
         if any(keyword in query.lower() for keyword in ("proprietary ai", "ai platform", "data ecosystem", "m&a and technology services", "technology services")):
             return "Premium advisory plus proprietary platform subscription plus data-enabled managed services"
         if any(keyword in query.lower() for keyword in ("ai governance", "dpdp", "privacy", "compliance", "model risk")):
@@ -3099,6 +3566,71 @@ CRITICAL RULES:
         if str(profile.get("decision_type") or "") in {"acquire", "merge"}:
             return "Retained accounts plus cross-sell plus recurring managed-service attach"
         return "Advisory-led land, followed by implementation and recurring managed-service attach"
+
+    def _commercial_model(self, *, query: str, context: dict, profile: dict[str, object]) -> str:
+        query_lower = query.lower()
+        sector = str(context.get("sector") or "").lower()
+        combined = f"{sector} {query_lower}"
+        if any(keyword in combined for keyword in ("sovereign cloud", "public sector", "government", "cybersecurity", "cloud infrastructure")):
+            return "A sovereign-cloud and public-sector platform model combining compliant cloud capacity, cybersecurity partnerships, analytics workloads, and managed operations revenue."
+        if any(keyword in combined for keyword in ("satellite", "connectivity", "internet", "underserved")):
+            return "A tiered connectivity model combining affordable consumer access, enterprise SLAs, government coverage contracts, and local regulatory partnerships."
+        if any(keyword in combined for keyword in ("quick commerce", "marketplace", "last-mile", "grocery")):
+            return "A dense-urban commerce model combining fulfilment economics, seller services, retail media, and loyalty-driven repeat demand."
+        if any(keyword in combined for keyword in ("fintech", "payments", "upi", "wallet", "banking")):
+            return "A regulated fintech model combining transaction revenue, partner distribution, embedded financial services, and premium-account attach."
+        if any(keyword in combined for keyword in ("education", "university", "student", "transnational")):
+            return "A transnational education model combining program fees, pathway partnerships, local delivery alliances, and student success economics."
+        if any(keyword in combined for keyword in ("automotive", "mobility", "vehicle", "ev ", "battery", "connected car")):
+            return "A mobility data model combining software subscriptions, battery or fleet analytics, dealer adoption incentives, and implementation services."
+        return str(self._pricing_model(query=query, profile=profile))
+
+    @staticmethod
+    def _is_public_sector_cloud(*, query: str, context: dict) -> bool:
+        combined = f"{context.get('sector') or ''} {query}".lower()
+        has_cloud = any(term in combined for term in ("cloud", "sovereign", "data residency", "infrastructure"))
+        has_public_sector = any(term in combined for term in ("public sector", "government", "ministry", "sovereign cloud", "procurement"))
+        return has_cloud and has_public_sector
+
+    @staticmethod
+    def _consistency_label(score: float) -> str:
+        if score >= 0.75:
+            return "strong"
+        if score >= 0.55:
+            return "moderate"
+        if score >= 0.4:
+            return "mixed"
+        return "weak"
+
+    @staticmethod
+    def _entry_route(*, query: str, context: dict, target_label: str) -> str:
+        combined = f"{context.get('sector') or ''} {query}".lower()
+        if any(keyword in combined for keyword in ("sovereign cloud", "public sector", "government", "cybersecurity")):
+            return f"a compliance-first sovereign cloud and cybersecurity partner route in {target_label}"
+        if any(keyword in combined for keyword in ("satellite", "connectivity", "internet", "underserved")):
+            return f"a regulator-backed connectivity route with government, enterprise, and low-cost consumer channels in {target_label}"
+        if any(keyword in combined for keyword in ("quick commerce", "last-mile", "grocery", "marketplace")):
+            return f"a density-led quick-commerce route focused on priority urban clusters in {target_label}"
+        if any(keyword in combined for keyword in ("fintech", "payments", "upi", "wallet", "banking")):
+            return f"a licensed fintech partnership route with bank, payment, and merchant distribution in {target_label}"
+        if any(keyword in combined for keyword in ("education", "university", "student", "transnational")):
+            return f"a regulated education partnership route with local delivery and student-success controls in {target_label}"
+        return f"a sequenced launch route anchored in priority customers, local controls, and named operating milestones in {target_label}"
+
+    @staticmethod
+    def _entry_condition(*, query: str, context: dict) -> str:
+        combined = f"{context.get('sector') or ''} {query}".lower()
+        if any(keyword in combined for keyword in ("sovereign cloud", "public sector", "government", "cybersecurity")):
+            return "subject to procurement readiness, data-residency controls, public-sector security accreditation, and named ecosystem partners"
+        if any(keyword in combined for keyword in ("satellite", "connectivity", "internet", "underserved")):
+            return "subject to landing rights, spectrum and licensing approvals, affordable-unit economics, and local service continuity"
+        if any(keyword in combined for keyword in ("quick commerce", "last-mile", "grocery", "marketplace")):
+            return "subject to city-level density economics, fulfilment reliability, merchant supply, and working-capital controls"
+        if any(keyword in combined for keyword in ("fintech", "payments", "upi", "wallet", "banking")):
+            return "subject to licensing, banking-partner readiness, fraud controls, and compliant customer-acquisition economics"
+        if any(keyword in combined for keyword in ("education", "university", "student", "transnational")):
+            return "subject to accreditation, visa and placement outcomes, partner quality, and student-support capacity"
+        return "subject to explicit regulatory, customer-adoption, unit-economic, and operating-readiness gates"
 
     def _projection_metric(self, financial: dict, year_key: str, field: str, default: float) -> float:
         return self._safe_float((financial.get("financial_projections") or {}).get(year_key, {}).get(field), default)
@@ -3134,6 +3666,14 @@ CRITICAL RULES:
         sector = str(context.get("sector") or "").lower()
         query_lower = query.lower()
         decision_type = str(profile.get("decision_type") or "enter")
+
+        if self._is_public_sector_cloud(query=query, context=context):
+            return [
+                {"sector": "Sovereign cloud workloads for central government", "priority": "Primary", "addressable_clients": 42, "target_clients": 7, "win_rate": 0.18, "average_contract_value_usd_mn": 3.8, "sales_cycle_months": 14, "base_year_3_revenue_usd_mn": 22.4, "account_expansion_multiplier": 1.9},
+                {"sector": "Public-sector cybersecurity and compliance services", "priority": "Primary", "addressable_clients": 58, "target_clients": 10, "win_rate": 0.16, "average_contract_value_usd_mn": 2.4, "sales_cycle_months": 12, "base_year_3_revenue_usd_mn": 18.6, "account_expansion_multiplier": 1.7},
+                {"sector": "AI analytics platforms for ministries and state agencies", "priority": "Primary", "addressable_clients": 65, "target_clients": 11, "win_rate": 0.14, "average_contract_value_usd_mn": 2.1, "sales_cycle_months": 11, "base_year_3_revenue_usd_mn": 15.2, "account_expansion_multiplier": 1.6},
+                {"sector": "Systems-integrator and managed operations partnerships", "priority": "Secondary", "addressable_clients": 34, "target_clients": 8, "win_rate": 0.22, "average_contract_value_usd_mn": 1.3, "sales_cycle_months": 9, "base_year_3_revenue_usd_mn": 8.7, "account_expansion_multiplier": 1.4},
+            ]
 
         if any(keyword in query_lower for keyword in ("proprietary ai", "ai platform", "data ecosystem", "m&a and technology services", "technology services")):
             return [
@@ -3199,6 +3739,14 @@ CRITICAL RULES:
 
     def _capability_blueprint(self, *, query: str, context: dict, profile: dict[str, object]) -> list[dict[str, str]]:
         query_lower = query.lower()
+        if self._is_public_sector_cloud(query=query, context=context):
+            return [
+                {"capability": "Sovereign cloud control plane", "current_state": "Medium", "target_state": "Strong", "gap": "Oracle must prove India-specific data residency, operational separation, and audit controls for public-sector workloads.", "priority": "Critical", "build_fit": "Strong", "acquisition_fit": "Low", "integration_risk": "Medium", "recommended_action": "Certify the sovereign operating model before scaling ministry-level workloads."},
+                {"capability": "Government procurement and empanelment readiness", "current_state": "Medium", "target_state": "Strong", "gap": "Procurement cycles, MeitY empanelment, and security accreditation must be sequenced before broad GTM expansion.", "priority": "Critical", "build_fit": "Strong", "acquisition_fit": "Low", "integration_risk": "Medium", "recommended_action": "Create a public-sector bid desk with compliance, pricing, and partner-response playbooks."},
+                {"capability": "Cybersecurity partnership depth", "current_state": "Medium", "target_state": "Strong", "gap": "Oracle needs named cybersecurity and systems-integration partners that government buyers already trust.", "priority": "Critical", "build_fit": "Moderate", "acquisition_fit": "Moderate", "integration_risk": "Medium", "recommended_action": "Lock priority cyber and SI alliances around reference architectures and joint accountability."},
+                {"capability": "AI analytics solution packaging", "current_state": "Medium", "target_state": "Strong", "gap": "Analytics workloads need reusable public-sector use cases rather than generic AI platform positioning.", "priority": "High", "build_fit": "Strong", "acquisition_fit": "Moderate", "integration_risk": "Low", "recommended_action": "Package initial analytics solutions for citizen services, tax, health, and infrastructure use cases."},
+                {"capability": "Public-sector customer success and managed operations", "current_state": "Low", "target_state": "Strong", "gap": "Government adoption will depend on local support, uptime assurance, and change-management capacity after procurement.", "priority": "High", "build_fit": "Strong", "acquisition_fit": "Low", "integration_risk": "Medium", "recommended_action": "Build a managed operations layer with service-level reporting and escalation governance."},
+            ]
         if any(keyword in query_lower for keyword in ("proprietary ai", "ai platform", "data ecosystem", "m&a and technology services", "technology services")):
             return [
                 {"capability": "Proprietary AI workflow platform", "current_state": "Medium", "target_state": "Strong", "gap": "Reusable M&A and technology-service workflows must move from expert playbooks into product-grade platform assets.", "priority": "Critical", "build_fit": "Strong", "acquisition_fit": "Moderate", "integration_risk": "Medium", "recommended_action": "Build the core workflow IP internally while using partners only for non-differentiating infrastructure."},

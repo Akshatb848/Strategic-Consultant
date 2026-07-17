@@ -1,83 +1,42 @@
-import type { AnalysisMeta, StrategicBriefV4 } from "@/lib/api";
+import type { StrategicBriefV4 } from "@/lib/api";
 
-import { StatCallout } from "@/components/report/StatCallout";
 import { normalizedPercent } from "@/lib/analysis";
 
 interface ReportExecutiveSummaryProps {
   brief: StrategicBriefV4;
-  topFindings: string[];
-  priorityActions: string[];
-  analysisMeta: AnalysisMeta;
 }
 
-export function ReportExecutiveSummary({
-  brief,
-  topFindings,
-  priorityActions,
-  analysisMeta,
-}: ReportExecutiveSummaryProps) {
+export function ReportExecutiveSummary({ brief }: ReportExecutiveSummaryProps) {
   return (
     <section id="executive-summary" className="report-section py-12">
-      <div className="rpt-section-header">1. Executive summary</div>
+      <div className="rpt-section-header">1. Executive Summary</div>
 
-      <div className="grid gap-4 lg:grid-cols-3">
-        <StatCallout
-          label="Decision confidence"
-          value={`${normalizedPercent(brief.decision_confidence)}%`}
-          detail="Calibrated against the current evidence set"
-        />
-        <StatCallout
-          label="Quality grade"
-          value={brief.quality_report?.overall_grade || "B"}
-          detail="Composite of logic, evidence, and execution specificity"
-        />
-        <StatCallout
-          label="Frameworks applied"
-          value={String((brief.frameworks_applied || []).length)}
-          detail="Named analytical lenses used in the final brief"
-        />
+      <p className="max-w-4xl font-[var(--font-display)] text-2xl leading-snug text-[var(--c-brand)]">
+        {brief.executive_summary.headline}
+      </p>
+      <dl className="mt-8 grid gap-5 md:grid-cols-2">
+        <div className="border-l-2 border-[var(--c-brand-rule)] pl-4">
+          <dt className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--c-text-faint)]">Strategic issue</dt>
+          <dd className="mt-2 text-sm leading-7 text-[var(--c-text)]">{brief.report_metadata.query}</dd>
+        </div>
+        <div className="border-l-2 border-[var(--c-brand-rule)] pl-4">
+          <dt className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--c-text-faint)]">Key finding</dt>
+          <dd className="mt-2 text-sm leading-7 text-[var(--c-text)]">{brief.executive_summary.key_argument_1} {brief.executive_summary.key_argument_2}</dd>
+        </div>
+        <div className="border-l-2 border-[var(--c-brand-rule)] pl-4">
+          <dt className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--c-text-faint)]">Overall risk level</dt>
+          <dd className="mt-2 text-sm leading-7 text-[var(--c-text)]">{brief.executive_summary.critical_risk}</dd>
+        </div>
+        <div className="border-l-2 border-[var(--c-brand-rule)] pl-4">
+          <dt className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--c-text-faint)]">Strategic opportunity</dt>
+          <dd className="mt-2 text-sm leading-7 text-[var(--c-text)]">{brief.executive_summary.key_argument_3}</dd>
+        </div>
+      </dl>
+      <div className="mt-6 border border-[var(--c-divider)] bg-[var(--c-surface)] p-5">
+        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--c-text-faint)]">Final recommendation</div>
+        <p className="mt-3 text-base leading-7 text-[var(--c-text)]">{brief.recommendation}</p>
+        <p className="mt-2 text-sm text-[var(--c-text-muted)]">Confidence: {normalizedPercent(brief.decision_confidence)}%</p>
       </div>
-
-      <div className="mt-8 grid gap-6 lg:grid-cols-[1.35fr,0.65fr]">
-        <div className="space-y-4">
-          <p className="font-[var(--font-display)] text-2xl leading-snug text-[var(--c-brand)]">
-            {brief.executive_summary.headline}
-          </p>
-          <div className="space-y-3 text-[var(--c-text)]">
-            {topFindings.map((finding) => (
-              <p key={finding} className="border-l-2 border-[var(--c-brand-rule)] pl-3">
-                {finding}
-              </p>
-            ))}
-          </div>
-        </div>
-
-        <div className="rounded-[18px] border border-[var(--c-divider)] bg-[var(--c-surface)] p-5">
-          <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--c-text-faint)]">
-            Priority actions
-          </div>
-          <ol className="mt-4 space-y-3 text-sm text-[var(--c-text)]">
-            {priorityActions.slice(0, 4).map((action) => (
-              <li key={action}>{action}</li>
-            ))}
-          </ol>
-        </div>
-      </div>
-
-      {analysisMeta.has_blocking_warnings ? (
-        <div className="warning-callout mt-6 rounded-[12px]">
-          Pre-flight blocking warnings were acknowledged and should be revisited before commitment.
-        </div>
-      ) : null}
-
-      {analysisMeta.build_vs_buy_verdict ? (
-        <div className="mt-6 rounded-[16px] border border-[var(--c-divider)] bg-[var(--c-brand-tint)] p-5">
-          <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--c-brand)]">
-            M&A verdict
-          </div>
-          <p className="mt-3 text-sm leading-7 text-[var(--c-text)]">{analysisMeta.build_vs_buy_verdict}</p>
-        </div>
-      ) : null}
     </section>
   );
 }

@@ -13,10 +13,12 @@ class FinancialReasoningAgent(BaseAgent):
     agent_id = "financial_reasoning"
     agent_name = "Financial Reasoning"
     framework = "BCG Matrix + capital case + balanced scorecard seed"
+    required_live_keys = ("business_units", "financial_projections", "scenario_analysis", "capital_requirements", "peer_benchmarking", "citations")
 
     def system_prompt(self) -> str:
         return """You are the Financial Reasoning agent for ASIS v4.0.
 Build the capital case, BCG Matrix positioning, financial projections, and balanced scorecard seed.
+Return a complete JSON object for this agent. Do not return a patch or deterministic scaffold content.
 You have access to outputs from Market Intelligence, Risk Assessment, Competitor Analysis, and Geo Intel.
 Return a JSON patch enriching the precomputed scaffold. JSON only, no markdown.
 
@@ -88,7 +90,7 @@ Rules:
             f"Strategic question:\n{state['query']}\n\n"
             f"Company:\n{json.dumps(company_info, ensure_ascii=False)}\n\n"
             f"Upstream intelligence summary:\n{json.dumps(upstream, ensure_ascii=False)}\n\n"
-            "Build the financial case calibrated to this company's scale and risk profile. Return the JSON patch."
+            "Build the financial case calibrated to this company's scale and risk profile. Return the complete JSON object."
         )
 
     def local_result(self, state) -> dict:

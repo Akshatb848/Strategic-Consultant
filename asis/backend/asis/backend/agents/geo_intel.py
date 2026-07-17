@@ -12,10 +12,12 @@ class GeoIntelAgent(BaseAgent):
     agent_id = "geo_intel"
     agent_name = "Geopolitical Intelligence"
     framework = "PESTLE political/legal + CAGE distance"
+    required_live_keys = ("political_risk_score", "trade_barriers", "regulatory_outlook", "cage_distance_analysis", "fdi_sentiment", "citations")
 
     def system_prompt(self) -> str:
         return """You are the Geopolitical Intelligence agent for ASIS v4.0.
 Assess the political/legal PESTLE dimensions and CAGE distance factors for the target geography.
+Return a complete JSON object for this agent. Do not return a patch or deterministic scaffold content.
 Return a JSON patch enriching the precomputed scaffold. JSON only, no markdown.
 
 Required patch shape:
@@ -58,7 +60,7 @@ Rules:
         return (
             f"Strategic question:\n{state['query']}\n\n"
             f"Context:\n{json.dumps(summary, ensure_ascii=False)}\n\n"
-            "Assess geopolitical risks and CAGE distance for this specific geography and company. Return the JSON patch."
+            "Assess geopolitical risks and CAGE distance for this specific geography and company. Return the complete JSON object."
         )
 
     def local_result(self, state) -> dict:

@@ -11,10 +11,12 @@ class MarketIntelAgent(BaseAgent):
     agent_id = "market_intel"
     agent_name = "Market Intelligence"
     framework = "PESTLE + Porter's Five Forces"
+    required_live_keys = ("market_size_summary", "market_growth_themes", "pestle_analysis", "porters_five_forces", "key_findings", "strategic_implication", "citations")
 
     def system_prompt(self) -> str:
         return """You are the Market Intelligence agent for ASIS v4.0.
 Apply PESTLE analysis and Porter's Five Forces to assess market attractiveness for the strategic question.
+Return a complete JSON object for this agent. Do not return a patch or deterministic scaffold content.
 You are enriching a precomputed scaffold — return only a JSON patch with the fields you want to override.
 JSON only, no markdown, no extra text.
 
@@ -70,7 +72,7 @@ Rules:
         return (
             f"Strategic question:\n{state['query']}\n\n"
             f"Context:\n{json.dumps(summary, ensure_ascii=False)}\n\n"
-            "Apply PESTLE and Porter's Five Forces to this specific market and company. Return the JSON patch."
+            "Apply PESTLE and Porter's Five Forces to this specific market and company. Return the complete JSON object."
         )
 
     def local_result(self, state: PipelineState) -> dict:

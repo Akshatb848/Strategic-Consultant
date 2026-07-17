@@ -1,30 +1,39 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
 
-def _load_environment_files() -> None:
-    """Load local env files without overriding real process env values."""
-    settings_file = Path(__file__).resolve()
-    backend_root = settings_file.parents[3]
-    repo_root = settings_file.parents[5]
-    candidates = [
-        repo_root / ".env",
-        backend_root / ".env",
-        Path.cwd() / ".env",
-    ]
-    for env_file in dict.fromkeys(candidates):
-        if env_file.exists():
-            load_dotenv(env_file, override=False)
+def _install_os_truststore() -> bool:
+    try:
+        import truststore
+
+        truststore.inject_into_ssl()
+        return True
+    except Exception:
+        return False
 
 
-_load_environment_files()
+_OS_TRUSTSTORE_ACTIVE = _install_os_truststore()
+
+
+def _load_env_files() -> None:
+    seen: set[Path] = set()
+    for parent in Path(__file__).resolve().parents:
+        for filename in (".env", ".env.local"):
+            env_path = parent / filename
+            if env_path in seen or not env_path.is_file():
+                continue
+            load_dotenv(env_path, override=False)
+            seen.add(env_path)
+
+
+_load_env_files()
 
 
 def _env(name: str, default: str | None = None) -> str | None:
@@ -35,24 +44,44 @@ def _env_bool(name: str, default: bool) -> bool:
     return os.getenv(name, str(default)).lower() == "true"
 
 
+def _env_bool_or_path(name: str, default: str | bool | None = None) -> str | bool | None:
+    value = os.getenv(name)
+    if value is None or value.strip() == "":
+        return default
+    normalized = value.strip().lower()
+    if normalized in {"true", "1", "yes", "on"}:
+        return True
+    if normalized in {"false", "0", "no", "off"}:
+        return False
+    return value
+
+
+def _default_ssl_verify() -> str | bool | None:
+    configured = _env_bool_or_path("LITELLM_SSL_VERIFY")
+    if configured is not None:
+        return configured
+    bundle = _env("SSL_CERT_FILE") or _env("REQUESTS_CA_BUNDLE")
+    if bundle:
+        return bundle
+    if _OS_TRUSTSTORE_ACTIVE:
+        return True
+    try:
+        import certifi
+
+        return certifi.where()
+    except Exception:
+        return None
+
+
 def _env_int(name: str, default: int) -> int:
     return int(os.getenv(name, str(default)))
 
 
-def _groq_is_sole_provider() -> bool:
-    """True when GROQ_API_KEY is set and no LiteLLM proxy is configured."""
-    return bool(os.getenv("GROQ_API_KEY")) and not bool(os.getenv("LITELLM_PROXY_URL"))
-
-
-def _resolve_model(litellm_env: str, litellm_default: str, groq_env: str, groq_default: str) -> str:
-    """Return the Groq model when Groq is the sole provider, otherwise the LiteLLM model.
-
-    This ensures agent profiles request model names that match the active provider
-    so logging, cost tracking, and model routing are all transparent.
-    """
-    if _groq_is_sole_provider():
-        return os.getenv(groq_env, groq_default) or groq_default
-    return os.getenv(litellm_env, litellm_default) or litellm_default
+def _env_list(name: str, default: list[str]) -> list[str]:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    return [item.strip() for item in raw.split(",") if item.strip()]
 
 
 class AgentModelProfile(BaseModel):
@@ -93,22 +122,74 @@ class Settings(BaseModel):
     groq_model_primary: str = Field(default_factory=lambda: _env("GROQ_MODEL_PRIMARY", "llama-3.3-70b-versatile") or "llama-3.3-70b-versatile")
     groq_model_fast: str = Field(default_factory=lambda: _env("GROQ_MODEL_FAST", "llama-3.1-8b-instant") or "llama-3.1-8b-instant")
     groq_model_reasoning: str = Field(default_factory=lambda: _env("GROQ_MODEL_REASONING", "llama-3.3-70b-versatile") or "llama-3.3-70b-versatile")
-    litellm_model_primary: str = Field(default_factory=lambda: _resolve_model("LITELLM_MODEL_PRIMARY", "claude-sonnet-4-5", "GROQ_MODEL_PRIMARY", "llama-3.3-70b-versatile"))
-    litellm_model_fast: str = Field(default_factory=lambda: _resolve_model("LITELLM_MODEL_FAST", "claude-haiku-4-5", "GROQ_MODEL_FAST", "llama-3.1-8b-instant"))
-    litellm_model_gemini_pro: str = Field(default_factory=lambda: _resolve_model("LITELLM_MODEL_GEMINI_PRO", "gemini-2.5-pro", "GROQ_MODEL_PRIMARY", "llama-3.3-70b-versatile"))
-    litellm_model_gemini_flash: str = Field(default_factory=lambda: _resolve_model("LITELLM_MODEL_GEMINI_FLASH", "gemini-2.0-flash", "GROQ_MODEL_FAST", "llama-3.1-8b-instant"))
-    litellm_model_phi_reasoning: str = Field(default_factory=lambda: _resolve_model("LITELLM_MODEL_PHI_REASONING", "phi-4-reasoning", "GROQ_MODEL_REASONING", "llama-3.3-70b-versatile"))
-    litellm_model_qwen_strategy: str = Field(default_factory=lambda: _resolve_model("LITELLM_MODEL_QWEN_STRATEGY", "qwen-strategy", "GROQ_MODEL_PRIMARY", "llama-3.3-70b-versatile"))
-    litellm_model_arctic_research: str = Field(default_factory=lambda: _resolve_model("LITELLM_MODEL_ARCTIC_RESEARCH", "arctic-research", "GROQ_MODEL_PRIMARY", "llama-3.3-70b-versatile"))
-    litellm_model_llama_governance: str = Field(default_factory=lambda: _resolve_model("LITELLM_MODEL_LLAMA_GOVERNANCE", "llama-governance", "GROQ_MODEL_PRIMARY", "llama-3.3-70b-versatile"))
+    openrouter_api_key: str | None = Field(default_factory=lambda: _env("OPENROUTER_API_KEY"))
+    openrouter_api_base: str = Field(default_factory=lambda: _env("OPENROUTER_API_BASE", "https://openrouter.ai/api/v1") or "https://openrouter.ai/api/v1")
+    openrouter_model_primary: str = Field(
+        default_factory=lambda: _env("OPENROUTER_MODEL_PRIMARY", "openai/gpt-oss-120b:free")
+        or "openai/gpt-oss-120b:free"
+    )
+    openrouter_model_fast: str = Field(
+        default_factory=lambda: _env("OPENROUTER_MODEL_FAST", "openai/gpt-oss-20b:free")
+        or "openai/gpt-oss-20b:free"
+    )
+    openrouter_model_reasoning: str = Field(
+        default_factory=lambda: _env("OPENROUTER_MODEL_REASONING", "nvidia/nemotron-3-ultra-550b-a55b:free")
+        or "nvidia/nemotron-3-ultra-550b-a55b:free"
+    )
+    openrouter_model_fallback: str = Field(default_factory=lambda: _env("OPENROUTER_MODEL_FALLBACK", "openrouter/free") or "openrouter/free")
+    openrouter_extra_fallback_models: list[str] = Field(
+        default_factory=lambda: _env_list(
+            "OPENROUTER_EXTRA_FALLBACK_MODELS",
+            [
+                "openai/gpt-oss-20b:free",
+                "nvidia/nemotron-3-super-120b-a12b:free",
+                "meta-llama/llama-3.3-70b-instruct:free",
+                "nvidia/nemotron-3-nano-30b-a3b:free",
+            ],
+        )
+    )
+    openrouter_site_url: str | None = Field(default_factory=lambda: _env("OPENROUTER_SITE_URL") or _env("FRONTEND_URL"))
+    openrouter_app_title: str = Field(default_factory=lambda: _env("OPENROUTER_APP_TITLE", "ASIS Strategic Consultant") or "ASIS Strategic Consultant")
+    openrouter_max_concurrency: int = Field(default_factory=lambda: max(1, _env_int("OPENROUTER_MAX_CONCURRENCY", 1)))
+    openrouter_retry_count: int = Field(default_factory=lambda: max(1, _env_int("OPENROUTER_RETRY_COUNT", 2)))
+    openrouter_retry_backoff_seconds: float = Field(default_factory=lambda: float(_env("OPENROUTER_RETRY_BACKOFF_SECONDS", "1.5") or "1.5"))
+    required_llm_provider: str = Field(
+        default_factory=lambda: _env(
+            "ASIS_REQUIRED_LLM_PROVIDER",
+            "openrouter" if (_env("ENVIRONMENT", _env("NODE_ENV", "development")) == "production") else "any",
+        )
+        or "any"
+    )
+    allow_deterministic_repair: bool = Field(
+        default_factory=lambda: _env_bool("ALLOW_DETERMINISTIC_REPAIR", False)
+    )
+    require_live_evidence: bool = Field(
+        default_factory=lambda: _env_bool(
+            "REQUIRE_LIVE_EVIDENCE",
+            _env("ENVIRONMENT", _env("NODE_ENV", "development")) == "production",
+        )
+    )
+    tavily_api_base: str = Field(
+        default_factory=lambda: _env("TAVILY_API_BASE", "https://api.tavily.com") or "https://api.tavily.com"
+    )
+    evidence_max_results: int = Field(default_factory=lambda: max(3, _env_int("EVIDENCE_MAX_RESULTS", 8)))
+    evidence_request_timeout_seconds: float = Field(
+        default_factory=lambda: max(5.0, float(_env("EVIDENCE_REQUEST_TIMEOUT_SECONDS", "20") or "20"))
+    )
+    litellm_ssl_verify: str | bool | None = Field(default_factory=_default_ssl_verify)
+    litellm_model_primary: str = Field(default_factory=lambda: _env("LITELLM_MODEL_PRIMARY", "claude-sonnet-4-5") or "claude-sonnet-4-5")
+    litellm_model_fast: str = Field(default_factory=lambda: _env("LITELLM_MODEL_FAST", "claude-haiku-4-5") or "claude-haiku-4-5")
+    litellm_model_gemini_pro: str = Field(default_factory=lambda: _env("LITELLM_MODEL_GEMINI_PRO", "gemini-2.5-pro") or "gemini-2.5-pro")
+    litellm_model_gemini_flash: str = Field(default_factory=lambda: _env("LITELLM_MODEL_GEMINI_FLASH", "gemini-2.0-flash") or "gemini-2.0-flash")
+    litellm_model_phi_reasoning: str = Field(default_factory=lambda: _env("LITELLM_MODEL_PHI_REASONING", "phi-4-reasoning") or "phi-4-reasoning")
+    litellm_model_qwen_strategy: str = Field(default_factory=lambda: _env("LITELLM_MODEL_QWEN_STRATEGY", "qwen-strategy") or "qwen-strategy")
+    litellm_model_arctic_research: str = Field(default_factory=lambda: _env("LITELLM_MODEL_ARCTIC_RESEARCH", "arctic-research") or "arctic-research")
+    litellm_model_llama_governance: str = Field(default_factory=lambda: _env("LITELLM_MODEL_LLAMA_GOVERNANCE", "llama-governance") or "llama-governance")
     embedding_model: str = Field(default_factory=lambda: _env("EMBEDDING_MODEL", "text-embedding-3-small") or "text-embedding-3-small")
     demo_mode: bool = Field(default_factory=lambda: _env_bool("ASIS_DEMO_MODE", False))
     allow_llm_fallback: bool = Field(
         default_factory=lambda: (
-            _env(
-                "ALLOW_LLM_FALLBACK",
-                "false",
-            )
+            _env("ALLOW_LLM_FALLBACK", "false")
             or "false"
         ).lower()
         == "true"

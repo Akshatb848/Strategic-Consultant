@@ -70,6 +70,45 @@ def _coerce_executive_summary(analysis: models.Analysis) -> str | None:
     return _safe_text((getattr(analysis, "strategic_brief", None) or {}).get("executive_summary"))
 
 
+def _quality_summary(analysis: models.Analysis) -> dict[str, object]:
+    brief = _safe_dict(getattr(analysis, "strategic_brief", None))
+    if not brief and getattr(analysis, "report", None):
+        brief = _safe_dict(getattr(analysis.report, "strategic_brief", None))
+
+    quality_report = _safe_dict(brief.get("quality_report"))
+    analysis_meta = _safe_dict(brief.get("analysis_meta"))
+    checks = quality_report.get("checks") if isinstance(quality_report.get("checks"), list) else []
+    failed_block_checks = [
+        check
+        for check in checks
+        if isinstance(check, dict)
+        and str(check.get("level") or "").upper() == "BLOCK"
+        and check.get("passed") is False
+    ]
+    grade = _safe_text(quality_report.get("overall_grade"))
+    blocking = bool(
+        grade == "FAIL"
+        or failed_block_checks
+        or analysis_meta.get("has_blocking_warnings") is True
+    )
+    flags = quality_report.get("quality_flags")
+    pdf_status = _safe_text(getattr(getattr(analysis, "report", None), "pdf_status", None))
+    status = _safe_text(getattr(analysis, "status", None)) or "queued"
+    is_board_ready = bool(
+        status == "completed"
+        and not bool(getattr(analysis, "used_fallback", False))
+        and not blocking
+        and (pdf_status in (None, "ready"))
+    )
+    return {
+        "quality_grade": grade,
+        "quality_blocking": blocking,
+        "quality_flags": flags if isinstance(flags, list) else [],
+        "pdf_status": pdf_status,
+        "is_board_ready": is_board_ready,
+    }
+
+
 def _safe_agent_logs(analysis: models.Analysis) -> list[AgentLogResponse]:
     safe_logs: list[AgentLogResponse] = []
     for log in getattr(analysis, "agent_logs", []) or []:
@@ -109,6 +148,7 @@ def _resolve_user_organisation_id(user: models.User, db: Session) -> str | None:
 
 def _to_summary(analysis: models.Analysis) -> AnalysisSummary:
     _status = _safe_text(analysis.status) or "queued"
+    quality = _quality_summary(analysis)
     return AnalysisSummary(
         id=analysis.id,
         query=_safe_text(analysis.query) or "Strategic analysis",
@@ -122,6 +162,7 @@ def _to_summary(analysis: models.Analysis) -> AnalysisSummary:
         decision_recommendation=None if _status in ("failed", "cancelled") else analysis.decision_recommendation,
         executive_summary=_coerce_executive_summary(analysis),
         error_message=_safe_text(analysis.error_message),
+        **quality,
         duration_seconds=_safe_float(analysis.duration_seconds),
         total_cost_usd=_safe_float(analysis.total_cost_usd),
         created_at=analysis.created_at,
@@ -131,6 +172,7 @@ def _to_summary(analysis: models.Analysis) -> AnalysisSummary:
 
 def _to_detail(analysis: models.Analysis) -> AnalysisDetail:
     _status = _safe_text(analysis.status) or "queued"
+    quality = _quality_summary(analysis)
     return AnalysisDetail(
         id=analysis.id,
         query=_safe_text(analysis.query) or "Strategic analysis",
@@ -144,6 +186,7 @@ def _to_detail(analysis: models.Analysis) -> AnalysisDetail:
         decision_recommendation=None if _status in ("failed", "cancelled") else analysis.decision_recommendation,
         executive_summary=_coerce_executive_summary(analysis),
         error_message=_safe_text(analysis.error_message),
+        **quality,
         duration_seconds=_safe_float(analysis.duration_seconds),
         total_cost_usd=_safe_float(analysis.total_cost_usd),
         created_at=analysis.created_at,

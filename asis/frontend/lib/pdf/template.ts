@@ -617,7 +617,7 @@ function exportValidationHtml(brief: StrategicBriefV4): string {
         check.passed === true ? "Passed" : "Failed",
         firstPresent(check.notes, check.description),
       ])
-    : [["Export validation", "INFO", "Not attached", "This PDF was generated before export validation metadata was attached."]];
+    : [["Export validation", "BLOCK", "Unavailable", "The report has no persisted export validation metadata."]];
   const sourceRows = sourceRoles.map((source) => [
     firstPresent(source.source, source.title),
     compactValue(source.roles),
@@ -628,6 +628,169 @@ function exportValidationHtml(brief: StrategicBriefV4): string {
     ${reportTable(["Check", "Level", "Status", "Notes"], validationRows)}
     <h3>Source role coverage</h3>
     ${sourceRows.length > 0 ? reportTable(["Source", "Roles", "URL"], sourceRows) : `<div class="empty-state">Source role coverage was not attached to this report.</div>`}
+  `;
+}
+
+function scenarioContextHtml(brief: StrategicBriefV4): string {
+  const context = asRecord(brief.context);
+  return reportTable(
+    ["Context field", "Persisted value"],
+    [
+      ["Organisation overview", firstPresent(context.organisation_overview, context.company_overview, context.company_name)],
+      ["Industry", firstPresent(context.industry, context.sector)],
+      ["Geographic scope", firstPresent(context.country, context.geography)],
+      ["Strategic challenge", firstPresent(context.strategic_challenge, context.query, brief.report_metadata?.query)],
+      ["Business objective", firstPresent(context.business_objective, context.objective, brief.decision_rationale)],
+    ]
+  );
+}
+
+function evidenceBaseHtml(brief: StrategicBriefV4): string {
+  const rows = asRecordArray(brief.citations).map((citation) => [
+    firstPresent(citation.title, citation.source, citation.publisher),
+    firstPresent(citation.source_type, "live_web"),
+    firstPresent(citation.published_at, citation.year, citation.date),
+    firstPresent(citation.reliability, citation.verification_status),
+  ]);
+  return reportTable(["Source", "Type", "Date", "Reliability / verification"], rows);
+}
+
+function multiAgentAnalysisHtml(brief: StrategicBriefV4, nextExhibit: () => number): string {
+  const groups: Array<{ title: string; keys: string[]; narrative?: string }> = [
+    { title: "4.1 Sensor Agent", keys: ["pestle", "porters_five_forces"] },
+    { title: "4.2 Analyst Agent", keys: ["swot", "bcg_matrix", "balanced_scorecard"] },
+    { title: "4.3 Visionary Agent", keys: ["ansoff", "blue_ocean"] },
+    { title: "4.4 Risk Mitigator Agent", keys: ["risk_register", "mckinsey_7s"] },
+    { title: "4.5 Devil's Advocate", keys: [], narrative: "Red-team challenges are recorded in the Risk Matrix and Appendices." },
+    { title: "4.6 Strategic Chairman", keys: [], narrative: brief.board_narrative },
+  ];
+
+  return groups
+    .map((group) => {
+      const outputs = group.keys
+        .map((key) => {
+          const output = brief.framework_outputs?.[key];
+          return output
+            ? exhibit(
+                nextExhibit(),
+                findingTitle(output.exhibit_title, `${frameworkDisplayName(key)} contributes a query-specific finding`),
+                sourceForFramework(output),
+                frameworkBody(key, output, brief)
+              )
+            : "";
+        })
+        .filter(Boolean)
+        .join("");
+      const financialEvidence = group.title === "4.2 Analyst Agent"
+        ? exhibit(
+            nextExhibit(),
+            "Bottom-up revenue build and scenario economics",
+            "Source: persisted financial reasoning output.",
+            `${bottomUpRevenueHtml(brief)}${scenarioHtml(brief)}`
+          )
+        : "";
+      const contribution = `${outputs}${financialEvidence}`;
+      return `
+        <h3>${escapeHtml(group.title)}</h3>
+        ${group.narrative ? `<p>${escapeHtml(group.narrative)}</p>` : ""}
+        ${contribution || `<div class="empty-state">No persisted live output was returned for this agent contribution.</div>`}
+      `;
+    })
+    .join("");
+}
+
+function dashboardScore(value: unknown): string {
+  const numeric = asNumber(value);
+  if (numeric == null) return text(value, "-");
+  const score = numeric <= 1 ? numeric * 5 : numeric;
+  return `${Math.max(0, Math.min(5, score)).toFixed(1)}/5`;
+}
+
+function strategicDashboardHtml(brief: StrategicBriefV4): string {
+  const frameworkScore = (key: string, ...paths: string[]) => {
+    const structured = asRecord(brief.framework_outputs?.[key]?.structured_data);
+    return paths.reduce<unknown>((value, path) => firstPresent(value, structured[path]), undefined);
+  };
+  const rows = [
+    ["Market Position", frameworkScore("porters_five_forces", "competitive_position_score", "score")],
+    ["Financial Health", firstPresent(asRecord(brief.balanced_scorecard?.financial).targets, frameworkScore("balanced_scorecard", "financial_score"))],
+    ["Growth Potential", frameworkScore("ansoff", "recommended_quadrant_score", "score")],
+    ["Risk Exposure", firstPresent(asRecord(brief.risk_analysis).overall_score, asRecord(brief.risk_analysis).risk_score)],
+    ["Competitive Strength", frameworkScore("porters_five_forces", "competitive_strength_score")],
+    ["ESG Readiness", frameworkScore("pestle", "esg_readiness_score")],
+    ["Innovation Capacity", frameworkScore("blue_ocean", "innovation_capacity_score")],
+    ["Global Expansion", frameworkScore("ansoff", "global_expansion_score")],
+  ];
+  return reportTable(["Dimension", "Score"], rows.map(([label, value]) => [label, dashboardScore(value)]));
+}
+
+function insightsHtml(brief: StrategicBriefV4): string {
+  const findings = topFindings(brief).slice(0, 8);
+  return findings.length > 0 ? list(findings) : `<div class="empty-state">No persisted strategic insights were returned.</div>`;
+}
+
+function recommendationsHtml(brief: StrategicBriefV4): string {
+  const rows = (brief.executive_recommendations || []).slice(0, 5).map((item) => [
+    item.priority,
+    item.recommendation,
+    item.expected_impact,
+    item.time_horizon,
+  ]);
+  return reportTable(["Priority", "Recommendation", "Expected impact", "Time horizon"], rows);
+}
+
+function roadmapByHorizonHtml(brief: StrategicBriefV4): string {
+  const phases = [
+    ["Immediate", /immediate|0\s*[-–]\s*6|0\s*to\s*6|phase\s*1/i],
+    ["Medium Term", /medium|6\s*[-–]\s*18|6\s*to\s*18|phase\s*2/i],
+    ["Long Term", /long|18\s*[-–]\s*36|18\s*to\s*36|phase\s*3/i],
+  ] as const;
+  return phases
+    .map(([label, pattern]) => {
+      const items = (brief.implementation_roadmap || []).filter((item) => pattern.test(item.phase || ""));
+      return `<h3>${escapeHtml(label)}</h3><p class="muted">${label === "Immediate" ? "0–6 Months" : label === "Medium Term" ? "6–18 Months" : "18–36 Months"}</p>${roadmapHtml({ ...brief, implementation_roadmap: items })}`;
+    })
+    .join("");
+}
+
+function traceabilityHtml(brief: StrategicBriefV4): string {
+  const rows = orderedFrameworkEntries(brief).map(([key, output]) => [
+    output.framework_name || key,
+    (output.citations || []).map((citation) => text(citation.id, typeof citation.url === "string" ? citation.url : "")).filter(Boolean).join(", "),
+    output.narrative,
+    `${Math.round((output.confidence_score || 0) * 100)}%`,
+  ]);
+  return reportTable(["Finding", "Supporting evidence", "Finding narrative", "Confidence"], rows);
+}
+
+function riskMatrixHtml(brief: StrategicBriefV4): string {
+  const risks = asRecordArray(asRecord(brief.risk_analysis).risk_register);
+  return tableFromRecords(risks, ["risk", "description", "probability", "impact", "mitigation", "response"]);
+}
+
+function opportunityMatrixHtml(brief: StrategicBriefV4): string {
+  const market = asRecord(brief.market_analysis);
+  const opportunities = asRecordArray(market.opportunities);
+  const swot = asRecord(brief.framework_outputs?.swot?.structured_data).opportunities;
+  const rows = opportunities.length > 0 ? opportunities : asRecordArray(swot);
+  return tableFromRecords(rows, ["opportunity", "description", "impact", "feasibility", "priority", "recommended_action"]);
+}
+
+function appendixHtml(brief: StrategicBriefV4, appendix: JsonRecord): string {
+  const metadataRows = [
+    ["Prompt version", firstPresent(asRecord(brief.evidence_contract).prompt_version, brief.report_metadata?.asis_version)],
+    ["Model version", firstPresent(asRecord(brief.evidence_provenance).model_version, asRecord(brief.evidence_contract).model_version)],
+    ["Retrieval provider", asRecord(brief.evidence_provenance).provider],
+    ["Verified source count", asRecord(brief.evidence_provenance).verified_source_count],
+    ["Token usage", compactValue(asRecord(appendix).token_usage)],
+  ];
+  return `
+    <h3>Agent logs</h3>${agentLogHtml(appendix)}
+    <h3>Retrieved documents</h3>${citationsHtml(brief)}
+    <h3>Execution and retrieval metadata</h3>${reportTable(["Field", "Value"], metadataRows)}
+    <h3>Collaboration trace</h3>${collaborationHtml(brief)}
+    <h3>Export validation and evidence contract</h3>${exportValidationHtml(brief)}
+    <p class="appendix-note">${escapeHtml(text(brief.report_metadata?.disclaimer, "This document is decision-support material and is not legal, tax, investment, or accounting advice."))}</p>
   `;
 }
 
@@ -644,19 +807,15 @@ export function buildPdfHtml({
 }): string {
   const colors = PDF_THEME_COLORS[theme] || PDF_THEME_COLORS.mckinsey;
   const context = asRecord(brief.context);
-  const meta = asRecord(brief.analysis_meta);
   const companyName = text(firstPresent(brief.report_metadata?.company_name, context.company_name, context.organisation), "Client organisation");
   const generatedAt = text(brief.report_metadata?.generated_at, new Date().toISOString());
   const generatedDate = Number.isNaN(Date.parse(generatedAt))
     ? generatedAt
     : new Date(generatedAt).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
   const query = text(firstPresent(brief.report_metadata?.query, context.query), "Strategic question not provided");
-  const subtitle = [context.sector || context.industry, context.geography].map((item) => text(item, "")).filter(Boolean).join(" | ");
   const confidence = normalizedConfidence(firstPresent(brief.decision_confidence, brief.overall_confidence));
   const qualityGrade = text(brief.quality_report?.overall_grade, "B");
   const recommendation = text(firstPresent(brief.recommendation, brief.decision_statement), "Recommendation pending");
-  const frameworkEntries = orderedFrameworkEntries(brief);
-  const redTeamSummary = redTeamCounts(brief);
   let exhibitNumber = 0;
   const nextExhibit = () => {
     exhibitNumber += 1;
@@ -664,31 +823,21 @@ export function buildPdfHtml({
   };
 
   const sections = [
-    "Executive summary",
-    "Decision statement",
-    "Market and financial model",
-    "Framework analysis",
-    "Strategic options",
-    "Implementation roadmap",
-    ...(meta.three_options || meta.build_vs_buy_verdict ? ["M&A and build-versus-buy"] : []),
-    "Appendix: sources and methodology",
+    "Executive Summary",
+    "Scenario Context",
+    "Evidence Base",
+    "Multi-Agent Analysis",
+    "Strategic Intelligence Dashboard",
+    "Strategic Insights",
+    "Executive Recommendations",
+    "Strategic Roadmap",
+    "Evidence Traceability Matrix",
+    "Risk Matrix",
+    "Opportunity Matrix",
+    "Benchmark Comparison Sheet",
+    "Citation Register",
+    "Appendices",
   ];
-
-  const frameworkSections = frameworkEntries
-    .map(([key, output], index) => {
-      const displayName = frameworkDisplayName(key);
-      const sectionTitle = text(brief.section_action_titles?.[key], displayName);
-      const title = findingTitle(output.exhibit_title, `${displayName} clarifies the main implication for the strategic decision`);
-      return `
-        <section class="report-section framework-section">
-          ${sectionHeader(`4.${index + 1}`, sectionTitle)}
-          <p class="section-lead">${escapeHtml(sentence(output.narrative, `${displayName} evidence supports the final recommendation.`))}</p>
-          ${exhibit(nextExhibit(), title, sourceForFramework(output), frameworkBody(key, output, brief))}
-          ${soWhatBox(brief.so_what_callouts?.[key] || output)}
-        </section>
-      `;
-    })
-    .join("");
 
   return `
   <!DOCTYPE html>
@@ -988,10 +1137,15 @@ export function buildPdfHtml({
           <div class="confidential">${escapeHtml(text(brief.report_metadata?.confidentiality_level, "Strictly confidential"))}</div>
         </div>
         <div class="cover-meta">
+          <div><strong>Report ID</strong><br />${escapeHtml(text(brief.report_metadata?.analysis_id, ""))}</div>
+          <div><strong>Scenario ID</strong><br />${escapeHtml(text(firstPresent(context.scenario_id, context.scenario), ""))}</div>
           <div><strong>Prepared for</strong><br />${escapeHtml(companyName)}</div>
           <div><strong>Date</strong><br />${escapeHtml(generatedDate)}</div>
-          <div><strong>Scope</strong><br />${escapeHtml(subtitle || "Strategic decision support")}</div>
-          <div><strong>System</strong><br />ASIS strategic intelligence platform</div>
+          <div><strong>Industry</strong><br />${escapeHtml(text(firstPresent(context.industry, context.sector), ""))}</div>
+          <div><strong>Country / Region</strong><br />${escapeHtml(text(firstPresent(context.country, context.geography), ""))}</div>
+          <div><strong>Report version</strong><br />${escapeHtml(text(brief.report_metadata?.template_version, ""))}</div>
+          <div><strong>Confidence level</strong><br />${confidence}%</div>
+          <div><strong>Executive classification</strong><br />${escapeHtml(text(brief.report_metadata?.confidentiality_level, ""))}</div>
         </div>
       </section>
 
@@ -1003,134 +1157,99 @@ export function buildPdfHtml({
       </section>
 
       <section class="report-section page-break">
-        ${sectionHeader("1", "Executive summary")}
-        <p class="section-lead">${escapeHtml(sentence(brief.executive_summary?.headline, "The analysis identifies a decision path that should be governed by evidence, execution risk, and capital discipline."))}</p>
+        ${sectionHeader("1", "Executive Summary")}
+        <p class="section-lead">${escapeHtml(brief.executive_summary?.headline || "")}</p>
         <div class="summary-grid">
           <div class="metric"><div class="metric-label">Decision confidence</div><div class="metric-value">${confidence}%</div></div>
+          <div class="metric"><div class="metric-label">Overall risk</div><div class="metric-value">${escapeHtml(text(brief.executive_summary?.critical_risk, ""))}</div></div>
           <div class="metric"><div class="metric-label">Quality grade</div><div class="metric-value">${escapeHtml(qualityGrade)}</div></div>
-          <div class="metric"><div class="metric-label">Frameworks used</div><div class="metric-value">${frameworkEntries.length}</div></div>
         </div>
-        <div class="key-findings">
-          ${topFindings(brief).map((finding) => `<div class="key-finding">${escapeHtml(finding)}</div>`).join("")}
-        </div>
-        <div class="priority-box">
-          <h3>Priority actions</h3>
-          ${list(priorityActions(brief))}
-        </div>
-        ${
-          meta.has_blocking_warnings
-            ? `<div class="priority-box"><h3>Pre-flight caveat</h3><p>Blocking warnings were acknowledged before execution and should be revisited before final commitment.</p></div>`
-            : ""
-        }
-        ${
-          meta.build_vs_buy_verdict
-            ? `<div class="priority-box"><h3>M&A verdict</h3><p>${escapeHtml(text(meta.build_vs_buy_verdict))}</p></div>`
-            : ""
-        }
+        ${reportTable(
+          ["Executive summary element", "Persisted finding"],
+          [
+            ["Strategic issue", brief.report_metadata?.query],
+            ["Key finding", [brief.executive_summary?.key_argument_1, brief.executive_summary?.key_argument_2].filter(Boolean).join(" ")],
+            ["Strategic opportunity", brief.executive_summary?.key_argument_3],
+            ["Final recommendation", recommendation],
+          ]
+        )}
       </section>
 
       <section class="report-section page-break">
-        ${sectionHeader("2", "Decision statement")}
-        <div class="decision-box">
-          <strong>${escapeHtml(brief.decision_statement)}</strong>
-          <p>${escapeHtml(sentence(brief.decision_rationale, "The recommendation is based on the current evidence base, financial logic, risk profile, and implementation feasibility."))}</p>
-        </div>
+        ${sectionHeader("2", "Scenario Context")}
+        <p class="section-lead">${escapeHtml(brief.decision_rationale || "")}</p>
+        ${scenarioContextHtml(brief)}
+      </section>
+
+      <section class="report-section page-break">
+        ${sectionHeader("3", "Evidence Base")}
+        <p class="section-lead">Every source below is a URL-verified live retrieval attached to this analysis.</p>
+        ${evidenceBaseHtml(brief)}
+      </section>
+
+      <section class="report-section page-break">
+        ${sectionHeader("4", "Multi-Agent Analysis")}
+        <p class="section-lead">The report preserves the specialist contributions and the final chairman synthesis as separate auditable outputs.</p>
+        ${multiAgentAnalysisHtml(brief, nextExhibit)}
+      </section>
+
+      <section class="report-section page-break">
+        ${sectionHeader("5", "Strategic Intelligence Dashboard")}
         ${exhibit(
           nextExhibit(),
-          findingTitle(brief.section_action_titles?.decision, "The recommended path is conditional on execution discipline and evidence quality"),
+          "Evidence-calibrated decision dimensions.",
           globalSource(brief),
-          reportTable(
-            ["Decision element", "Current position"],
-            [
-              ["Recommendation", recommendation],
-              ["Confidence", `${confidence}%`],
-              ["Evidence base", (brief.decision_evidence || []).join("; ")],
-              ["Quality grade", qualityGrade],
-              ["Red-team challenges", `${redTeamSummary.fatal} fatal; ${redTeamSummary.major} major`],
-            ]
-          )
+          strategicDashboardHtml(brief)
         )}
       </section>
 
       <section class="report-section page-break">
-        ${sectionHeader("3", "Market and financial model")}
-        <p class="section-lead">The commercial case is strongest when market sizing, bottom-up revenue build, and scenario economics point to the same strategic pathway.</p>
-        ${exhibit(
-          nextExhibit(),
-          findingTitle(brief.section_action_titles?.market_analysis, "Market sizing frames the reachable opportunity before strategic options are selected"),
-          globalSource(brief),
-          marketSizingHtml(brief)
-        )}
-        ${exhibit(
-          nextExhibit(),
-          "Bottom-up revenue build tests whether the ambition is commercially plausible.",
-          "Source: ASIS financial reasoning agent.",
-          bottomUpRevenueHtml(brief)
-        )}
-        ${exhibit(
-          nextExhibit(),
-          "Scenario economics define the capital-at-risk envelope for the recommendation.",
-          "Source: ASIS financial reasoning agent.",
-          scenarioHtml(brief)
-        )}
-      </section>
-
-      ${frameworkSections}
-
-      <section class="report-section page-break">
-        ${sectionHeader("5", "Strategic options")}
-        <p class="section-lead">Options are compared on strategic logic, capital intensity, value timing, and execution risk rather than on headline ambition alone.</p>
-        ${exhibit(
-          nextExhibit(),
-          "The preferred option must dominate alternatives after risk adjustment.",
-          "Source: ASIS strategic options and synthesis agents.",
-          strategicOptionsHtml(brief)
-        )}
-        ${soWhatBox(brief.so_what_callouts?.ansoff)}
+        ${sectionHeader("6", "Strategic Insights")}
+        ${insightsHtml(brief)}
       </section>
 
       <section class="report-section page-break">
-        ${sectionHeader("6", "Implementation roadmap")}
-        <p class="section-lead">The roadmap converts the recommendation into accountable workstreams, owners, metrics, and investment gates.</p>
-        ${exhibit(
-          nextExhibit(),
-          "Execution should be phased through measurable gates before full commitment.",
-          "Source: ASIS synthesis agent.",
-          roadmapHtml(brief)
-        )}
+        ${sectionHeader("7", "Executive Recommendations")}
+        ${recommendationsHtml(brief)}
       </section>
 
-      ${
-        meta.three_options || meta.build_vs_buy_verdict
-          ? `
-            <section class="report-section page-break">
-              ${sectionHeader("7", "M&A and build-versus-buy")}
-              <p class="section-lead">${escapeHtml(sentence(meta.build_vs_buy_verdict, "Build-versus-buy logic should be evaluated before committing to any acquisition path."))}</p>
-              ${exhibit(
-                nextExhibit(),
-                "Build, partner, and acquire options should be compared on risk-adjusted value rather than speed alone.",
-                "Source: ASIS acquisition-mode synthesis.",
-                strategicOptionsHtml(brief)
-              )}
-            </section>
-          `
-          : ""
-      }
+      <section class="report-section page-break">
+        ${sectionHeader("8", "Strategic Roadmap")}
+        ${roadmapByHorizonHtml(brief)}
+      </section>
 
       <section class="report-section page-break">
-        ${sectionHeader(meta.three_options || meta.build_vs_buy_verdict ? "8" : "7", "Appendix: sources and methodology")}
+        ${sectionHeader("9", "Evidence Traceability Matrix")}
+        ${traceabilityHtml(brief)}
+      </section>
+
+      <section class="report-section page-break">
+        ${sectionHeader("10", "Risk Matrix")}
+        ${riskMatrixHtml(brief)}
+        <p class="muted">Red-team invalidations: ${redTeamCounts(brief).fatal} fatal; ${redTeamCounts(brief).major} major.</p>
         <h3>Red-team challenges</h3>
         ${redTeamHtml(brief)}
-        <h3>Sources and citations</h3>
+      </section>
+
+      <section class="report-section page-break">
+        ${sectionHeader("11", "Opportunity Matrix")}
+        ${opportunityMatrixHtml(brief)}
+      </section>
+
+      <section class="report-section page-break">
+        ${sectionHeader("12", "Benchmark Comparison Sheet")}
+        <p class="section-lead">This section is intentionally blank during report generation and is completed during evaluation.</p>
+        ${reportTable(["Benchmark Component", "Present in ASIS", "Coverage (%)"], [])}
+      </section>
+
+      <section class="report-section page-break">
+        ${sectionHeader("13", "Citation Register")}
         ${citationsHtml(brief)}
-        <h3>Collaboration trace</h3>
-        ${collaborationHtml(brief)}
-        <h3>Agent execution log</h3>
-        ${agentLogHtml(appendix)}
-        <h3>Export validation and evidence contract</h3>
-        ${exportValidationHtml(brief)}
-        <p class="appendix-note">Methodology: ASIS uses an eight-stage specialist workflow covering orchestration, market intelligence, risk assessment, competitor analysis, geo-intelligence, financial reasoning, strategic options, and synthesis. Outputs are persisted as structured report data and require executive review before material decisions.</p>
-        <p class="appendix-note">${escapeHtml(text(brief.report_metadata?.disclaimer, "This document is decision-support material and is not legal, tax, investment, or accounting advice."))}</p>
+      </section>
+
+      <section class="report-section page-break">
+        ${sectionHeader("14", "Appendices")}
+        ${appendixHtml(brief, appendix)}
       </section>
     </body>
   </html>

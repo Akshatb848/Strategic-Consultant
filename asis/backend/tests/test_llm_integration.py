@@ -37,13 +37,21 @@ class TestGroqIntegration:
         use_groq = bool(settings.groq_api_key)
         assert use_groq, "Groq should be available when GROQ_API_KEY is set"
 
-    def test_demo_mode_disabled(self):
+    def test_demo_mode_disabled(self, monkeypatch):
         """Verify demo mode is disabled for production behavior."""
+        monkeypatch.setenv("ENVIRONMENT", "production")
+        monkeypatch.setenv("ASIS_DEMO_MODE", "false")
+        monkeypatch.setenv("ALLOW_LLM_FALLBACK", "false")
+        get_settings.cache_clear()
         settings = get_settings()
         assert not settings.demo_mode, "ASIS_DEMO_MODE must be false for production"
 
-    def test_allow_llm_fallback_disabled(self):
+    def test_allow_llm_fallback_disabled(self, monkeypatch):
         """Verify LLM fallback is disabled (fail hard on LLM errors)."""
+        monkeypatch.setenv("ENVIRONMENT", "production")
+        monkeypatch.setenv("ASIS_DEMO_MODE", "false")
+        monkeypatch.setenv("ALLOW_LLM_FALLBACK", "false")
+        get_settings.cache_clear()
         settings = get_settings()
         assert not settings.allow_llm_fallback, "ALLOW_LLM_FALLBACK must be false for production"
 

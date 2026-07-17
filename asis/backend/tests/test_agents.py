@@ -10,6 +10,7 @@ from asis.backend.agents.market_intel import MarketIntelAgent
 from asis.backend.agents.strategic_options import StrategicOptionsAgent
 from asis.backend.agents.synthesis_v4 import V4SynthesisAgent
 from asis.backend.config.settings import get_settings
+from asis.backend.schemas.v4 import StrategicBriefV4
 
 
 def _clear_settings_cache() -> None:
@@ -28,6 +29,8 @@ def test_llm_proxy_uses_direct_groq_when_proxy_is_absent(monkeypatch):
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.setenv("ALLOW_LLM_FALLBACK", "false")
     monkeypatch.setenv("GROQ_API_KEY", "test-groq-key")
+    monkeypatch.setenv("LITELLM_SSL_VERIFY", "C:/corp/ca-bundle.pem")
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     monkeypatch.delenv("LITELLM_PROXY_URL", raising=False)
     monkeypatch.delenv("LITELLM_MASTER_KEY", raising=False)
     _clear_settings_cache()
@@ -70,7 +73,230 @@ def test_llm_proxy_uses_direct_groq_when_proxy_is_absent(monkeypatch):
     assert captured["api_key"] == "test-groq-key"
     assert captured["api_base"] == "https://api.groq.com/openai/v1"
     assert captured["model"] == "llama-3.3-70b-versatile"
+    assert captured["ssl_verify"] == "C:/corp/ca-bundle.pem"
     assert payload["_token_usage"]["provider_mode"] == "groq_direct"
+
+
+def test_llm_proxy_preserves_native_groq_model_names(monkeypatch):
+    monkeypatch.setenv("ASIS_DEMO_MODE", "false")
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("ALLOW_LLM_FALLBACK", "false")
+    monkeypatch.setenv("GROQ_API_KEY", "test-groq-key")
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("LITELLM_PROXY_URL", raising=False)
+    monkeypatch.delenv("LITELLM_MASTER_KEY", raising=False)
+    _clear_settings_cache()
+
+    captured: dict[str, object] = {}
+
+    class MockResponse(dict):
+        usage = {"prompt_tokens": 8, "completion_tokens": 9}
+
+    def fake_completion(**kwargs):
+        captured.update(kwargs)
+        return MockResponse(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "confidence_score": 0.7,
+                                    "citations": [],
+                                }
+                            )
+                        }
+                    }
+                ]
+            }
+        )
+
+    monkeypatch.setattr("asis.backend.agents.llm_proxy.completion", fake_completion)
+
+    payload = llm_proxy.generate_json(
+        system_prompt="system",
+        user_prompt="user",
+        models=["llama-3.1-8b-instant"],
+        agent_id="market_intel",
+        analysis_id="analysis-456",
+    )
+
+    assert payload is not None
+    assert captured["model"] == "llama-3.1-8b-instant"
+    assert payload["_model_used"] == "llama-3.1-8b-instant"
+
+
+def test_llm_proxy_uses_openrouter_before_direct_groq(monkeypatch):
+    monkeypatch.setenv("ASIS_DEMO_MODE", "false")
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("ALLOW_LLM_FALLBACK", "false")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-openrouter-key")
+    monkeypatch.setenv("OPENROUTER_SITE_URL", "https://asis.example.com")
+    monkeypatch.setenv("OPENROUTER_APP_TITLE", "ASIS Test")
+    monkeypatch.setenv("GROQ_API_KEY", "test-groq-key")
+    monkeypatch.delenv("LITELLM_PROXY_URL", raising=False)
+    monkeypatch.delenv("LITELLM_MASTER_KEY", raising=False)
+    _clear_settings_cache()
+
+    captured: dict[str, object] = {}
+
+    class MockResponse(dict):
+        usage = {"prompt_tokens": 11, "completion_tokens": 12}
+
+    def fake_completion(**kwargs):
+        captured.update(kwargs)
+        return MockResponse(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "confidence_score": 0.77,
+                                    "citations": [],
+                                }
+                            )
+                        }
+                    }
+                ]
+            }
+        )
+
+    monkeypatch.setattr("asis.backend.agents.llm_proxy.completion", fake_completion)
+
+    payload = llm_proxy.generate_json(
+        system_prompt="system",
+        user_prompt="user",
+        models=["claude-sonnet-4-5"],
+        agent_id="market_intel",
+        analysis_id="analysis-openrouter",
+    )
+
+    assert payload is not None
+    assert captured["api_key"] == "test-openrouter-key"
+    assert captured["api_base"] == "https://openrouter.ai/api/v1"
+    assert captured["model"] == "openrouter/openai/gpt-oss-120b:free"
+    assert captured["extra_headers"] == {
+        "HTTP-Referer": "https://asis.example.com",
+        "X-OpenRouter-Title": "ASIS Test",
+    }
+    assert payload["_token_usage"]["provider_mode"] == "openrouter"
+    assert payload["_token_usage"]["cost_usd"] == 0.0
+
+
+def test_llm_proxy_falls_back_from_openrouter_to_groq(monkeypatch):
+    monkeypatch.setenv("ASIS_DEMO_MODE", "false")
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("ALLOW_LLM_FALLBACK", "false")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-openrouter-key")
+    monkeypatch.setenv("OPENROUTER_MODEL_FALLBACK", "openrouter/free")
+    monkeypatch.setenv("GROQ_API_KEY", "test-groq-key")
+    monkeypatch.delenv("LITELLM_PROXY_URL", raising=False)
+    monkeypatch.delenv("LITELLM_MASTER_KEY", raising=False)
+    _clear_settings_cache()
+
+    attempted_models: list[str] = []
+
+    class MockResponse(dict):
+        usage = {"prompt_tokens": 9, "completion_tokens": 10}
+
+    def fake_completion(**kwargs):
+        attempted_models.append(str(kwargs["model"]))
+        if str(kwargs["model"]).startswith("openrouter/"):
+            raise RuntimeError("openrouter unavailable")
+        return MockResponse(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "confidence_score": 0.72,
+                                    "citations": [],
+                                }
+                            )
+                        }
+                    }
+                ]
+            }
+        )
+
+    monkeypatch.setattr("asis.backend.agents.llm_proxy.completion", fake_completion)
+
+    payload = llm_proxy.generate_json(
+        system_prompt="system",
+        user_prompt="user",
+        models=["claude-haiku-4-5"],
+        agent_id="orchestrator",
+        analysis_id="analysis-openrouter-fallback",
+    )
+
+    assert payload is not None
+    assert attempted_models[0] == "openrouter/openai/gpt-oss-20b:free"
+    assert "openrouter/free" in attempted_models
+    assert "openrouter/openrouter/free" not in attempted_models
+    assert attempted_models[-1] == "llama-3.1-8b-instant"
+    assert payload["_token_usage"]["provider_mode"] == "groq_direct"
+
+
+def test_llm_proxy_retries_and_uses_extra_openrouter_free_models(monkeypatch):
+    monkeypatch.setenv("ASIS_DEMO_MODE", "false")
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("ALLOW_LLM_FALLBACK", "false")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-openrouter-key")
+    monkeypatch.setenv("OPENROUTER_MODEL_PRIMARY", "nvidia/nemotron-3-super-120b-a12b:free")
+    monkeypatch.setenv("OPENROUTER_MODEL_FALLBACK", "openrouter/free")
+    monkeypatch.setenv("OPENROUTER_EXTRA_FALLBACK_MODELS", "qwen/qwen3-next-80b-a3b-instruct:free,meta-llama/llama-3.3-70b-instruct:free")
+    monkeypatch.setenv("OPENROUTER_RETRY_COUNT", "2")
+    monkeypatch.setenv("OPENROUTER_RETRY_BACKOFF_SECONDS", "0")
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.delenv("LITELLM_PROXY_URL", raising=False)
+    monkeypatch.delenv("LITELLM_MASTER_KEY", raising=False)
+    _clear_settings_cache()
+
+    attempted_models: list[str] = []
+
+    class MockResponse(dict):
+        usage = {"prompt_tokens": 17, "completion_tokens": 19}
+
+    def fake_completion(**kwargs):
+        attempted_models.append(str(kwargs["model"]))
+        if kwargs["model"] != "openrouter/qwen/qwen3-next-80b-a3b-instruct:free":
+            raise RuntimeError("provider temporarily unavailable")
+        return MockResponse(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "confidence_score": 0.79,
+                                    "citations": [],
+                                }
+                            )
+                        }
+                    }
+                ]
+            }
+        )
+
+    monkeypatch.setattr("asis.backend.agents.llm_proxy.completion", fake_completion)
+
+    payload = llm_proxy.generate_json(
+        system_prompt="system",
+        user_prompt="user",
+        models=["claude-sonnet-4-5"],
+        agent_id="competitor_analysis",
+        analysis_id="analysis-openrouter-extra-fallbacks",
+    )
+
+    assert payload is not None
+    assert attempted_models.count("openrouter/nvidia/nemotron-3-super-120b-a12b:free") == 2
+    assert attempted_models.count("openrouter/free") == 2
+    assert "openrouter/qwen/qwen3-next-80b-a3b-instruct:free" in attempted_models
+    assert payload["_model_used"] == "openrouter/qwen/qwen3-next-80b-a3b-instruct:free"
+    assert payload["_token_usage"]["attempt"] == 1
+    assert payload["_token_usage"]["provider_mode"] == "openrouter"
 
 
 def test_live_agent_output_is_repaired_against_scaffold(monkeypatch):
@@ -156,6 +382,42 @@ def test_agents_fail_fast_without_live_provider_when_fallback_disabled(monkeypat
         )
 
 
+def test_base_agent_repairs_provider_exhaustion_when_live_provider_configured(monkeypatch):
+    monkeypatch.setenv("ASIS_DEMO_MODE", "false")
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("ALLOW_LLM_FALLBACK", "false")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-openrouter-key")
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.delenv("LITELLM_PROXY_URL", raising=False)
+    monkeypatch.delenv("LITELLM_MASTER_KEY", raising=False)
+    _clear_settings_cache()
+
+    def fake_generate_json(**_kwargs):
+        return None
+
+    monkeypatch.setattr("asis.backend.agents.base.llm_proxy.generate_json", fake_generate_json)
+
+    result = MarketIntelAgent().run(
+        {
+            "analysis_id": "market-provider-exhaustion",
+            "query": "Should Oracle expand sovereign cloud and AI analytics for India public-sector customers by 2030?",
+            "extracted_context": {
+                "company_name": "Oracle",
+                "sector": "Cloud Infrastructure",
+                "geography": "India",
+                "decision_type": "expand",
+            },
+        }
+    )
+
+    assert result.used_fallback is False
+    assert result.self_corrected is True
+    assert result.model_used == "asis-deterministic-market_intel-repair"
+    assert result.token_usage and result.token_usage["provider_mode"] == "deterministic_repair"
+    assert "no parseable JSON" in (result.correction_reason or "")
+    assert result.data["confidence_score"] > 0
+
+
 def test_synthesis_retries_with_compact_repair_prompt(monkeypatch):
     monkeypatch.setenv("ASIS_DEMO_MODE", "false")
     monkeypatch.setenv("ALLOW_LLM_FALLBACK", "false")
@@ -223,6 +485,63 @@ def test_synthesis_retries_with_compact_repair_prompt(monkeypatch):
     assert "required_fields" in prompts[1]
 
 
+def test_synthesis_repairs_provider_exhaustion_when_live_provider_configured(monkeypatch):
+    monkeypatch.setenv("ASIS_DEMO_MODE", "false")
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("ALLOW_LLM_FALLBACK", "false")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-openrouter-key")
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.delenv("LITELLM_PROXY_URL", raising=False)
+    monkeypatch.delenv("LITELLM_MASTER_KEY", raising=False)
+    _clear_settings_cache()
+
+    prompts: list[str] = []
+
+    def fake_generate_json(**kwargs):
+        prompts.append(str(kwargs["user_prompt"]))
+        return None
+
+    monkeypatch.setattr("asis.backend.agents.synthesis_v4.llm_proxy.generate_json", fake_generate_json)
+
+    result = V4SynthesisAgent().run(
+        {
+            "analysis_id": "synthesis-provider-exhaustion",
+            "query": "Should Oracle expand sovereign cloud and AI analytics for India public-sector customers by 2030?",
+            "company_context": {
+                "company_name": "Oracle",
+                "sector": "Cloud Infrastructure",
+                "geography": "India",
+                "decision_type": "expand",
+            },
+            "extracted_context": {
+                "company_name": "Oracle",
+                "sector": "Cloud Infrastructure",
+                "geography": "India",
+                "decision_type": "expand",
+            },
+            "market_intel_output": {},
+            "risk_assessment_output": {},
+            "competitor_analysis_output": {},
+            "geo_intel_output": {},
+            "financial_reasoning_output": {},
+            "strategic_options_output": {},
+            "framework_outputs": {},
+            "agent_collaboration_trace": [],
+            "quality_failures": [],
+            "quality_retry_count": 0,
+        }
+    )
+
+    StrategicBriefV4.model_validate(result.data)
+    assert result.used_fallback is False
+    assert result.self_corrected is True
+    assert result.model_used == "asis-deterministic-synthesis-repair"
+    assert result.token_usage and result.token_usage["provider_mode"] == "deterministic_repair"
+    assert "no parseable JSON" in (result.correction_reason or "")
+    assert len(prompts) == 3
+    assert "required_json_keys" in prompts[2]
+
+
 def test_large_investment_uses_benchmark_scenario_math_and_scaled_roadmap():
     query = "Should Acme Capital make a $1.5 billion acquisition of MittelTech in Germany over 5 years?"
     context = {
@@ -280,3 +599,97 @@ def test_synthesis_resets_generated_narrative_that_contradicts_decision():
     assert "do not proceed" not in merged["board_narrative"].lower()
     assert "recommend against" not in merged["board_narrative"].lower()
     assert merged["executive_summary"]["headline"] == merged["decision_statement"]
+
+
+def test_synthesis_repairs_invalid_live_schema_sections_without_fallback():
+    agent = V4SynthesisAgent()
+    scaffold = agent.local_result(
+        {
+            "analysis_id": "schema-repair",
+            "query": "Should Acme Advisory launch an AI governance practice in India through a partner-led model?",
+            "extracted_context": {
+                "company_name": "Acme Advisory",
+                "sector": "Consulting",
+                "geography": "India",
+                "decision_type": "enter",
+            },
+        }
+    )
+    generated = {
+        "decision_statement": "CONDITIONAL PROCEED - launch only after partner governance and compliance gates are proven.",
+        "board_narrative": "Live synthesis sees a credible growth option if partner controls and compliance gates are proven before scale.",
+        "recommendation": "Proceed conditionally after partner due diligence.",
+        "decision_rationale": "The opportunity is attractive, but execution should be gated by partner quality and compliance readiness.",
+        "framework_outputs": {
+            "pestle": {
+                "framework_name": "not_a_framework",
+                "agent_author": "market_intelligence",
+                "structured_data": {},
+                "narrative": "Malformed live framework payload.",
+                "confidence_score": 0.7,
+            }
+        },
+        "balanced_scorecard": {"financial": "not a perspective"},
+        "implementation_roadmap": [{"phase": 7, "actions": "not-a-list"}],
+    }
+
+    merged = agent._merge_generated_brief(scaffold, generated)
+    validated = StrategicBriefV4.model_validate(merged)
+
+    assert validated.board_narrative == generated["board_narrative"]
+    assert validated.recommendation == generated["recommendation"]
+    assert validated.framework_outputs["pestle"].framework_name.value == "pestle"
+    assert merged["_self_corrected"] is True
+    assert "framework_outputs" in merged["_correction_reason"]
+    assert "balanced_scorecard" in merged["_correction_reason"]
+
+
+def test_synthesis_run_persists_schema_repair_diagnostics(monkeypatch):
+    monkeypatch.setenv("ASIS_DEMO_MODE", "false")
+    monkeypatch.setenv("ALLOW_LLM_FALLBACK", "false")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-openrouter-key")
+    _clear_settings_cache()
+
+    def fake_generate_json(**_kwargs):
+        return {
+            "decision_statement": "CONDITIONAL PROCEED - launch only after partner and regulatory gates are met.",
+            "board_narrative": "Live synthesis supports a staged market entry with strong partner and regulatory gates.",
+            "framework_outputs": {
+                "pestle": {
+                    "framework_name": "invalid",
+                    "agent_author": "invalid",
+                    "structured_data": {},
+                    "narrative": "Invalid enum values should be repaired.",
+                    "confidence_score": 0.72,
+                }
+            },
+        }
+
+    monkeypatch.setattr("asis.backend.agents.synthesis_v4.llm_proxy.generate_json", fake_generate_json)
+
+    result = V4SynthesisAgent().run(
+        {
+            "analysis_id": "schema-repair-run",
+            "query": "Should Acme Advisory launch AI governance services in India in 2027?",
+            "extracted_context": {
+                "company_name": "Acme Advisory",
+                "sector": "Consulting",
+                "geography": "India",
+                "decision_type": "enter",
+            },
+            "market_intel_output": {},
+            "risk_assessment_output": {},
+            "competitor_analysis_output": {},
+            "geo_intel_output": {},
+            "financial_reasoning_output": {},
+            "strategic_options_output": {},
+            "framework_outputs": {},
+            "agent_collaboration_trace": [],
+        }
+    )
+
+    assert result.used_fallback is False
+    assert result.self_corrected is True
+    assert result.correction_reason
+    assert "framework_outputs" in result.correction_reason
+    assert StrategicBriefV4.model_validate(result.data)

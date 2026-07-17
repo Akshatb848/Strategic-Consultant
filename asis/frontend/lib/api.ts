@@ -225,6 +225,15 @@ export interface ReportMetadata {
   asis_version: string;
   confidentiality_level: string;
   disclaimer: string;
+  template_version?: string;
+  section_order?: string[];
+}
+
+export interface ExecutiveRecommendation {
+  priority: string;
+  recommendation: string;
+  expected_impact: string;
+  time_horizon: string;
 }
 
 export interface AnalysisMeta {
@@ -246,6 +255,7 @@ export interface StrategicBriefV4 {
   decision_evidence: string[];
   framework_outputs: Record<string, FrameworkOutput>;
   executive_summary: ExecutiveSummary;
+  executive_recommendations?: ExecutiveRecommendation[];
   section_action_titles: Record<string, string>;
   so_what_callouts: Record<string, SoWhatCallout>;
   agent_collaboration_trace: AgentCollaborationEvent[];
@@ -271,6 +281,7 @@ export interface StrategicBriefV4 {
   analysis_meta?: AnalysisMeta;
   evidence_contract?: JsonMap;
   export_validation?: JsonMap;
+  evidence_provenance?: JsonMap;
 }
 
 export interface DecisionPayload {
@@ -300,6 +311,10 @@ export interface Analysis {
   decision_recommendation?: string | null;
   executive_summary?: string | null;
   error_message?: string | null;
+  quality_grade?: "A" | "B" | "C" | "FAIL" | string | null;
+  quality_blocking?: boolean;
+  quality_flags?: string[];
+  is_board_ready?: boolean;
   board_narrative?: string | null;
   duration_seconds?: number | null;
   total_cost_usd?: number | null;

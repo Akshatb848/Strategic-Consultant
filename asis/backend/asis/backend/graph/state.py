@@ -37,6 +37,7 @@ class V4PipelineState(TypedDict, total=False):
     query: str
     company_context: dict[str, Any]
     extracted_context: dict[str, Any]
+    evidence_base: list[dict[str, Any]]
     orchestrator_output: dict[str, Any]
     market_intel_output: dict[str, Any]
     market_intel_confidence: float
