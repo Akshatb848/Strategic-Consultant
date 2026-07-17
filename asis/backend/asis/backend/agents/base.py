@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from abc import ABC, abstractmethod
+from abc import ABC
 import json
 from time import perf_counter
 
@@ -156,7 +156,7 @@ class BaseAgent(ABC):
     def resolve_models(self) -> list[str]:
         settings = get_settings()
         if isinstance(self.llm_model, list):
-            return self.llm_model
+            return self._dedupe_models(self.llm_model)
         if isinstance(self.llm_model, str):
             return [self.llm_model]
         profile = settings.agent_model_profiles.get(self.agent_id)
@@ -172,6 +172,14 @@ class BaseAgent(ABC):
         return deduped
 
     @staticmethod
+    def _dedupe_models(models: list[str]) -> list[str]:
+        deduped: list[str] = []
+        for model in models:
+            if model and model not in deduped:
+                deduped.append(model)
+        return deduped
+
+    @staticmethod
     def _has_live_provider_config(settings) -> bool:
         return bool(
             (settings.litellm_proxy_url and settings.litellm_master_key)
@@ -179,7 +187,6 @@ class BaseAgent(ABC):
             or settings.groq_api_key
         )
 
-    @abstractmethod
     def local_result(self, state: PipelineState) -> dict:
         raise NotImplementedError
 

@@ -131,7 +131,7 @@ function heuristicEnrichedContext(problemStatement: string): EnrichedContext {
 
 async function llmEnrichedContext(problemStatement: string): Promise<EnrichedContext | null> {
   if (!env.GROQ_API_KEY) {
-    return null;
+    throw new Error('GROQ_API_KEY is not configured; problem validation requires live Groq output.');
   }
 
   try {
@@ -172,7 +172,9 @@ Problem statement: "${problemStatement}"`,
       response.choices?.[0]?.message?.content || ''
     );
 
-    if (!parsed) return null;
+    if (!parsed) {
+      throw new Error('Problem validation LLM returned invalid JSON.');
+    }
 
     return {
       organisation: parsed.organisation || '',
@@ -200,8 +202,8 @@ Problem statement: "${problemStatement}"`,
           : null,
     };
   } catch (error: any) {
-    logger.warn({ error: error.message }, 'Problem validation context extraction fell back to heuristics');
-    return null;
+    logger.error({ error: error.message }, 'Problem validation LLM context extraction failed');
+    throw new Error('Live Groq problem validation failed.');
   }
 }
 
@@ -313,7 +315,7 @@ export async function validateProblemStatement(problemStatement: string): Promis
   const llm = await llmEnrichedContext(problemStatement);
   const enrichedContext = {
     ...heuristic,
-    ...(llm || {}),
+    ...llm,
     named_competitors: (llm?.named_competitors?.length ? llm.named_competitors : heuristic.named_competitors).slice(0, 6),
   };
 

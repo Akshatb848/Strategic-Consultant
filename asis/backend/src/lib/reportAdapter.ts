@@ -1,4 +1,5 @@
-import type { AgentLog, Analysis } from '@prisma/client';
+type AgentLog = Record<string, any>;
+type Analysis = Record<string, any>;
 
 type AnalysisWithLogs = Analysis & {
   agentLogs?: AgentLog[];

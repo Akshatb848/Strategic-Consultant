@@ -64,6 +64,8 @@ class LiteLLMProxy:
             settings.litellm_model_llama_governance: settings.groq_model_primary,
         }
         if candidate in explicit:
+            if agent_id == "orchestrator" and candidate == settings.litellm_model_primary:
+                return settings.groq_model_fast
             return explicit[candidate]
         lowered = candidate.lower()
         native_groq_models = {

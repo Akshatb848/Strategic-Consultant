@@ -1,17 +1,15 @@
 import { Router, type NextFunction, type Request, type Response } from 'express';
-import Anthropic from '@anthropic-ai/sdk';
 import { z } from 'zod';
 
 import { runPipeline } from '../agents/pipeline';
 import { requireAuth } from '../lib/auth';
 import { prisma } from '../lib/database';
-import { isLiveLLMConfigured, isLlmFallbackAllowed, robustJsonParse } from '../lib/llmClient';
+import { callLLMWithRetry, isLiveLLMConfigured, isLlmFallbackAllowed } from '../lib/llmClient';
 import { log } from '../lib/logger';
 import { transformAnalysisRecord } from '../lib/reportAdapter';
 import { registerSseClient } from '../lib/socketio';
 
 const router = Router();
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || '' });
 
 const createAnalysisSchema = z
   .object({
@@ -39,33 +37,21 @@ function singleParam(value: unknown): string {
 }
 
 async function extractProblemContext(problemStatement: string): Promise<ExtractedProblemContext> {
-  try {
-    const result = await anthropic.messages.create({
-      model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-20250514',
-      max_tokens: 200,
-      messages: [
-        {
-          role: 'user',
-          content: `Extract from this problem: return JSON with org, industry, geography, decision_type fields. Problem: "${problemStatement}"`,
-        },
-      ],
-    });
-    const text = result.content[0]?.type === 'text' ? result.content[0].text : '';
-    const parsed = robustJsonParse<Record<string, unknown>>(text);
-    return {
-      organisationContext: typeof parsed?.organisation === 'string' ? parsed.organisation : '',
-      industryContext: typeof parsed?.industry === 'string' ? parsed.industry : '',
-      geographyContext: typeof parsed?.geography === 'string' ? parsed.geography : '',
-      decisionType: typeof parsed?.decision_type === 'string' ? parsed.decision_type : '',
-    };
-  } catch {
-    return {
-      organisationContext: '',
-      industryContext: '',
-      geographyContext: '',
-      decisionType: '',
-    };
-  }
+  const result = await callLLMWithRetry<Record<string, unknown>>(
+    'Extract structured strategic context. Return JSON only.',
+    `Extract from this problem and return JSON with organisation, industry, geography, and decision_type fields. Problem: "${problemStatement}"`,
+    [],
+    {},
+    'strategist',
+    2
+  );
+  const parsed = result.data;
+  return {
+    organisationContext: typeof parsed.organisation === 'string' ? parsed.organisation : '',
+    industryContext: typeof parsed.industry === 'string' ? parsed.industry : '',
+    geographyContext: typeof parsed.geography === 'string' ? parsed.geography : '',
+    decisionType: typeof parsed.decision_type === 'string' ? parsed.decision_type : '',
+  };
 }
 
 router.post('/', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
@@ -85,7 +71,7 @@ router.post('/', requireAuth, async (req: Request, res: Response, next: NextFunc
     if (!isLiveLLMConfigured() && !isLlmFallbackAllowed()) {
       res.status(503).json({
         code: 'LLM_UNAVAILABLE',
-        message: 'Live analysis is temporarily unavailable because the Anthropic provider is not configured.',
+        message: 'Live analysis is temporarily unavailable because the Groq provider is not configured.',
       });
       return;
     }
@@ -155,7 +141,7 @@ router.get('/', requireAuth, async (req: Request, res: Response) => {
   ]);
 
   res.json({
-    analyses: analyses.map((analysis) => transformAnalysisRecord(analysis)),
+    analyses: analyses.map((analysis: any) => transformAnalysisRecord(analysis)),
     total,
   });
 });

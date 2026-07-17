@@ -208,7 +208,7 @@ router.get(
         validationWarnings: safeJsonParse(analysis.validationWarnings),
         threeOptionsData: safeJsonParse(analysis.threeOptionsData),
         confidenceBreakdown: safeJsonParse(analysis.confidenceBreakdown),
-        agentLogs: analysis.agentLogs.map((log) => ({
+        agentLogs: analysis.agentLogs.map((log: { parsedOutput: unknown }) => ({
           ...log,
           parsedOutput: safeJsonParse(log.parsedOutput),
         })),

@@ -130,18 +130,18 @@ Calculate weighted confidence and verify all claims. Return ONLY valid JSON.
   // Primary CoVe verification
   const result = await callLLMWithRetry<CoVeOutput>(COVE_SYSTEM_PROMPT, allData, ['verification_checks', 'logic_consistent', 'recommendation', 'overall_verification_score'], coveFallback);
 
-  // LLM-judge cross-check (secondary, non-blocking)
-  let judgeScore = 75;
-  let qualityGrade: 'A' | 'B' | 'C' | 'FAIL' = 'B';
-  let judgeDimensions = { evidence_quality: 75, logical_consistency: 75, specificity: 70, financial_grounding: 72, actionability: 70 };
+  // LLM-judge cross-check. This is strict so quality scoring never degrades
+  // into a static placeholder when live model output is unavailable.
+  let judgeScore = 0;
+  let qualityGrade: 'A' | 'B' | 'C' | 'FAIL' = 'FAIL';
+  let judgeDimensions = { evidence_quality: 0, logical_consistency: 0, specificity: 0, financial_grounding: 0, actionability: 0 };
   let judgeAdjustment = 0;
 
-  try {
-    const marketIntelData = input.upstreamResults?.marketIntelData as any;
-    const riskData = input.upstreamResults?.riskData as any;
-    const quantData = input.upstreamResults?.quantData as any;
+  const marketIntelData = input.upstreamResults?.marketIntelData as any;
+  const riskData = input.upstreamResults?.riskData as any;
+  const quantData = input.upstreamResults?.quantData as any;
 
-    const judgeInput = `
+  const judgeInput = `
 STRATEGIC ANALYSIS QUALITY ASSESSMENT:
 
 Market Intelligence Key Findings: ${JSON.stringify(marketIntelData?.key_findings || [])}
@@ -153,30 +153,34 @@ Quant CFO Recommendation: ${quantData?.cfo_recommendation || ''}
 Evaluate quality. Return ONLY valid JSON.
     `;
 
-    const judgeResult = await callLLMWithRetry(
-      LLM_JUDGE_PROMPT,
-      judgeInput,
-      ['overall_judge_score', 'quality_grade'],
-      { evidence_quality: 75, logical_consistency: 75, specificity: 70, financial_grounding: 72, actionability: 70, overall_judge_score: 74, quality_grade: 'B', judge_reasoning: 'Analysis meets baseline quality standards.' }
-    );
+  const judgeResult = await callLLMWithRetry(
+    LLM_JUDGE_PROMPT,
+    judgeInput,
+    ['overall_judge_score', 'quality_grade'],
+    { evidence_quality: 0, logical_consistency: 0, specificity: 0, financial_grounding: 0, actionability: 0, overall_judge_score: 0, quality_grade: 'FAIL', judge_reasoning: '' },
+    'cove'
+  );
 
-    const jd = judgeResult.data as any;
-    judgeScore = jd.overall_judge_score || 74;
-    qualityGrade = jd.quality_grade || 'B';
-    judgeDimensions = { evidence_quality: jd.evidence_quality || 75, logical_consistency: jd.logical_consistency || 75, specificity: jd.specificity || 70, financial_grounding: jd.financial_grounding || 72, actionability: jd.actionability || 70 };
+  const jd = judgeResult.data as any;
+  judgeScore = jd.overall_judge_score;
+  qualityGrade = jd.quality_grade;
+  judgeDimensions = {
+    evidence_quality: jd.evidence_quality,
+    logical_consistency: jd.logical_consistency,
+    specificity: jd.specificity,
+    financial_grounding: jd.financial_grounding,
+    actionability: jd.actionability,
+  };
 
-    // Apply judge-based adjustments
-    if (judgeScore > 80) judgeAdjustment += 2;
-    if (judgeScore < 60) judgeAdjustment -= 5;
-    if (qualityGrade === 'A') judgeAdjustment += 3;
-    if (qualityGrade === 'FAIL') {
-      judgeAdjustment -= 10;
-      if (result.data.recommendation === 'PASS') {
-        (result.data as any).recommendation = 'CONDITIONAL_PASS';
-      }
+  // Apply judge-based adjustments
+  if (judgeScore > 80) judgeAdjustment += 2;
+  if (judgeScore < 60) judgeAdjustment -= 5;
+  if (qualityGrade === 'A') judgeAdjustment += 3;
+  if (qualityGrade === 'FAIL') {
+    judgeAdjustment -= 10;
+    if (result.data.recommendation === 'PASS') {
+      (result.data as any).recommendation = 'CONDITIONAL_PASS';
     }
-  } catch {
-    // Judge failure is non-blocking — CoVe still completes with primary verification
   }
 
   const finalData: CoVeOutput = {

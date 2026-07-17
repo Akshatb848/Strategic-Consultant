@@ -65,7 +65,7 @@ router.get('/', requireAuth, async (req: Request, res: Response) => {
       prisma.analysis.count({ where: { userId, status: 'completed' } }),
     ]);
 
-    const reports = analyses.map((analysis) => {
+    const reports = analyses.map((analysis: any) => {
       const transformed = transformAnalysisRecord(analysis);
       return {
         ...transformed,

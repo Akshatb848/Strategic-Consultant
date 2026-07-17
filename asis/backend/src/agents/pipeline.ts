@@ -1,5 +1,3 @@
-import { Prisma } from '@prisma/client';
-
 import { prisma } from '../lib/database';
 import { log } from '../lib/logger';
 import { emitPipelineEvent, emitAnalysisComplete } from '../lib/socketio';
@@ -48,7 +46,7 @@ async function getPastAnalysisContext(analysisId: string, organisationId: string
       select: { problemStatement: true, decisionRecommendation: true, overallConfidence: true, executiveSummary: true },
     });
     if (!past.length) return '';
-    const lines = past.map((p, i) =>
+    const lines = past.map((p: { problemStatement: string; decisionRecommendation?: string | null; overallConfidence?: number | null; executiveSummary?: string | null }, i: number) =>
       `Past Analysis ${i + 1}: "${p.problemStatement}" → ${p.decisionRecommendation || 'HOLD'} (confidence: ${p.overallConfidence || 0}%)\nSummary: ${(p.executiveSummary || '').slice(0, 200)}`
     );
     return `ORGANIZATIONAL MEMORY (from ${past.length} past analyses):\n${lines.join('\n\n')}\n`;
@@ -84,7 +82,7 @@ async function saveAgentResult(analysisId: string, agentId: string, result: Agen
       inputTokens: result.tokenUsage.input,
       outputTokens: result.tokenUsage.output,
       durationMs: result.durationMs,
-      parsedOutput: result.data as Prisma.InputJsonValue,
+      parsedOutput: result.data as any,
     }
   });
 }

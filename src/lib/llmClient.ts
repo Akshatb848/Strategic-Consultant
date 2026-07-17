@@ -8,14 +8,27 @@ let groqClient: OpenAI | null = null;
 function getClient(): OpenAI {
   if (!groqClient) {
     if (!env.GROQ_API_KEY) {
-      logger.warn('⚠️  GROQ_API_KEY not set — agents will use fallback data');
+      throw new Error('GROQ_API_KEY is not configured and LLM fallback is disabled.');
     }
     groqClient = new OpenAI({
-      apiKey: env.GROQ_API_KEY || 'dummy-key-for-fallback',
+      apiKey: env.GROQ_API_KEY,
       baseURL: env.GROQ_BASE_URL || env.GROQ_API_BASE || 'https://api.groq.com/openai/v1',
     });
   }
   return groqClient;
+}
+
+function parseBooleanEnv(value: string | undefined, defaultValue: boolean): boolean {
+  if (value == null || value.trim() === '') return defaultValue;
+  return ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase());
+}
+
+export function isLiveLLMConfigured(): boolean {
+  return Boolean(env.GROQ_API_KEY?.trim());
+}
+
+export function isLlmFallbackAllowed(): boolean {
+  return parseBooleanEnv(env.ALLOW_LLM_FALLBACK, false);
 }
 
 // ── Model routing — each agent gets the best model for its task ─────────────
@@ -89,14 +102,14 @@ export function validateRequiredFields(
   );
 }
 
-// ── Main LLM call with retry + fallback ─────────────────────────────────────
+// ── Main Groq LLM call with retry and fail-hard defaults ────────────────────
 export async function callLLMWithRetry<T extends Record<string, unknown>>(
   systemPrompt: string,
   userMessage: string,
   requiredFields: string[],
   fallback: T,
   agentId: string = 'strategist',
-  maxAttempts: number = 3
+  maxAttempts?: number
 ): Promise<{
   data: T;
   usedFallback: boolean;
@@ -105,27 +118,46 @@ export async function callLLMWithRetry<T extends Record<string, unknown>>(
   durationMs: number;
 }> {
   const startTime = Date.now();
+  const fallbackAllowed = isLlmFallbackAllowed();
 
-  // If no API key, use fallback immediately
-  if (!env.GROQ_API_KEY) {
-    logger.warn('No GROQ_API_KEY — using structured fallback');
-    return {
-      data: fallback,
-      usedFallback: true,
-      attempts: 0,
-      tokenUsage: { input: 0, output: 0 },
-      durationMs: Date.now() - startTime,
-    };
+  if (!isLiveLLMConfigured()) {
+    if (fallbackAllowed) {
+      logger.warn('No GROQ_API_KEY and ALLOW_LLM_FALLBACK is enabled; using structured fallback');
+      return {
+        data: fallback,
+        usedFallback: true,
+        attempts: 0,
+        tokenUsage: { input: 0, output: 0 },
+        durationMs: Date.now() - startTime,
+      };
+    }
+    throw new Error('GROQ_API_KEY is not configured and LLM fallback is disabled.');
   }
 
   const client = getClient();
   const model = getModelForAgent(agentId);
+  const retries = maxAttempts ?? env.LLM_MAX_RETRIES;
+  const timeoutMs = env.LLM_REQUEST_TIMEOUT || 30000;
+  const baseMs = env.LLM_RETRY_BASE_MS || 500;
+  const jitterPct = Math.max(0, Math.min(1, env.LLM_RETRY_JITTER_PCT || 0.2));
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+  function backoffDelay(attempt: number) {
+    const delay = baseMs * Math.pow(2, attempt - 1);
+    const jitter = 1 + (Math.random() * 2 - 1) * jitterPct; // between (1-jitterPct) and (1+jitterPct)
+    return Math.max(0, Math.floor(delay * jitter));
+  }
+
+  function timeoutPromise<Tp>(ms: number, p: Promise<Tp>) {
+    return Promise.race([
+      p,
+      new Promise<Tp>((_, rej) => setTimeout(() => rej(new Error('LLM request timed out')), ms)),
+    ]);
+  }
+
+  for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       logger.info({ agent: agentId, model, attempt }, `LLM call starting`);
-
-      const response = await client.chat.completions.create({
+      const createPromise = client.chat.completions.create({
         model,
         max_tokens: env.LLM_MAX_TOKENS,
         temperature: 0.3,
@@ -137,6 +169,8 @@ export async function callLLMWithRetry<T extends Record<string, unknown>>(
           },
         ],
       });
+
+      const response = await timeoutPromise(timeoutMs, createPromise as Promise<any>);
 
       const rawText = response.choices?.[0]?.message?.content || '';
 
@@ -158,35 +192,44 @@ export async function callLLMWithRetry<T extends Record<string, unknown>>(
         };
       }
 
-      if (attempt < maxAttempts) {
-        logger.warn(
-          { attempt, fields: requiredFields },
-          'Agent schema validation failed, retrying...'
-        );
-        await sleep(attempt * 800);
+      if (attempt < retries) {
+        logger.warn({ attempt, fields: requiredFields }, 'Agent schema validation failed, retrying...');
+        await sleep(backoffDelay(attempt));
       }
     } catch (err: any) {
       // Handle rate limiting (429) with backoff
       if (err?.status === 429) {
-        const retryAfter = parseInt(err?.headers?.['retry-after'] || '10', 10);
+        const retryAfterRaw =
+          err?.headers?.['retry-after'] || err?.response?.headers?.['retry-after'] || err?.response?.headers?.get?.('retry-after');
+        const retryAfter = parseInt(retryAfterRaw || '10', 10);
         logger.warn({ attempt, retryAfter }, 'Rate limited by Groq — waiting...');
         await sleep(retryAfter * 1000);
         continue;
       }
-      logger.error({ attempt, error: err.message }, 'LLM call error');
-      if (attempt < maxAttempts) await sleep(attempt * 1000);
+
+      // Timeout error thrown by our timeoutPromise
+      if (err?.message && err.message.includes('timed out')) {
+        logger.warn({ attempt }, 'LLM request timed out');
+      } else {
+        logger.error({ attempt, error: err?.message || String(err) }, 'LLM call error');
+      }
+
+      if (attempt < retries) await sleep(backoffDelay(attempt));
     }
   }
 
-  // All attempts failed — use structured fallback
-  logger.warn({ agentId }, 'All LLM attempts failed, using structured fallback');
-  return {
-    data: fallback,
-    usedFallback: true,
-    attempts: maxAttempts,
-    tokenUsage: { input: 0, output: 0 },
-    durationMs: Date.now() - startTime,
-  };
+  if (fallbackAllowed) {
+    logger.warn({ agentId }, 'All LLM attempts failed and ALLOW_LLM_FALLBACK is enabled; using structured fallback');
+    return {
+      data: fallback,
+      usedFallback: true,
+      attempts: maxAttempts,
+      tokenUsage: { input: 0, output: 0 },
+      durationMs: Date.now() - startTime,
+    };
+  }
+
+  throw new Error(`Groq live response failed validation after ${maxAttempts} attempt(s); fallback is disabled.`);
 }
 
 function sleep(ms: number): Promise<void> {

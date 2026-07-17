@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { prisma } from '../db/client.js';
 import { env } from '../config/env.js';
+import { isLiveLLMConfigured, isLlmFallbackAllowed } from '../lib/llmClient.js';
 
 const router = Router();
 
@@ -23,6 +24,9 @@ router.get('/', async (_req: Request, res: Response) => {
     uptime: Math.floor(process.uptime()),
     timestamp: new Date().toISOString(),
     database: dbStatus,
+    llmProvider: 'groq',
+    groqConfigured: isLiveLLMConfigured(),
+    llmFallbackAllowed: isLlmFallbackAllowed(),
     responseTimeMs: Date.now() - start,
   });
 });
