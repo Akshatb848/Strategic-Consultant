@@ -60,3 +60,20 @@ async def register_user(client: httpx.AsyncClient, email: str = "user@example.co
     assert response.status_code == 201, response.text
     token = response.json()["access_token"]
     return {"Authorization": f"Bearer {token}"}
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "requires_groq: test needs a real GROQ_API_KEY (live LLM call or credential check); "
+        "skipped when the variable is not set",
+    )
+
+
+def pytest_collection_modifyitems(config, items):
+    if os.getenv("GROQ_API_KEY"):
+        return
+    skip = pytest.mark.skip(reason="GROQ_API_KEY not set; live-LLM test skipped")
+    for item in items:
+        if "requires_groq" in item.keywords:
+            item.add_marker(skip)

@@ -1,80 +1,179 @@
-# ASIS v4.0
+# ASIS – Strategic Intelligence Platform
 
-ASIS is an enterprise strategic decision intelligence platform. It accepts a board-level question plus company context, runs an 8-agent LangGraph workflow, and returns a cited `StrategicBriefV4` with a decision statement, framework-grounded evidence, collaboration provenance, implementation roadmap, and enterprise PDF export.
+**Ask a board-level strategy question; an 8-agent LangGraph pipeline returns a framework-grounded, cited decision brief — streamed live to a Next.js dashboard.**
 
-## Active Application Surface
+[![CI](https://github.com/Akshatb848/Strategic-Consultant/actions/workflows/ci.yml/badge.svg)](https://github.com/Akshatb848/Strategic-Consultant/actions/workflows/ci.yml)
+[![Tests & Quality Checks](https://github.com/Akshatb848/Strategic-Consultant/actions/workflows/tests.yml/badge.svg)](https://github.com/Akshatb848/Strategic-Consultant/actions/workflows/tests.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)
+![Node 20](https://img.shields.io/badge/node-20-339933.svg)
+![Next.js 15](https://img.shields.io/badge/Next.js-15-black.svg)
+![FastAPI](https://img.shields.io/badge/FastAPI-009688.svg)
+![LangGraph](https://img.shields.io/badge/LangGraph-multi--agent-purple.svg)
 
-- `asis/backend` - Python 3.11, FastAPI, LangGraph, SQLAlchemy, Celery, LiteLLM
-- `asis/frontend` - Next.js 14 App Router, in-memory auth, SSE-driven analysis detail view
-- `asis/n8n/workflows` - automation exports for scheduled briefs, webhooks, delivery, and alert monitoring
-- `asis/infra` - Cloud Build and Terraform deployment assets
+<p align="center">
+  <img src="docs/screenshots/landing.png" alt="ASIS landing page" width="100%">
+</p>
 
-Legacy root-level `src/`, `frontend/`, and other TypeScript draft assets are treated as reference material, not the canonical production stack.
+> **About the screenshots.** Every image below was captured by running this repository locally (FastAPI backend + Next.js frontend) and driving it headlessly with Playwright. No LLM API keys were configured, so the backend ran in **demo mode** (`ASIS_DEMO_MODE=true`): the agents return structured fallback output and the UI says so with a *Template mode* banner. The figures in the brief are illustrative placeholders, not live model reasoning.
+
+| Live agent progress (SSE) | Decision brief (demo mode) |
+|---|---|
+| ![8-agent progress view](docs/screenshots/analysis-progress.png) | ![Decision brief with template-mode banner](docs/screenshots/decision-brief.png) |
+| **Agent collaboration graph** | **Framework exhibits** |
+| ![Agent collaboration graph and status panel](docs/screenshots/agent-collaboration.png) | ![PESTLE exhibit and framework tabs](docs/screenshots/framework-exhibits.png) |
+
+---
+
+## What it does
+
+ASIS (Autonomous Strategic Intelligence System) takes a strategic question plus company context — e.g. *"Should Apex Strategy Group enter the Indian fintech market through a phased partnership?"* — and runs it through eight specialised agents. The output is a validated `StrategicBriefV4`: a decision statement (PROCEED / CONDITIONAL / DO NOT PROCEED style), confidence, executive summary, eight management-framework exhibits, an agent-collaboration trace, an implementation roadmap and an exportable PDF report.
+
+## Key features
+
+- **8-agent LangGraph pipeline** — Orchestrator → four parallel specialists (Market Intelligence, Risk Assessment, Competitor Analysis, Geo Intelligence) → Financial Reasoning → Strategic Options → Synthesis.
+- **Framework-grounded output** — PESTLE, Porter's Five Forces, SWOT, Ansoff Matrix, BCG Matrix, McKinsey 7S, Blue Ocean Canvas and Balanced Scorecard, each with citations/provenance.
+- **Live progress over Server-Sent Events** — `GET /api/v1/analysis/{id}/events` streams per-agent status to the dashboard.
+- **Agent collaboration graph** — typed cross-agent handoffs recorded in shared state and rendered as a replayable graph.
+- **Provider-agnostic LLM layer** — all model calls go through LiteLLM aliases (Groq, Anthropic, Vertex AI Gemini and OpenAI-compatible open models are configured), with timeouts, retry back-off and an explicit demo/fallback mode.
+- **Quality & evaluation** — quality grading and a deterministic heuristic evaluation module (`asis/backend/asis/backend/evaluation`).
+- **Production plumbing** — JWT auth with refresh tokens (plus Google/GitHub OAuth routes), SQLAlchemy + Alembic, Celery/Redis workers or inline execution, rate limiting (slowapi), structured logging (structlog), optional Langfuse tracing.
+- **Deployable** — Dockerfiles and Docker Compose, Terraform for GCP (Cloud Run, Cloud SQL, Memorystore, Secret Manager, Artifact Registry), Cloud Build configs, and a single-VM GCP free-tier path.
+- **Automation hooks** — n8n workflow exports for scheduled briefs, webhooks, report delivery and alert monitoring.
 
 ## Architecture
 
-The production v4 pipeline is:
+```mermaid
+flowchart LR
+    U([User]) --> FE["Next.js 15 frontend<br/>dashboard · SSE progress · PDF export"]
+    FE -- "REST + JWT" --> API["FastAPI backend<br/>/api/v1"]
+    API -- "text/event-stream" --> FE
+    API --> Q{"Run inline<br/>or Celery?"}
+    Q -- inline --> G
+    Q -- queue --> R[(Redis)] --> W["Celery worker"] --> G
 
-`START -> Orchestrator -> [Market Intel + Risk Assessment + Competitor Analysis + Geo Intel] -> Financial Reasoning -> Strategic Options -> Synthesis -> END`
+    subgraph G["LangGraph pipeline (StrategicBriefV4)"]
+        direction LR
+        O[Orchestrator] --> MI[Market Intelligence]
+        O --> RA[Risk Assessment]
+        O --> CA[Competitor Analysis]
+        O --> GI[Geo Intelligence]
+        MI --> FR[Financial Reasoning]
+        RA --> FR
+        CA --> FR
+        GI --> FR
+        FR --> SO[Strategic Options] --> SY[Synthesis]
+    end
 
-The shared state graph records:
+    G -- "model aliases" --> L["LiteLLM<br/>Groq · Anthropic · Gemini · open models"]
+    G --> DB[(PostgreSQL / SQLite)]
+    API --> DB
+```
 
-- `framework_outputs` for the 8 named strategy frameworks
-- `agent_collaboration_trace` for typed cross-agent handoffs
-- `decision_statement`, `decision_confidence`, and `decision_rationale`
-- `framework_citations` for per-framework provenance
+The shared graph state carries `framework_outputs`, `agent_collaboration_trace`, `decision_statement` / `decision_confidence` / `decision_rationale` and `framework_citations`. Synthesis validates everything into `StrategicBriefV4`.
 
-The synthesis step is responsible for producing the validated `StrategicBriefV4`, including the final decision statement, executive summary, implementation roadmap, SWOT, and Balanced Scorecard.
+## Tech stack
 
-## Model Routing
+| Layer | Technology |
+|---|---|
+| Agents / orchestration | LangGraph, LiteLLM, Groq / Anthropic / Vertex AI / OpenAI-compatible models |
+| Backend | Python 3.11, FastAPI, Pydantic v2, SQLAlchemy 2, Alembic, Celery, Redis, structlog, slowapi, Langfuse (optional) |
+| Frontend | Next.js 15 (App Router), React 18, TypeScript, Tailwind CSS, React Flow (collaboration graph), Recharts, Framer Motion, Puppeteer (PDF), Jest + Testing Library |
+| Data | PostgreSQL (prod), SQLite (local/demo), Redis, Qdrant (in Compose) |
+| Infra / DevOps | Docker, Docker Compose, Terraform (GCP), Cloud Build, GitHub Actions, n8n |
 
-All LLM traffic flows through LiteLLM aliases.
+## Quick start
 
-Default v4 routes:
+### Prerequisites
 
-- `orchestrator` -> `claude-haiku-4-5`
-- `market_intel` -> `gemini-2.0-flash`
-- `risk_assessment` -> `claude-sonnet-4-5`
-- `competitor_analysis` -> `claude-sonnet-4-5`
-- `geo_intel` -> `claude-sonnet-4-5`
-- `financial_reasoning` -> `gemini-2.5-pro`
-- `strategic_options` -> `claude-sonnet-4-5`
-- `synthesis` -> `claude-sonnet-4-5`
+Python 3.11, Node 20, and (optionally) Docker. LLM keys are **optional** for a first run — demo mode works without them.
 
-Open-model fallbacks, chosen from the [open-llms](https://github.com/eugeneyan/open-llms) landscape and wired as optional OpenAI-compatible aliases:
+### 1. Configure environment
 
-- `qwen-strategy`
-- `phi-4-reasoning`
-- `arctic-research`
-- `llama-governance`
+```bash
+cp .env.example .env
+```
 
-## Local Development
+For a zero-key local run, set at least:
 
-1. Copy `.env.example` to `.env` and fill in secrets.
-2. Backend:
-   `cd asis/backend`
-   `python -m pip install -r requirements.txt`
-   `uvicorn asis.backend.main:app --reload --host 0.0.0.0 --port 8000`
-3. Frontend:
-   `cd asis/frontend`
-   `npm install`
-   `npm run dev`
-4. Optional full stack:
-   `docker compose up --build`
+```dotenv
+ASIS_DEMO_MODE=true            # structured fallback output, clearly labelled in the UI
+RUN_ANALYSES_INLINE=true       # no Celery/Redis needed
+DATABASE_URL=sqlite:///./asis_local.db
+JWT_SECRET=<any random string of 32+ characters>
+FRONTEND_URL=http://localhost:3001
+ALLOWED_ORIGINS=http://localhost:3001
+NEXT_PUBLIC_API_URL=http://localhost:8000
+```
 
-## GCP Free-Tier VM Deployment
+For live reasoning, set `ASIS_DEMO_MODE=false` and provide `GROQ_API_KEY` (and/or the LiteLLM provider keys). Every variable is documented in [`.env.example`](.env.example); the GCP free-tier variant is in [`.env.gcp.example`](.env.gcp.example).
 
-For the lowest-cost GCP deployment, use the single-VM path instead of the managed `asis/infra` stack. The free-tier path deploys only the canonical `asis/backend` and `asis/frontend` applications, stores data in SQLite on the VM, and runs analyses in demo mode with inline execution.
+### 2. Run locally
 
-Included assets:
+```bash
+# Backend (http://localhost:8000)
+cd asis/backend
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn asis.backend.main:app --reload --port 8000
 
-- `docker-compose.gcp-free.yml`
-- `.env.gcp.example`
-- `scripts/gcp-free-bootstrap.sh`
-- `docs/gcp-free-tier.md`
-- `.github/workflows/deploy-gcp-free.yml`
+# Frontend (http://localhost:3001) — in a second terminal
+cd asis/frontend
+npm ci
+npm run dev
+```
 
-Use this path when you want one always-free Compute Engine VM and do **not** want to provision Cloud SQL, Memorystore, Artifact Registry, or Cloud Run.
+Open http://localhost:3001, register an account, and start an analysis from **New analysis**.
+
+### 3. Or run the full stack with Docker
+
+```bash
+docker compose up --build
+```
+
+This starts the frontend, backend, Celery worker, LiteLLM proxy, PostgreSQL, Redis, Qdrant and Langfuse. See [`docker-compose.prod.yml`](docker-compose.prod.yml) and [`docker-compose.gcp-free.yml`](docker-compose.gcp-free.yml) for deployment variants.
+
+## Testing
+
+```bash
+# Backend
+cd asis/backend
+pytest tests -q
+
+# Frontend
+cd asis/frontend
+npm run type-check   # runs `next build`
+npm run test:ci      # Jest component tests
+```
+
+Tests marked `requires_groq` make live LLM calls or assert that credentials are loaded; they are **skipped automatically when `GROQ_API_KEY` is not set**. In GitHub Actions the key is provided as a repository secret, so CI runs the full suite. CI also runs a dependency audit (pip-audit, npm audit) and an Alembic migration-head check.
+
+## Project structure
+
+```
+.
+├── asis/
+│   ├── backend/              # FastAPI + LangGraph service (canonical)
+│   │   ├── asis/backend/
+│   │   │   ├── agents/       # orchestrator, market_intel, risk_assessment, competitor_analysis,
+│   │   │   │                 # geo_intel, financial_reasoning, strategic_options, synthesis, llm_proxy
+│   │   │   ├── graph/        # LangGraph pipeline + shared state
+│   │   │   ├── api/          # REST + SSE routes
+│   │   │   ├── evaluation/   # heuristic scoring & reports
+│   │   │   ├── db/ schemas/ memory/ quality/ tasks/ config/
+│   │   │   └── main.py
+│   │   ├── tests/            # pytest suite
+│   │   └── Dockerfile
+│   ├── frontend/             # Next.js 15 app (dashboard, analysis, reports)
+│   ├── infra/                # Terraform (GCP) + Cloud Build
+│   └── n8n/workflows/        # automation exports
+├── docs/                     # SRS, LLM hardening notes, GCP free-tier guide, screenshots
+├── litellm_config.yaml       # model alias routing
+├── docker-compose*.yml
+├── .github/workflows/        # CI, tests, deploy
+├── src/, frontend/           # legacy TypeScript prototype (reference only)
+└── *.md                      # setup guides and engineering reports
+```
 
 ## API Reference
 
@@ -121,30 +220,29 @@ Use this path when you want one always-free Compute Engine VM and do **not** wan
 
 ## CI/CD
 
-GitHub Actions now provides:
+| Workflow | Trigger | What it does |
+|---|---|---|
+| [`ci.yml`](.github/workflows/ci.yml) | PRs, pushes | Backend pytest, frontend build/type-check + Jest, dependency audit, Alembic check |
+| [`tests.yml`](.github/workflows/tests.yml) | PRs/pushes to `main`/`develop` | Backend tests on Python 3.11 & 3.12 (PostgreSQL service container), flake8, quality checks |
+| [`deploy-gcp-free.yml`](.github/workflows/deploy-gcp-free.yml) | push to `main` | Builds images and deploys to a single GCP free-tier VM |
+| [`deploy.yml`](.github/workflows/deploy.yml) | manual | Cloud Build → Cloud Run (managed GCP stack) |
+| [`production-verify.yml`](.github/workflows/production-verify.yml) | schedule / manual | Verifies the Groq key/connectivity and production LLM configuration |
 
-- `.github/workflows/ci.yml` - backend pytest + frontend TypeScript validation
-- `.github/workflows/deploy.yml` - `ubuntu-latest` runner, Google auth, and Cloud Build submission for backend and frontend
+Deployment details: [`docs/gcp-free-tier.md`](docs/gcp-free-tier.md), [`asis/infra/terraform`](asis/infra/terraform), [`asis/infra/cloudbuild`](asis/infra/cloudbuild). LLM reliability notes: [`docs/LLM_HARDENING.md`](docs/LLM_HARDENING.md).
 
-Cloud Build deployment definitions live in:
+## Limitations & roadmap
 
-- `asis/infra/cloudbuild/cloudbuild.backend.yaml`
-- `asis/infra/cloudbuild/cloudbuild.frontend.yaml`
+- **Demo mode is not analysis.** Without provider keys the pipeline returns structured template output; the UI labels it, but numbers in such briefs are placeholders.
+- **No live data retrieval yet.** Agents reason from the question, company context and model knowledge. `TAVILY_API_KEY` / `NEWSAPI_KEY` settings exist, but no search/news client is wired in; the tool-call metadata shown in demo/fallback output (e.g. Geo Intelligence) is illustrative.
+- **Live-LLM tests depend on a secret.** Tests marked `requires_groq` only run where `GROQ_API_KEY` is available (CI, or a developer with a key).
+- **Legacy code in the root** (`src/`, `frontend/`, root `package.json`) is an earlier TypeScript prototype kept for reference; the maintained application lives under `asis/`.
+- Roadmap ideas: retrieval over curated market/regulatory sources, human-in-the-loop review between agents, cost/latency dashboards per run, and broader end-to-end tests of the SSE flow.
 
-## Infrastructure
+## License
 
-Terraform definitions are included for:
+[MIT](LICENSE) © 2026 Akshat Banga
 
-- Artifact Registry
-- Cloud SQL Postgres
-- Memorystore Redis
-- Cloud Run backend/frontend
-- Secret Manager
-- Deploy service account IAM bindings
+## Author
 
-## Verification
-
-Validated locally for the v4 hybrid implementation:
-
-- `pytest tests/test_agents/test_geo_intel.py tests/test_agents/test_strategic_options.py tests/test_graph/test_v4_pipeline.py tests/test_api/test_pdf_endpoint.py -q` in `asis/backend`
-- `npm run type-check` in `asis/frontend`
+**Akshat Banga** — AI Generalist · AI transformation  
+GitHub: [@Akshatb848](https://github.com/Akshatb848)

@@ -13,6 +13,7 @@ from asis.backend.config.settings import get_settings
 class TestGroqIntegration:
     """Test Groq API connectivity and model availability."""
 
+    @pytest.mark.requires_groq
     def test_groq_api_key_configured(self):
         """Verify Groq API key is configured in environment."""
         settings = get_settings()
@@ -31,6 +32,7 @@ class TestGroqIntegration:
         assert settings.groq_model_fast == "llama-3.1-8b-instant"
         assert settings.groq_model_reasoning == "llama-3.3-70b-versatile"
 
+    @pytest.mark.requires_groq
     def test_llm_proxy_groq_available(self):
         """Test that LLM proxy correctly identifies Groq as available."""
         settings = get_settings()
@@ -83,12 +85,14 @@ class TestGroqIntegration:
 class TestLLMProxyConfiguration:
     """Test LLM proxy configuration and fallback chain."""
 
+    @pytest.mark.requires_groq
     def test_groq_selected_when_litellm_unavailable(self):
         """Verify Groq is used when LiteLLM proxy is not configured."""
         settings = get_settings()
         assert not settings.litellm_proxy_url, "LiteLLM proxy should not be configured"
         assert settings.groq_api_key, "Groq should be available"
 
+    @pytest.mark.requires_groq
     def test_model_alias_resolution_groq(self):
         """Test Groq model alias resolution for different agent types."""
         proxy = LiteLLMProxy()
@@ -224,6 +228,7 @@ class TestErrorHandling:
             # Should handle gracefully and try next model or return None
             assert result is None or isinstance(result, dict)
 
+    @pytest.mark.requires_groq
     def test_settings_validation(self):
         """Verify settings have required values for production."""
         settings = get_settings()
