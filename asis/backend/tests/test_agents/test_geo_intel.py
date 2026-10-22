@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import pytest
+
 from asis.backend.agents.geo_intel import GeoIntelAgent
 from asis.backend.schemas.v4 import GeoIntelOutput
 
 
+@pytest.mark.requires_groq
+@pytest.mark.live_llm
 def test_geo_intel_run_populates_schema_and_pestle_fields():
     agent = GeoIntelAgent()
     result = agent.run(

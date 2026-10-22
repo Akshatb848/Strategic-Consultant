@@ -27,3 +27,11 @@ prisma/*.db-journal
 asis/backend/.env
 asis/backend/.env.local
 asis/frontend/.env.local
+
+# ── Local tooling artefacts ──────────────────────────────────────────────────
+.edge-pdf-profile/
+.codex-*.err
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage

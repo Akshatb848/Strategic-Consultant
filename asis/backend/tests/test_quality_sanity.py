@@ -28,6 +28,7 @@ class TestSystemSanity:
         settings = get_settings()
         assert settings is not None
 
+    @pytest.mark.requires_groq
     def test_groq_credentials_loaded(self):
         """Verify Groq credentials are loaded from .env."""
         from asis.backend.config.settings import get_settings
@@ -270,6 +271,7 @@ class TestProductionFixesVerification:
 class TestConfigurationQuality:
     """Quality checks for system configuration."""
 
+    @pytest.mark.requires_groq
     def test_no_hardcoded_secrets(self):
         """Verify no hardcoded secrets in configuration."""
         from asis.backend.config.settings import get_settings

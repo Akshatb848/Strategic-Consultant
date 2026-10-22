@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import pytest
+
 from asis.backend.agents.strategic_options import StrategicOptionsAgent
 from asis.backend.schemas.v4 import StrategicOptionsOutput
 
 
+@pytest.mark.requires_groq
+@pytest.mark.live_llm
 def test_strategic_options_run_populates_frameworks_and_recommendation():
     agent = StrategicOptionsAgent()
     result = agent.run(
