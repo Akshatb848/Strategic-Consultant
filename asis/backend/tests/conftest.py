@@ -68,6 +68,10 @@ def pytest_configure(config):
         "requires_groq: test needs a real GROQ_API_KEY (live LLM call or credential check); "
         "skipped when the variable is not set",
     )
+    config.addinivalue_line(
+        "markers",
+        "live_llm: test calls a live LLM provider end-to-end (CI runs these in a separate, non-blocking step)",
+    )
 
 
 def pytest_collection_modifyitems(config, items):

@@ -62,7 +62,26 @@ jobs:
           COST_TRACKING_ENABLED: "true"
           RATE_LIMIT_ANALYSES_PER_MINUTE: "9999"
           RATE_LIMIT_ANALYSES_PER_DAY: "9999"
-        run: python -m pytest tests -q --tb=short
+        run: python -m pytest tests -q --tb=short -m "not live_llm"
+
+      # Live end-to-end agent calls depend on the external provider's model
+      # catalogue and the account's access, so they are reported but do not
+      # block merges. Check this step's output when changing LLM wiring.
+      - name: Run live LLM agent tests (non-blocking)
+        continue-on-error: true
+        env:
+          DATABASE_URL: sqlite:///./test_asis_live.db
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GROQ_API_BASE: https://api.groq.com/openai/v1
+          GROQ_MODEL_PRIMARY: llama-3.3-70b-versatile
+          GROQ_MODEL_FAST: llama-3.1-8b-instant
+          GROQ_MODEL_REASONING: llama-3.3-70b-versatile
+          JWT_SECRET: test-secret-32-chars-minimum-len!!
+          ENVIRONMENT: test
+          ASIS_DEMO_MODE: "false"
+          ALLOW_LLM_FALLBACK: "false"
+          LANGFUSE_ENABLED: "false"
+        run: python -m pytest tests -q --tb=short -m live_llm
 
       - name: Upload coverage report
         if: always()

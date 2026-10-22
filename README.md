@@ -146,7 +146,7 @@ npm run type-check   # runs `next build`
 npm run test:ci      # Jest component tests
 ```
 
-Tests marked `requires_groq` make live LLM calls or assert that credentials are loaded; they are **skipped automatically when `GROQ_API_KEY` is not set**. In GitHub Actions the key is provided as a repository secret, so CI runs the full suite. CI also runs a dependency audit (pip-audit, npm audit) and an Alembic migration-head check.
+Tests marked `requires_groq` make live LLM calls or assert that credentials are loaded; they are **skipped automatically when `GROQ_API_KEY` is not set**. In GitHub Actions the key is provided as a repository secret. The two end-to-end agent tests that call the live provider are also marked `live_llm`; CI runs them in a separate **non-blocking** step, because their result depends on the provider's model catalogue and account access rather than on this code (run locally with `pytest -m live_llm`). CI also runs a dependency audit (pip-audit, npm audit) and an Alembic migration-head check.
 
 ## Project structure
 
